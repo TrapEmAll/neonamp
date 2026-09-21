@@ -230,6 +230,7 @@ class _PlayerPageState extends State<PlayerPage>
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
   final List<Track> _library = [];
+  final List<String> _libraryFolders = [];
   final Map<String, List<String>> _playlists = {};
   final TextEditingController _searchController = TextEditingController();
   late final AnimationController _pulse = AnimationController(
@@ -308,6 +309,7 @@ class _PlayerPageState extends State<PlayerPage>
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('queue') ?? [];
     final savedLibrary = prefs.getStringList('library') ?? [];
+    final savedFolders = prefs.getStringList('libraryFolders') ?? [];
     final savedPlaylists = prefs.getString('playlists');
     final savedSettings = prefs.getString('settings');
     if (!mounted) return;
@@ -322,6 +324,7 @@ class _PlayerPageState extends State<PlayerPage>
           (value) => Track.fromJson(jsonDecode(value) as Map<String, dynamic>),
         ),
       );
+      _libraryFolders.addAll(savedFolders);
       if (savedPlaylists != null) {
         final decoded = jsonDecode(savedPlaylists) as Map<String, dynamic>;
         for (final entry in decoded.entries)
@@ -355,6 +358,7 @@ class _PlayerPageState extends State<PlayerPage>
       'library',
       _library.map((track) => jsonEncode(track.toJson())).toList(),
     );
+    await prefs.setStringList('libraryFolders', _libraryFolders);
     await prefs.setString('playlists', jsonEncode(_playlists));
     await prefs.setString(
       'settings',
@@ -391,6 +395,12 @@ class _PlayerPageState extends State<PlayerPage>
       dialogTitle: 'Choose a music folder',
     );
     if (directory == null) return;
+    if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
+    await _scanFolder(directory);
+    await _saveQueue();
+  }
+
+  Future<void> _scanFolder(String directory) async {
     const extensions = {
       '.mp3',
       '.flac',
@@ -420,7 +430,24 @@ class _PlayerPageState extends State<PlayerPage>
           _library.add(track);
       });
     }
+  }
+
+  Future<void> _rescanFolders() async {
+    if (_libraryFolders.isEmpty) {
+      await _addFolder();
+      return;
+    }
+    for (final folder in List<String>.from(_libraryFolders)) {
+      if (Directory(folder).existsSync()) await _scanFolder(folder);
+    }
     await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Rescanned ${_libraryFolders.length} folder(s)'),
+        ),
+      );
+    }
   }
 
   Future<void> _importPlaylist() async {
@@ -994,6 +1021,11 @@ class _PlayerPageState extends State<PlayerPage>
               color: Colors.white60,
             ),
           ),
+        IconButton(
+          tooltip: 'Rescan library folders',
+          onPressed: _rescanFolders,
+          icon: const Icon(Icons.refresh, color: Colors.white60),
+        ),
         if (MediaQuery.sizeOf(context).width >= 1000) ...[
           const SizedBox(width: 8),
           IconButton(
@@ -1026,6 +1058,7 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.more_vert, color: Colors.white60),
             onSelected: (value) {
               if (value == 'folder') _addFolder();
+              if (value == 'rescan') _rescanFolders();
               if (value == 'import') _importPlaylist();
               if (value == 'stream') _addStream();
               if (value == 'eq') _showEqualizer();
@@ -1033,6 +1066,10 @@ class _PlayerPageState extends State<PlayerPage>
             },
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'folder', child: Text('Add folder')),
+              PopupMenuItem(
+                value: 'rescan',
+                child: Text('Rescan library folders'),
+              ),
               PopupMenuItem(
                 value: 'import',
                 child: Text('Import M3U playlist'),
