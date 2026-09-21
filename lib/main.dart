@@ -131,20 +131,38 @@ class _MuteIntent extends Intent {
 
 class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   NeonAudioHandler(this.player) {
-    player.onPositionChanged.listen(
+    _bindPlayerStreams();
+  }
+
+  AudioPlayer player;
+  Future<void> Function()? onNext;
+  Future<void> Function()? onPrevious;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  StreamSubscription<PlayerState>? _stateSubscription;
+
+  void _bindPlayerStreams() {
+    _positionSubscription = player.onPositionChanged.listen(
       (position) => _broadcast(position: position),
     );
-    player.onDurationChanged.listen((duration) {
+    _durationSubscription = player.onDurationChanged.listen((duration) {
       final current = mediaItem.value;
       if (current != null) mediaItem.add(current.copyWith(duration: duration));
       _broadcast();
     });
-    player.onPlayerStateChanged.listen((state) => _broadcast(state: state));
+    _stateSubscription = player.onPlayerStateChanged.listen(
+      (state) => _broadcast(state: state),
+    );
   }
 
-  final AudioPlayer player;
-  Future<void> Function()? onNext;
-  Future<void> Function()? onPrevious;
+  Future<void> switchPlayer(AudioPlayer nextPlayer) async {
+    await _positionSubscription?.cancel();
+    await _durationSubscription?.cancel();
+    await _stateSubscription?.cancel();
+    player = nextPlayer;
+    _bindPlayerStreams();
+    _broadcast();
+  }
 
   Future<void> playTrack(Track track) async {
     final duration = mediaItem.value?.duration;
@@ -247,7 +265,7 @@ class PlayerPage extends StatefulWidget {
 
 class _PlayerPageState extends State<PlayerPage>
     with SingleTickerProviderStateMixin {
-  final AudioPlayer _player = AudioPlayer();
+  AudioPlayer _activePlayer = AudioPlayer();
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
   final List<Track> _library = [];
@@ -280,6 +298,9 @@ class _PlayerPageState extends State<PlayerPage>
   String _libraryFilter = 'All';
   final List<double> _eqBands = List<double>.filled(10, 0);
   String _eqPreset = 'Flat';
+  bool _crossfadeInProgress = false;
+
+  AudioPlayer get _player => _activePlayer;
 
   Track? get _current =>
       _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
@@ -288,9 +309,27 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void initState() {
     super.initState();
-    _positionSub = _player.onPositionChanged.listen(
-      (value) => setState(() => _position = value),
-    );
+    _bindPlayerStreams();
+    _initializeAudioService();
+    _loadQueue();
+  }
+
+  void _bindPlayerStreams() {
+    _positionSub?.cancel();
+    _durationSub?.cancel();
+    _stateSub?.cancel();
+    _completeSub?.cancel();
+    _positionSub = _player.onPositionChanged.listen((value) {
+      if (!mounted) return;
+      setState(() => _position = value);
+      if (_crossfade && !_crossfadeInProgress && _isPlaying) {
+        final remaining = _duration - value;
+        if (remaining <= Duration(seconds: _crossfadeSeconds) &&
+            remaining > Duration.zero) {
+          unawaited(_crossfadeToNext());
+        }
+      }
+    });
     _durationSub = _player.onDurationChanged.listen(
       (value) => setState(() => _duration = value),
     );
@@ -298,8 +337,6 @@ class _PlayerPageState extends State<PlayerPage>
       (value) => setState(() => _playerState = value),
     );
     _completeSub = _player.onPlayerComplete.listen((_) => _handleComplete());
-    _initializeAudioService();
-    _loadQueue();
   }
 
   Future<void> _initializeAudioService() async {
@@ -318,6 +355,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _handleComplete() async {
+    if (_crossfadeInProgress) return;
     if (_repeatOne) {
       await _player.seek(Duration.zero);
       await _player.resume();
@@ -588,11 +626,70 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _next() async {
-    if (_queue.isEmpty) return;
+    if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_crossfade && _isPlaying && !_crossfadeInProgress) {
+      await _crossfadeToNext();
+      return;
+    }
     final next = _shuffle
         ? math.Random().nextInt(_queue.length)
         : (_selected + 1) % _queue.length;
     await _select(next);
+  }
+
+  Future<void> _crossfadeToNext() async {
+    if (_queue.isEmpty || _crossfadeInProgress) return;
+    _crossfadeInProgress = true;
+    final previousPlayer = _player;
+    final next = _shuffle
+        ? math.Random().nextInt(_queue.length)
+        : (_selected + 1) % _queue.length;
+    final track = _queue[next];
+    final incomingPlayer = AudioPlayer();
+    try {
+      setState(() {
+        _selected = next;
+        _position = Duration.zero;
+        final libraryIndex = _library.indexWhere(
+          (item) => item.path == track.path,
+        );
+        if (libraryIndex >= 0) {
+          _library[libraryIndex] = track.copyWith(
+            playCount: track.playCount + 1,
+          );
+        }
+      });
+      await incomingPlayer.setVolume(0);
+      await incomingPlayer.play(
+        track.path.startsWith('http')
+            ? UrlSource(track.path)
+            : DeviceFileSource(track.path),
+      );
+      final steps = math.max(1, _crossfadeSeconds * 10);
+      for (var step = 1; step <= steps; step++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final progress = step / steps;
+        await previousPlayer.setVolume(_volume * (1 - progress));
+        await incomingPlayer.setVolume(_volume * progress);
+      }
+      await previousPlayer.stop();
+      await previousPlayer.dispose();
+      _activePlayer = incomingPlayer;
+      _bindPlayerStreams();
+      await _audioHandler?.switchPlayer(incomingPlayer);
+      await _saveQueue();
+    } catch (_) {
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      _crossfadeInProgress = false;
+    }
   }
 
   Future<void> _previous() async {
@@ -1361,6 +1458,39 @@ class _PlayerPageState extends State<PlayerPage>
                     setDialogState(() {});
                   },
                 ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Crossfade between tracks'),
+                  subtitle: Text('Overlap for $_crossfadeSeconds seconds'),
+                  value: _crossfade,
+                  onChanged: (value) {
+                    setState(() => _crossfade = value);
+                    setDialogState(() {});
+                  },
+                ),
+                if (_crossfade)
+                  Row(
+                    children: [
+                      const Text('1s', style: TextStyle(color: Colors.white38)),
+                      Expanded(
+                        child: Slider(
+                          value: _crossfadeSeconds.toDouble(),
+                          min: 1,
+                          max: 12,
+                          divisions: 11,
+                          label: '${_crossfadeSeconds}s',
+                          onChanged: (value) {
+                            setState(() => _crossfadeSeconds = value.round());
+                            setDialogState(() {});
+                          },
+                        ),
+                      ),
+                      const Text(
+                        '12s',
+                        style: TextStyle(color: Colors.white38),
+                      ),
+                    ],
+                  ),
                 const SizedBox(height: 12),
                 SizedBox(
                   height: 180,
