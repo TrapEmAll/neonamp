@@ -16,6 +16,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Add HTTP audio streams and online radio URLs.
 - Search the Radio Browser internet-radio directory, save station favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
+- Import JSON skin packages on Windows or Android; imported skins persist across launches.
 - Subscribe to podcast RSS feeds, add playable episode enclosures, and download episodes locally.
 - Persistent queue between launches.
 - Media library with search, favorites, five-star ratings, play counts, and album/artist/genre fields.
@@ -37,4 +38,16 @@ flutter pub get
 flutter test
 flutter build windows --release
 flutter build apk --release
+```
+
+### Skin packages
+
+Skin packages are JSON files with this shape:
+
+```json
+{
+  "name": "Midnight Citrus",
+  "seedColor": "#b7ff4a",
+  "backgroundColor": "#10130b"
+}
 ```

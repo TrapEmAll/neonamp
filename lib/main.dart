@@ -88,6 +88,74 @@ class Track {
   );
 }
 
+class ThemeSkin {
+  const ThemeSkin({
+    required this.name,
+    required this.seedColor,
+    required this.backgroundColor,
+  });
+
+  final String name;
+  final Color seedColor;
+  final Color backgroundColor;
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'seedColor': _colorToHex(seedColor),
+    'backgroundColor': _colorToHex(backgroundColor),
+  };
+
+  static ThemeSkin fromJson(Map<String, dynamic> json) {
+    final name = (json['name'] as String?)?.trim() ?? '';
+    if (name.isEmpty || name.length > 40) {
+      throw const FormatException(
+        'Skin name must be between 1 and 40 characters.',
+      );
+    }
+    return ThemeSkin(
+      name: name,
+      seedColor: _colorFromJson(json['seedColor'], 'seedColor'),
+      backgroundColor: _colorFromJson(
+        json['backgroundColor'],
+        'backgroundColor',
+      ),
+    );
+  }
+}
+
+String _colorToHex(Color color) =>
+    '#${color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+
+Color _colorFromJson(Object? value, String field) {
+  if (value is! String || !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) {
+    throw FormatException('$field must be a six-digit hex color.');
+  }
+  return Color(int.parse('ff${value.substring(1)}', radix: 16));
+}
+
+List<ThemeSkin> builtInSkins() => const [
+  ThemeSkin(
+    name: 'Neon',
+    seedColor: Color(0xffef4bff),
+    backgroundColor: Color(0xff090a10),
+  ),
+  ThemeSkin(
+    name: 'Aurora',
+    seedColor: Color(0xff35e6ff),
+    backgroundColor: Color(0xff071015),
+  ),
+  ThemeSkin(
+    name: 'Amber',
+    seedColor: Color(0xffffa62b),
+    backgroundColor: Color(0xff120d07),
+  ),
+  ThemeSkin(
+    name: 'Classic',
+    seedColor: Color(0xff7dff55),
+    backgroundColor: Color(0xff081008),
+  ),
+];
+
 class SmartPlaylist {
   const SmartPlaylist({
     required this.name,
@@ -256,6 +324,7 @@ class NeonAmpApp extends StatefulWidget {
 
 class _NeonAmpAppState extends State<NeonAmpApp> {
   String _themeName = 'Neon';
+  final Map<String, ThemeSkin> _customSkins = {};
 
   @override
   void initState() {
@@ -265,6 +334,20 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
 
   Future<void> _loadTheme() async {
     final prefs = await SharedPreferences.getInstance();
+    final savedSkins = prefs.getString('customSkins');
+    if (savedSkins != null) {
+      try {
+        final decoded = jsonDecode(savedSkins) as List;
+        for (final value in decoded) {
+          final skin = ThemeSkin.fromJson(value as Map<String, dynamic>);
+          if (builtInSkins().every((builtin) => builtin.name != skin.name)) {
+            _customSkins[skin.name] = skin;
+          }
+        }
+      } on Object {
+        _customSkins.clear();
+      }
+    }
     if (!mounted) return;
     setState(() => _themeName = prefs.getString('themeName') ?? 'Neon');
   }
@@ -275,18 +358,34 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     await prefs.setString('themeName', themeName);
   }
 
+  Future<void> _addCustomSkin(ThemeSkin skin) async {
+    if (builtInSkins().any((builtin) => builtin.name == skin.name)) {
+      throw const FormatException('Built-in skin names cannot be replaced.');
+    }
+    setState(() {
+      _customSkins[skin.name] = skin;
+      _themeName = skin.name;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'customSkins',
+      jsonEncode(_customSkins.values.map((value) => value.toJson()).toList()),
+    );
+    await prefs.setString('themeName', skin.name);
+  }
+
+  List<ThemeSkin> get _skins => [...builtInSkins(), ..._customSkins.values];
+
   ThemeData _themeData() {
-    final seedColor = switch (_themeName) {
-      'Aurora' => const Color(0xff35e6ff),
-      'Amber' => const Color(0xffffa62b),
-      'Classic' => const Color(0xff7dff55),
-      _ => const Color(0xffef4bff),
-    };
+    final skin = _skins.firstWhere(
+      (value) => value.name == _themeName,
+      orElse: () => builtInSkins().first,
+    );
     return ThemeData(
       brightness: Brightness.dark,
-      scaffoldBackgroundColor: const Color(0xff090a10),
+      scaffoldBackgroundColor: skin.backgroundColor,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: seedColor,
+        seedColor: skin.seedColor,
         brightness: Brightness.dark,
       ),
       fontFamily: 'Segoe UI',
@@ -299,15 +398,28 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     title: 'NeonAmp',
     debugShowCheckedModeBanner: false,
     theme: _themeData(),
-    home: PlayerPage(themeName: _themeName, onThemeChanged: _setTheme),
+    home: PlayerPage(
+      themeName: _themeName,
+      skins: _skins,
+      onThemeChanged: _setTheme,
+      onSkinImported: _addCustomSkin,
+    ),
   );
 }
 
 class PlayerPage extends StatefulWidget {
-  const PlayerPage({super.key, this.themeName = 'Neon', this.onThemeChanged});
+  const PlayerPage({
+    super.key,
+    this.themeName = 'Neon',
+    this.skins = const [],
+    this.onThemeChanged,
+    this.onSkinImported,
+  });
 
   final String themeName;
+  final List<ThemeSkin> skins;
   final ValueChanged<String>? onThemeChanged;
+  final Future<void> Function(ThemeSkin skin)? onSkinImported;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -1570,22 +1682,54 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _importSkin() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    final path = result.isEmpty ? null : result.first.path;
+    if (path == null) return;
+    try {
+      final skin = ThemeSkin.fromJson(
+        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+      );
+      await widget.onSkinImported?.call(skin);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Imported skin: ${skin.name}')));
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not import skin: $error')));
+    }
+  }
+
   Future<void> _showThemePicker() async {
-    const themes = ['Neon', 'Aurora', 'Amber', 'Classic'];
     final selected = await showDialog<String>(
       context: context,
       builder: (context) => SimpleDialog(
         title: const Text('Choose a skin'),
-        children: themes
-            .map(
-              (theme) => RadioListTile<String>(
-                value: theme,
-                groupValue: widget.themeName,
-                title: Text(theme),
-                onChanged: (value) => Navigator.pop(context, value),
-              ),
-            )
-            .toList(),
+        children: [
+          ...widget.skins.map(
+            (theme) => RadioListTile<String>(
+              value: theme.name,
+              groupValue: widget.themeName,
+              title: Text(theme.name),
+              onChanged: (value) => Navigator.pop(context, value),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.file_upload_outlined),
+            title: const Text('Import skin package'),
+            onTap: () {
+              Navigator.pop(context);
+              _importSkin();
+            },
+          ),
+        ],
       ),
     );
     if (selected != null) widget.onThemeChanged?.call(selected);
@@ -1954,6 +2098,11 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.palette_outlined, color: Colors.white60),
           ),
           IconButton(
+            tooltip: 'Import skin package',
+            onPressed: _importSkin,
+            icon: const Icon(Icons.file_upload_outlined, color: Colors.white60),
+          ),
+          IconButton(
             tooltip: 'Export playlist',
             onPressed: _exportPlaylist,
             icon: const Icon(Icons.ios_share, color: Colors.white60),
@@ -1976,6 +2125,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'refreshPodcasts') _refreshPodcasts();
               if (value == 'eq') _showEqualizer();
               if (value == 'theme') _showThemePicker();
+              if (value == 'importSkin') _importSkin();
               if (value == 'export') _exportPlaylist();
             },
             itemBuilder: (_) => const [
@@ -2000,6 +2150,10 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
+              PopupMenuItem(
+                value: 'importSkin',
+                child: Text('Import skin package'),
+              ),
               PopupMenuItem(value: 'export', child: Text('Export playlist')),
             ],
           ),

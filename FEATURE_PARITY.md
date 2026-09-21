@@ -22,6 +22,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - 10-band equalizer surface with presets and persisted settings
 - Spectrum visualization
 - Built-in Neon, Aurora, Amber, and Classic skins with persisted selection
+- User-importable JSON skin packages with persisted selection on Windows and Android
 - Responsive Windows and Android layouts
 - Android background playback with notification, lock-screen, headset, and Android Auto media controls
 - Windows global media keys for play/pause, stop, previous, and next
@@ -32,7 +33,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - True DSP equalizer processing
 - More advanced smart-playlist grouping and limits
 - Windows system media transport controls beyond global media keys
-- User-importable skin/theme packages and a plugin API
+- Plugin API
 - SHOUTcast-specific directory compatibility
 - CD ripping and format conversion on Windows; portable-device sync
 
