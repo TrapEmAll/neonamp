@@ -6,6 +6,10 @@
 #include <flutter/flutter_view_controller.h>
 #include <flutter/standard_method_codec.h>
 
+#include <winrt/Windows.Media.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/base.h>
+
 #include <memory>
 
 #include "win32_window.h"
@@ -24,6 +28,9 @@ class FlutterWindow : public Win32Window {
   LRESULT MessageHandler(HWND window, UINT const message, WPARAM const wparam,
                          LPARAM const lparam) noexcept override;
 
+  void InitializeSystemMediaControls();
+  void UpdateSystemMediaControls(const flutter::EncodableMap& values);
+
  private:
   // The project to run.
   flutter::DartProject project_;
@@ -34,6 +41,10 @@ class FlutterWindow : public Win32Window {
   // Receives native Windows media-key messages and forwards them to Dart.
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       system_controls_channel_;
+
+  winrt::Windows::Media::SystemMediaTransportControls system_media_controls_{
+      nullptr};
+  winrt::event_token system_media_button_token_{};
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

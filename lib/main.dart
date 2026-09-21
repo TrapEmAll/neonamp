@@ -605,6 +605,12 @@ class _PlayerPageState extends State<PlayerPage>
         case 'playPause':
           await _togglePlay();
           break;
+        case 'play':
+          if (!_isPlaying) await _togglePlay();
+          break;
+        case 'pause':
+          if (_isPlaying) await _pauseCurrent();
+          break;
         case 'next':
           await _next();
           break;
@@ -616,6 +622,20 @@ class _PlayerPageState extends State<PlayerPage>
           break;
       }
       return null;
+    });
+  }
+
+  Future<void> _syncWindowsMediaSession() async {
+    if (!Platform.isWindows) return;
+    final track = _current;
+    if (track == null) return;
+    const channel = MethodChannel('neonamp/system_controls');
+    await channel.invokeMethod<void>('setMediaSession', {
+      'title': track.name,
+      'artist': track.artist,
+      'album': track.album,
+      'isPlaying': _isPlaying,
+      'durationMs': _duration.inMilliseconds,
     });
   }
 
@@ -642,9 +662,10 @@ class _PlayerPageState extends State<PlayerPage>
     _durationSub = _player.onDurationChanged.listen(
       (value) => setState(() => _duration = value),
     );
-    _stateSub = _player.onPlayerStateChanged.listen(
-      (value) => setState(() => _playerState = value),
-    );
+    _stateSub = _player.onPlayerStateChanged.listen((value) {
+      setState(() => _playerState = value);
+      unawaited(_syncWindowsMediaSession());
+    });
     _completeSub = _player.onPlayerComplete.listen((_) => _handleComplete());
   }
 
@@ -746,6 +767,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (!wasPlaying) await _pauseCurrent();
     }
     await _saveQueue();
+    unawaited(_syncWindowsMediaSession());
   }
 
   Future<void> _handleComplete() async {

@@ -12,6 +12,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Native Windows desktop build and Android APK from one Flutter codebase.
 - Android background playback with lock-screen, headset, notification, and Android Auto media controls.
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
+- Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
 - Add HTTP audio streams and online radio URLs.
 - Search the Radio Browser internet-radio directory, save station favorites, and play stations directly.
