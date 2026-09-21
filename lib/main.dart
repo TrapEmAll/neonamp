@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
@@ -26,6 +27,7 @@ class Track {
     this.rating = 0,
     this.playCount = 0,
     this.favorite = false,
+    this.artwork,
   });
   final String path;
   final String name;
@@ -35,6 +37,7 @@ class Track {
   final int rating;
   final int playCount;
   final bool favorite;
+  final Uint8List? artwork;
 
   Track copyWith({
     String? name,
@@ -44,6 +47,7 @@ class Track {
     int? rating,
     int? playCount,
     bool? favorite,
+    Uint8List? artwork,
   }) => Track(
     path: path,
     name: name ?? this.name,
@@ -53,6 +57,7 @@ class Track {
     rating: rating ?? this.rating,
     playCount: playCount ?? this.playCount,
     favorite: favorite ?? this.favorite,
+    artwork: artwork ?? this.artwork,
   );
 
   Map<String, dynamic> toJson() => {
@@ -64,6 +69,7 @@ class Track {
     'rating': rating,
     'playCount': playCount,
     'favorite': favorite,
+    if (artwork != null) 'artwork': base64Encode(artwork!),
   };
 
   static Track fromJson(Map<String, dynamic> json) => Track(
@@ -75,6 +81,9 @@ class Track {
     rating: (json['rating'] as num?)?.toInt() ?? 0,
     playCount: (json['playCount'] as num?)?.toInt() ?? 0,
     favorite: json['favorite'] as bool? ?? false,
+    artwork: json['artwork'] is String
+        ? base64Decode(json['artwork'] as String)
+        : null,
   );
 }
 
@@ -124,6 +133,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         title: track.name,
         artist: track.artist,
         album: track.album,
+        artUri: null,
         duration: duration,
       ),
     );
@@ -445,7 +455,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<Track> _readTrack(String path, String fileName) async {
     final fallback = fileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
     try {
-      final metadata = readMetadata(File(path));
+      final metadata = readMetadata(File(path), getImage: true);
       return Track(
         path: path,
         name: metadata.title?.trim().isNotEmpty == true
@@ -460,6 +470,9 @@ class _PlayerPageState extends State<PlayerPage>
         genre: metadata.genres.isNotEmpty
             ? metadata.genres.first
             : 'Unknown genre',
+        artwork: metadata.pictures.isNotEmpty
+            ? metadata.pictures.first.bytes
+            : null,
       );
     } catch (_) {
       return Track(path: path, name: fallback);
@@ -1416,13 +1429,30 @@ class _PlayerPageState extends State<PlayerPage>
                   ),
                   const Spacer(),
                   Center(
-                    child: CustomPaint(
-                      size: const Size(double.infinity, 160),
-                      painter: SpectrumPainter(
-                        progress: _pulse.value,
-                        active: _isPlaying,
-                      ),
-                    ),
+                    child: _current?.artwork != null
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: Image.memory(
+                              _current!.artwork!,
+                              width: 180,
+                              height: 180,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => CustomPaint(
+                                size: const Size(double.infinity, 160),
+                                painter: SpectrumPainter(
+                                  progress: _pulse.value,
+                                  active: _isPlaying,
+                                ),
+                              ),
+                            ),
+                          )
+                        : CustomPaint(
+                            size: const Size(double.infinity, 160),
+                            painter: SpectrumPainter(
+                              progress: _pulse.value,
+                              active: _isPlaying,
+                            ),
+                          ),
                   ),
                   const Spacer(),
                   Text(
