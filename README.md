@@ -27,7 +27,8 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - View embedded lyrics directly from library tracks.
-- Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE files are included in folder scans.
+- Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.
+- Metadata editing also writes common ID3 fields and lyrics into AIFF/AIFC files.
 - Select multiple library tracks and apply shared artist, album, genre, year, or rating metadata in one operation on Windows or Android.
 - Persistent smart playlists for favorites, top-rated, most-played, genre, and artist rules, including two-rule all/any matching.
 - Sort the library by recently added, title, artist, album, rating, or play count with a persisted direction.

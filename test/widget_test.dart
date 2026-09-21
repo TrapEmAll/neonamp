@@ -113,6 +113,32 @@ void main() {
     expect(restoreResumePosition(3001), const Duration(milliseconds: 3001));
   });
 
+  test('AIFF ID3 tags include editable common fields', () {
+    final tag = buildAiffId3Tag([
+      'Title',
+      'Artist',
+      'Album',
+      'Genre',
+      '',
+      '2026',
+      '2',
+      '9',
+      '1',
+      '2',
+      'Lyrics',
+    ]);
+    expect(String.fromCharCodes(tag.sublist(0, 3)), 'ID3');
+    expect(String.fromCharCodes(tag), contains('TIT2'));
+    expect(String.fromCharCodes(tag), contains('TRCK'));
+    expect(String.fromCharCodes(tag), contains('USLT'));
+  });
+
+  test('folder scans recognize the metadata reader audio formats', () {
+    expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
+    expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
+    expect(isSupportedLibraryAudioPath('cover.jpg'), isFalse);
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);

@@ -20,6 +20,133 @@ bool isVorbisAudioPath(String path) {
   return extension == 'ogg' || extension == 'opus';
 }
 
+bool isAiffAudioPath(String path) {
+  final extension = path.split('.').last.toLowerCase();
+  return extension == 'aif' || extension == 'aiff' || extension == 'aifc';
+}
+
+bool isSupportedLibraryAudioPath(String path) {
+  const extensions = {
+    '.mp3',
+    '.flac',
+    '.wav',
+    '.ogg',
+    '.m4a',
+    '.mp4',
+    '.aac',
+    '.wma',
+    '.opus',
+    '.ape',
+    '.aif',
+    '.aiff',
+    '.aifc',
+    '.mov',
+    '.webm',
+    '.mkv',
+  };
+  final lowerPath = path.toLowerCase();
+  final dot = lowerPath.lastIndexOf('.');
+  return dot >= 0 && extensions.contains(lowerPath.substring(dot));
+}
+
+List<int> _bigEndian32(int value) => [
+  (value >> 24) & 0xff,
+  (value >> 16) & 0xff,
+  (value >> 8) & 0xff,
+  value & 0xff,
+];
+
+List<int> _syncSafe32(int value) => [
+  (value >> 21) & 0x7f,
+  (value >> 14) & 0x7f,
+  (value >> 7) & 0x7f,
+  value & 0x7f,
+];
+
+List<int> _id3TextFrame(String id, String value) {
+  if (value.isEmpty) return const [];
+  final payload = <int>[3, ...utf8.encode(value)];
+  return <int>[
+    ...ascii.encode(id),
+    ..._bigEndian32(payload.length),
+    0,
+    0,
+    ...payload,
+  ];
+}
+
+List<int> _id3LyricsFrame(String value) {
+  if (value.trim().isEmpty) return const [];
+  final payload = <int>[3, ...ascii.encode('eng'), 0, ...utf8.encode(value)];
+  return <int>[
+    ...ascii.encode('USLT'),
+    ..._bigEndian32(payload.length),
+    0,
+    0,
+    ...payload,
+  ];
+}
+
+Uint8List buildAiffId3Tag(List<String> values) {
+  final frames = <int>[
+    ..._id3TextFrame('TIT2', values[0]),
+    ..._id3TextFrame('TPE1', values[1]),
+    ..._id3TextFrame('TALB', values[2]),
+    ..._id3TextFrame('TCON', values[3]),
+    ..._id3TextFrame('TYER', values[5]),
+    ..._id3TextFrame(
+      'TRCK',
+      values[7].isEmpty ? values[6] : '${values[6]}/${values[7]}',
+    ),
+    ..._id3TextFrame(
+      'TPOS',
+      values[9].isEmpty ? values[8] : '${values[8]}/${values[9]}',
+    ),
+    ..._id3LyricsFrame(values[10]),
+  ];
+  return Uint8List.fromList([
+    ...ascii.encode('ID3'),
+    3,
+    0,
+    0,
+    ..._syncSafe32(frames.length),
+    ...frames,
+  ]);
+}
+
+Future<void> writeAiffTags(File file, List<String> values) async {
+  final source = await file.readAsBytes();
+  if (source.length < 12 || ascii.decode(source.sublist(0, 4)) != 'FORM') {
+    throw const FormatException('Not an AIFF container');
+  }
+  final body = <int>[];
+  var offset = 12;
+  while (offset + 8 <= source.length) {
+    final chunkId = ascii.decode(source.sublist(offset, offset + 4));
+    final chunkSize =
+        (source[offset + 4] << 24) |
+        (source[offset + 5] << 16) |
+        (source[offset + 6] << 8) |
+        source[offset + 7];
+    final end = offset + 8 + chunkSize;
+    if (chunkSize < 0 || end > source.length) break;
+    final next = end + (chunkSize.isOdd ? 1 : 0);
+    if (chunkId != 'ID3 ') body.addAll(source.sublist(offset, next));
+    offset = next;
+  }
+  final tag = buildAiffId3Tag(values);
+  final tagChunk = <int>[
+    ...ascii.encode('ID3 '),
+    ..._bigEndian32(tag.length),
+    ...tag,
+    if (tag.length.isOdd) 0,
+  ];
+  final output = <int>[...source.sublist(0, 12), ...body, ...tagChunk];
+  final formSize = output.length - 8;
+  output.setRange(4, 8, _bigEndian32(formSize));
+  await file.writeAsBytes(output);
+}
+
 double? parseReplayGainDb(String? value) {
   if (value == null) return null;
   final match = RegExp(r'[-+]?\d+(?:\.\d+)?').firstMatch(value);
@@ -89,6 +216,10 @@ Future<void> writeVorbisTags(File file, List<String> values) async {
 }
 
 Future<void> writeTrackMetadata(File file, List<String> values) async {
+  if (isAiffAudioPath(file.path)) {
+    await writeAiffTags(file, values);
+    return;
+  }
   if (isVorbisAudioPath(file.path)) {
     await writeVorbisTags(file, values);
     return;
@@ -1364,25 +1495,10 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _scanFolder(String directory) async {
-    const extensions = {
-      '.mp3',
-      '.flac',
-      '.wav',
-      '.ogg',
-      '.m4a',
-      '.aac',
-      '.wma',
-      '.opus',
-      '.ape',
-    };
     final files = Directory(directory)
         .listSync(recursive: true)
         .whereType<File>()
-        .where(
-          (file) => extensions.contains(
-            file.path.toLowerCase().substring(file.path.lastIndexOf('.')),
-          ),
-        )
+        .where((file) => isSupportedLibraryAudioPath(file.path))
         .toList();
     for (final file in files) {
       if (_queue.any((track) => track.path == file.path)) continue;
