@@ -1,12 +1,17 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <algorithm>
+#include <fstream>
+#include <vector>
 #include <string>
 
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <ntddcdrm.h>
+#include <winioctl.h>
 
 #include <systemmediatransportcontrolsinterop.h>
 #include <winrt/Windows.Media.h>
@@ -107,6 +112,174 @@ std::wstring GetStringArgument(const flutter::EncodableMap& values,
   return std::wstring(value->begin(), value->end());
 }
 
+std::string ToUtf8(const std::wstring& value) {
+  if (value.empty()) return {};
+  const int size = WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                                       static_cast<int>(value.size()), nullptr,
+                                       0, nullptr, nullptr);
+  std::string result(size, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, value.data(),
+                      static_cast<int>(value.size()), result.data(), size,
+                      nullptr, nullptr);
+  return result;
+}
+
+std::wstring CdDevicePath(const std::wstring& drive) {
+  return L"\\\\.\\" + drive.substr(0, 2);
+}
+
+DWORD TocAddress(const TRACK_DATA& track) {
+  return (static_cast<DWORD>(track.Address[0]) << 24) |
+         (static_cast<DWORD>(track.Address[1]) << 16) |
+         (static_cast<DWORD>(track.Address[2]) << 8) |
+         static_cast<DWORD>(track.Address[3]);
+}
+
+bool ReadAudioCdToc(HANDLE device, CDROM_TOC& toc) {
+  DWORD bytes_returned = 0;
+  return DeviceIoControl(device, IOCTL_CDROM_READ_TOC, nullptr, 0, &toc,
+                          sizeof(toc), &bytes_returned, nullptr) != FALSE;
+}
+
+std::vector<std::wstring> CdDrives() {
+  std::vector<std::wstring> drives;
+  wchar_t buffer[512] = {};
+  const DWORD length = GetLogicalDriveStringsW(
+      static_cast<DWORD>(std::size(buffer) - 1), buffer);
+  for (DWORD offset = 0; offset < length;) {
+    const std::wstring drive(&buffer[offset]);
+    if (GetDriveTypeW(drive.c_str()) == DRIVE_CDROM) drives.push_back(drive);
+    offset += static_cast<DWORD>(drive.size() + 1);
+  }
+  return drives;
+}
+
+flutter::EncodableList ListAudioCds() {
+  flutter::EncodableList discs;
+  for (const auto& drive : CdDrives()) {
+    const auto device_path = CdDevicePath(drive);
+    HANDLE device = CreateFileW(device_path.c_str(), GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                OPEN_EXISTING, 0, nullptr);
+    if (device == INVALID_HANDLE_VALUE) continue;
+    CDROM_TOC toc = {};
+    if (ReadAudioCdToc(device, toc)) {
+      flutter::EncodableList tracks;
+      const int count = toc.LastTrack - toc.FirstTrack + 1;
+      for (int index = 0; index < count; index++) {
+        const auto& entry = toc.TrackData[index];
+        if ((entry.Control & 0x04) != 0) continue;
+        const DWORD start = TocAddress(entry);
+        const DWORD end = TocAddress(toc.TrackData[index + 1]);
+        if (end <= start) continue;
+        tracks.emplace_back(flutter::EncodableMap{
+            {flutter::EncodableValue("track"),
+             flutter::EncodableValue(static_cast<int>(entry.TrackNumber))},
+            {flutter::EncodableValue("durationSeconds"),
+             flutter::EncodableValue(static_cast<int>((end - start) / 75))},
+        });
+      }
+      if (!tracks.empty()) {
+        discs.emplace_back(flutter::EncodableMap{
+            {flutter::EncodableValue("drive"),
+             flutter::EncodableValue(ToUtf8(drive.substr(0, 2)))},
+            {flutter::EncodableValue("tracks"), flutter::EncodableValue(tracks)},
+        });
+      }
+    }
+    CloseHandle(device);
+  }
+  return discs;
+}
+
+#pragma pack(push, 1)
+struct WaveHeader {
+  char riff[4] = {'R', 'I', 'F', 'F'};
+  uint32_t file_size = 0;
+  char wave[4] = {'W', 'A', 'V', 'E'};
+  char fmt[4] = {'f', 'm', 't', ' '};
+  uint32_t fmt_size = 16;
+  uint16_t format = 1;
+  uint16_t channels = 2;
+  uint32_t sample_rate = 44100;
+  uint32_t byte_rate = 44100 * 4;
+  uint16_t block_align = 4;
+  uint16_t bits_per_sample = 16;
+  char data[4] = {'d', 'a', 't', 'a'};
+  uint32_t data_size = 0;
+};
+#pragma pack(pop)
+
+bool RipAudioCdTrack(const std::wstring& drive, int track_number,
+                     const std::wstring& output_path) {
+  const auto device_path = CdDevicePath(drive);
+  HANDLE device = CreateFileW(device_path.c_str(), GENERIC_READ,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+  if (device == INVALID_HANDLE_VALUE) return false;
+  CDROM_TOC toc = {};
+  bool success = false;
+  std::ofstream output(output_path, std::ios::binary);
+  if (!output || !ReadAudioCdToc(device, toc)) {
+    CloseHandle(device);
+    return false;
+  }
+  WaveHeader header;
+  output.write(reinterpret_cast<const char*>(&header), sizeof(header));
+  DWORD start = 0;
+  DWORD end = 0;
+  const int count = toc.LastTrack - toc.FirstTrack + 1;
+  for (int index = 0; index < count; index++) {
+    const auto& entry = toc.TrackData[index];
+    if (entry.TrackNumber != track_number || (entry.Control & 0x04) != 0) continue;
+    start = TocAddress(entry);
+    end = TocAddress(toc.TrackData[index + 1]);
+    break;
+  }
+  if (end <= start) {
+    output.close();
+    DeleteFileW(output_path.c_str());
+    CloseHandle(device);
+    return false;
+  }
+  constexpr ULONG sectors_per_read = 16;
+  constexpr size_t bytes_per_sector = 2352;
+  std::vector<BYTE> buffer(sectors_per_read * bytes_per_sector);
+  uint32_t data_size = 0;
+  for (DWORD lba = start; lba < end;) {
+    const ULONG sectors = static_cast<ULONG>(
+        std::min<DWORD>(sectors_per_read, end - lba));
+    RAW_READ_INFO read_info = {};
+    read_info.DiskOffset.QuadPart =
+        static_cast<LONGLONG>(lba) * bytes_per_sector;
+    read_info.SectorCount = sectors;
+    read_info.TrackMode = CDDA;
+    DWORD bytes_read = 0;
+    if (!DeviceIoControl(device, IOCTL_CDROM_RAW_READ, &read_info,
+                          sizeof(read_info), buffer.data(),
+                          static_cast<DWORD>(buffer.size()), &bytes_read,
+                          nullptr) ||
+        bytes_read == 0) {
+      output.close();
+      DeleteFileW(output_path.c_str());
+      CloseHandle(device);
+      return false;
+    }
+    output.write(reinterpret_cast<const char*>(buffer.data()), bytes_read);
+    data_size += bytes_read;
+    lba += sectors;
+  }
+  header.file_size = sizeof(WaveHeader) - 8 + data_size;
+  header.data_size = data_size;
+  output.seekp(0);
+  output.write(reinterpret_cast<const char*>(&header), sizeof(header));
+  success = output.good();
+  output.close();
+  if (!success) DeleteFileW(output_path.c_str());
+  CloseHandle(device);
+  return success;
+}
+
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -153,6 +326,26 @@ bool FlutterWindow::OnCreate() {
           result->Success(flutter::EncodableValue(
               !input_path.empty() && !output_path.empty() &&
               TranscodeToM4a(input_path, output_path)));
+        } else if (call.method_name() == "listAudioCds") {
+          result->Success(flutter::EncodableValue(ListAudioCds()));
+        } else if (call.method_name() == "ripAudioCd") {
+          const auto* values = std::get_if<flutter::EncodableMap>(call.arguments());
+          if (values == nullptr) {
+            result->Success(flutter::EncodableValue(false));
+            return;
+          }
+          const auto drive = GetStringArgument(*values, "drive");
+          const auto output_path = GetStringArgument(*values, "outputPath");
+          int track = 0;
+          const auto track_entry = values->find(flutter::EncodableValue("track"));
+          if (track_entry != values->end()) {
+            if (const auto* value = std::get_if<int>(&track_entry->second)) {
+              track = *value;
+            }
+          }
+          result->Success(flutter::EncodableValue(
+              !drive.empty() && !output_path.empty() && track > 0 &&
+              RipAudioCdTrack(drive, track, output_path)));
         } else {
           result->NotImplemented();
         }

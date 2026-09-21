@@ -17,7 +17,13 @@ class MainActivity : AudioServiceActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, converterChannel)
             .setMethodCallHandler { call, result ->
                 if (call.method != "convertToM4a") {
-                    result.notImplemented()
+                    if (call.method == "listAudioCds") {
+                        result.success(emptyList<Map<String, Any>>())
+                    } else if (call.method == "ripAudioCd") {
+                        result.success(false)
+                    } else {
+                        result.notImplemented()
+                    }
                     return@setMethodCallHandler
                 }
                 val inputPath = call.argument<String>("inputPath")
@@ -35,6 +41,14 @@ class MainActivity : AudioServiceActivity() {
                     if (!converted) File(outputPath).delete()
                     runOnUiThread { result.success(converted) }
                 }.start()
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/system_controls")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "listAudioCds" -> result.success(emptyList<Map<String, Any>>())
+                    "ripAudioCd" -> result.success(false)
+                    else -> result.notImplemented()
+                }
             }
     }
 

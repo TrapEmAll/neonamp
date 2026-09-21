@@ -2303,6 +2303,84 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _importAudioCd() async {
+    try {
+      final raw = await const MethodChannel('neonamp/system_controls')
+          .invokeMethod<List<dynamic>>('listAudioCds');
+      final discs = (raw ?? [])
+          .whereType<Map>()
+          .map((disc) => Map<String, dynamic>.from(disc))
+          .toList();
+      if (discs.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No audio CD drives are available.')),
+        );
+        return;
+      }
+      final choices = <Map<String, dynamic>>[];
+      for (final disc in discs) {
+        final drive = disc['drive'] as String? ?? '';
+        for (final track in (disc['tracks'] as List? ?? []).whereType<Map>()) {
+          choices.add({
+            'drive': drive,
+            'track': (track['track'] as num?)?.toInt() ?? 0,
+            'durationSeconds': (track['durationSeconds'] as num?)?.toInt() ?? 0,
+          });
+        }
+      }
+      final selection = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Import audio CD track'),
+          children: choices
+              .map(
+                (choice) => SimpleDialogOption(
+                  onPressed: () => Navigator.pop(context, choice),
+                  child: Text(
+                    '${choice['drive']} · Track ${choice['track']} · '
+                    '${_time(Duration(seconds: choice['durationSeconds'] as int))}',
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+      );
+      if (selection == null) return;
+      final destination = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose a CD rip folder',
+      );
+      if (destination == null) return;
+      final drive = selection['drive'] as String;
+      final trackNumber = selection['track'] as int;
+      final outputName = nextSyncFileName(
+        'CD ${drive.replaceAll(':', '')} Track $trackNumber.wav',
+        <String>{},
+      );
+      final output = '$destination${Platform.pathSeparator}$outputName';
+      final ripped = await const MethodChannel('neonamp/system_controls')
+          .invokeMethod<bool>('ripAudioCd', {
+            'drive': drive,
+            'track': trackNumber,
+            'outputPath': output,
+          });
+      if (ripped != true) throw const FormatException('CD rip failed.');
+      final track = await _readTrack(output, outputName);
+      if (!mounted) return;
+      setState(() {
+        _queue.add(track);
+        _library.add(track);
+        _selected = _queue.length - 1;
+      });
+      await _saveQueue();
+      await _select(_selected);
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not import CD: $error')));
+    }
+  }
+
   Future<void> _exportPlsPlaylist() async {
     final lines = <String>['[playlist]'];
     for (var index = 0; index < _queue.length; index++) {
@@ -3747,6 +3825,12 @@ class _PlayerPageState extends State<PlayerPage>
               color: Colors.white60,
             ),
           ),
+        if (MediaQuery.sizeOf(context).width >= 1000)
+          IconButton(
+            tooltip: 'Import audio CD',
+            onPressed: _importAudioCd,
+            icon: const Icon(Icons.album_outlined, color: Colors.white60),
+          ),
         IconButton(
           tooltip: 'Rescan library folders',
           onPressed: _rescanFolders,
@@ -3847,6 +3931,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'plugins') _showPluginManager();
               if (value == 'export') _exportPlaylist();
               if (value == 'sync') _syncToDeviceFolder();
+              if (value == 'cd') _importAudioCd();
               if (value == 'exportPls') _exportPlsPlaylist();
             },
             itemBuilder: (_) => const [
@@ -3885,6 +3970,7 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'sync',
                 child: Text('Sync music to device folder'),
               ),
+              PopupMenuItem(value: 'cd', child: Text('Import audio CD')),
               PopupMenuItem(
                 value: 'exportPls',
                 child: Text('Export PLS playlist'),
