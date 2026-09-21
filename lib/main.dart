@@ -88,6 +88,26 @@ class Track {
   );
 }
 
+class SmartPlaylist {
+  const SmartPlaylist({
+    required this.name,
+    required this.rule,
+    this.value = '',
+  });
+
+  final String name;
+  final String rule;
+  final String value;
+
+  Map<String, String> toJson() => {'name': name, 'rule': rule, 'value': value};
+
+  static SmartPlaylist fromJson(Map<String, dynamic> json) => SmartPlaylist(
+    name: json['name'] as String? ?? 'Smart playlist',
+    rule: json['rule'] as String? ?? 'Favorites',
+    value: json['value'] as String? ?? '',
+  );
+}
+
 class _TogglePlayIntent extends Intent {
   const _TogglePlayIntent();
 }
@@ -234,6 +254,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<String> _libraryFolders = [];
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
+  final List<SmartPlaylist> _smartPlaylists = [];
   final TextEditingController _searchController = TextEditingController();
   late final AnimationController _pulse = AnimationController(
     vsync: this,
@@ -315,6 +336,7 @@ class _PlayerPageState extends State<PlayerPage>
     final savedFolders = prefs.getStringList('libraryFolders') ?? [];
     final savedPodcastFeeds = prefs.getStringList('podcastFeeds') ?? [];
     final savedPlaylists = prefs.getString('playlists');
+    final savedSmartPlaylists = prefs.getString('smartPlaylists');
     final savedSettings = prefs.getString('settings');
     if (!mounted) return;
     setState(() {
@@ -334,6 +356,14 @@ class _PlayerPageState extends State<PlayerPage>
         final decoded = jsonDecode(savedPlaylists) as Map<String, dynamic>;
         for (final entry in decoded.entries)
           _playlists[entry.key] = (entry.value as List).cast<String>();
+      }
+      if (savedSmartPlaylists != null) {
+        final decoded = jsonDecode(savedSmartPlaylists) as List;
+        _smartPlaylists.addAll(
+          decoded.map(
+            (entry) => SmartPlaylist.fromJson(entry as Map<String, dynamic>),
+          ),
+        );
       }
       if (savedSettings != null) {
         final settings = jsonDecode(savedSettings) as Map<String, dynamic>;
@@ -366,6 +396,10 @@ class _PlayerPageState extends State<PlayerPage>
     await prefs.setStringList('libraryFolders', _libraryFolders);
     await prefs.setStringList('podcastFeeds', _podcastFeeds);
     await prefs.setString('playlists', jsonEncode(_playlists));
+    await prefs.setString(
+      'smartPlaylists',
+      jsonEncode(_smartPlaylists.map((playlist) => playlist.toJson()).toList()),
+    );
     await prefs.setString(
       'settings',
       jsonEncode({
@@ -817,6 +851,26 @@ class _PlayerPageState extends State<PlayerPage>
         .toList();
   }
 
+  List<Track> _tracksForSmartPlaylist(SmartPlaylist playlist) {
+    final value = playlist.value.toLowerCase();
+    return _library.where((track) {
+      switch (playlist.rule) {
+        case 'Favorites':
+          return track.favorite;
+        case 'Top rated':
+          return track.rating >= 4;
+        case 'Most played':
+          return track.playCount > 0;
+        case 'Genre':
+          return track.genre.toLowerCase() == value;
+        case 'Artist':
+          return track.artist.toLowerCase() == value;
+        default:
+          return false;
+      }
+    }).toList();
+  }
+
   void _toggleFavorite(Track track) {
     final index = _library.indexWhere((item) => item.path == track.path);
     if (index < 0) return;
@@ -954,6 +1008,102 @@ class _PlayerPageState extends State<PlayerPage>
     if (name == null || name.isEmpty) return;
     setState(() => _playlists[name] = []);
     await _saveQueue();
+  }
+
+  Future<void> _createSmartPlaylist() async {
+    final nameController = TextEditingController();
+    final valueController = TextEditingController();
+    var rule = 'Favorites';
+    final result = await showDialog<SmartPlaylist>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('New smart playlist'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: rule,
+                decoration: const InputDecoration(labelText: 'Rule'),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'Favorites',
+                    child: Text('Favorites'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Top rated',
+                    child: Text('Top rated'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Most played',
+                    child: Text('Most played'),
+                  ),
+                  DropdownMenuItem(value: 'Genre', child: Text('Genre is')),
+                  DropdownMenuItem(value: 'Artist', child: Text('Artist is')),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => rule = value);
+                },
+              ),
+              if (rule == 'Genre' || rule == 'Artist')
+                TextField(
+                  controller: valueController,
+                  decoration: InputDecoration(
+                    labelText: rule == 'Genre' ? 'Genre' : 'Artist',
+                  ),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final value = valueController.text.trim();
+                if (name.isEmpty ||
+                    ((rule == 'Genre' || rule == 'Artist') && value.isEmpty)) {
+                  return;
+                }
+                Navigator.pop(
+                  context,
+                  SmartPlaylist(name: name, rule: rule, value: value),
+                );
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    setState(() => _smartPlaylists.add(result));
+    await _saveQueue();
+  }
+
+  Future<void> _playSmartPlaylist(SmartPlaylist playlist) async {
+    final tracks = _tracksForSmartPlaylist(playlist);
+    if (tracks.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No tracks match ${playlist.name}.')),
+      );
+      return;
+    }
+    setState(() {
+      _queue
+        ..clear()
+        ..addAll(tracks);
+      _selected = 0;
+    });
+    await _select(0);
   }
 
   Future<void> _addTrackToPlaylist(Track track) async {
@@ -1529,34 +1679,57 @@ class _PlayerPageState extends State<PlayerPage>
 
   Widget _playlistView() => Column(
     children: [
-      TextButton.icon(
-        onPressed: _createPlaylist,
-        icon: const Icon(Icons.add, size: 16),
-        label: const Text('New playlist'),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          TextButton.icon(
+            onPressed: _createPlaylist,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('New playlist'),
+          ),
+          TextButton.icon(
+            onPressed: _createSmartPlaylist,
+            icon: const Icon(Icons.auto_awesome, size: 16),
+            label: const Text('New smart playlist'),
+          ),
+        ],
       ),
       Expanded(
-        child: _playlists.isEmpty
+        child: _playlists.isEmpty && _smartPlaylists.isEmpty
             ? _emptyQueue()
             : ListView(
-                children: _playlists.keys
-                    .map(
-                      (name) => ListTile(
-                        leading: const Icon(
-                          Icons.playlist_play,
-                          color: Color(0xffef4bff),
+                children: [
+                  if (_playlists.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(18, 8, 18, 2),
+                      child: Text(
+                        'PLAYLISTS',
+                        style: TextStyle(
+                          color: Colors.white38,
+                          fontSize: 10,
+                          letterSpacing: 1.4,
                         ),
-                        title: Text(name),
-                        subtitle: Text(
-                          '${_playlists[name]!.length} tracks',
-                          style: const TextStyle(
-                            color: Colors.white38,
-                            fontSize: 11,
-                          ),
+                      ),
+                    ),
+                  ..._playlists.keys.map(
+                    (name) => ListTile(
+                      leading: const Icon(
+                        Icons.playlist_play,
+                        color: Color(0xffef4bff),
+                      ),
+                      title: Text(name),
+                      subtitle: Text(
+                        '${_playlists[name]!.length} tracks',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
                         ),
-                        onTap: () {
-                          setState(() {
-                            _queue.clear();
-                            _queue.addAll(
+                      ),
+                      onTap: () {
+                        setState(() {
+                          _queue
+                            ..clear()
+                            ..addAll(
                               _playlists[name]!.map(
                                 (path) => _library.firstWhere(
                                   (track) => track.path == path,
@@ -1567,12 +1740,56 @@ class _PlayerPageState extends State<PlayerPage>
                                 ),
                               ),
                             );
-                            _selected = 0;
-                          });
+                          _selected = 0;
+                        });
+                      },
+                    ),
+                  ),
+                  if (_smartPlaylists.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(18, 16, 18, 2),
+                      child: Text(
+                        'SMART PLAYLISTS',
+                        style: TextStyle(
+                          color: Colors.white38,
+                          fontSize: 10,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                    ),
+                  ..._smartPlaylists.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final playlist = entry.value;
+                    final count = _tracksForSmartPlaylist(playlist).length;
+                    return ListTile(
+                      leading: const Icon(
+                        Icons.auto_awesome,
+                        color: Color(0xffef4bff),
+                      ),
+                      title: Text(playlist.name),
+                      subtitle: Text(
+                        '${playlist.rule}${playlist.value.isEmpty ? '' : ': ${playlist.value}'} · $count tracks',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Delete smart playlist',
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: Colors.white30,
+                        ),
+                        onPressed: () async {
+                          setState(() => _smartPlaylists.removeAt(index));
+                          await _saveQueue();
                         },
                       ),
-                    )
-                    .toList(),
+                      onTap: () => _playSmartPlaylist(playlist),
+                    );
+                  }),
+                ],
               ),
       ),
     ],
