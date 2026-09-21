@@ -647,51 +647,71 @@ class _PlayerPageState extends State<PlayerPage>
     final artist = TextEditingController(text: track.artist);
     final album = TextEditingController(text: track.album);
     final genre = TextEditingController(text: track.genre);
+    var rating = track.rating;
     final values = await showDialog<List<String>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit metadata'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                decoration: const InputDecoration(labelText: 'Title'),
-              ),
-              TextField(
-                controller: artist,
-                decoration: const InputDecoration(labelText: 'Artist'),
-              ),
-              TextField(
-                controller: album,
-                decoration: const InputDecoration(labelText: 'Album'),
-              ),
-              TextField(
-                controller: genre,
-                decoration: const InputDecoration(labelText: 'Genre'),
-              ),
-            ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit metadata'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: title,
+                  decoration: const InputDecoration(labelText: 'Title'),
+                ),
+                TextField(
+                  controller: artist,
+                  decoration: const InputDecoration(labelText: 'Artist'),
+                ),
+                TextField(
+                  controller: album,
+                  decoration: const InputDecoration(labelText: 'Album'),
+                ),
+                TextField(
+                  controller: genre,
+                  decoration: const InputDecoration(labelText: 'Genre'),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Text('Rating'),
+                    const SizedBox(width: 8),
+                    for (var star = 1; star <= 5; star++)
+                      IconButton(
+                        tooltip: '$star star${star == 1 ? '' : 's'}',
+                        onPressed: () => setDialogState(() => rating = star),
+                        icon: Icon(
+                          star <= rating ? Icons.star : Icons.star_border,
+                          color: const Color(0xffffd166),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, [
+                title.text.trim(),
+                artist.text.trim(),
+                album.text.trim(),
+                genre.text.trim(),
+                '$rating',
+              ]),
+              child: const Text('Save'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, [
-              title.text.trim(),
-              artist.text.trim(),
-              album.text.trim(),
-              genre.text.trim(),
-            ]),
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
-    if (values == null || values.length != 4) return;
+    if (values == null || values.length != 5) return;
     try {
       updateMetadata(File(track.path), (metadata) {
         metadata.setTitle(values[0]);
@@ -712,6 +732,7 @@ class _PlayerPageState extends State<PlayerPage>
       artist: values[1],
       album: values[2],
       genre: values[3],
+      rating: int.tryParse(values[4]) ?? track.rating,
     );
     setState(() {
       final libraryIndex = _library.indexWhere(
