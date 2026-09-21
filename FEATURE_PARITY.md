@@ -29,6 +29,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Spectrum visualization
 - Built-in Neon, Aurora, Amber, and Classic skins with persisted selection
 - User-importable JSON skin packages with persisted selection on Windows and Android
+- Portable JSON plugin packages with validated manifests, persisted enablement, and plugin-provided equalizer presets on Windows and Android
 - Responsive Windows and Android layouts
 - Android background playback with notification, lock-screen, headset, and Android Auto media controls
 - Windows global media keys for play/pause, stop, previous, and next
@@ -37,7 +38,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 ## Next parity milestones
 
 - Broaden tag-writing coverage beyond the currently supported containers
-- Plugin API
+- Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Broader radio-directory metadata and station interoperability
 - CD ripping and format conversion on Windows; portable-device sync
 

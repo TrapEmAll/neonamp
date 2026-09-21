@@ -188,6 +188,94 @@ List<Map<String, dynamic>> mergeRadioStations(
   return result;
 }
 
+class NeonAmpPlugin {
+  const NeonAmpPlugin({
+    required this.id,
+    required this.name,
+    required this.version,
+    required this.description,
+    required this.capabilities,
+    required this.equalizerPresets,
+    this.enabled = true,
+  });
+
+  factory NeonAmpPlugin.fromJson(Map<String, dynamic> json) {
+    final id = (json['id'] as String?)?.trim() ?? '';
+    final name = (json['name'] as String?)?.trim() ?? '';
+    if (!RegExp(r'^[a-zA-Z0-9._-]+$').hasMatch(id) || name.isEmpty) {
+      throw const FormatException('Plugin id and name are required.');
+    }
+    final rawPresets = json['equalizerPresets'];
+    final equalizerPresets = <String, List<double>>{};
+    if (rawPresets is Map) {
+      for (final entry in rawPresets.entries) {
+        final presetName = entry.key.toString().trim();
+        final values = entry.value;
+        if (presetName.isEmpty || values is! List || values.length != 10) {
+          throw const FormatException(
+            'Equalizer presets must contain exactly 10 bands.',
+          );
+        }
+        if (values.any((value) => value is! num)) {
+          throw const FormatException('Equalizer bands must be numeric.');
+        }
+        final bands = values.map((value) => (value as num).toDouble()).toList();
+        if (bands.any((value) => value < -12 || value > 12)) {
+          throw const FormatException(
+            'Equalizer bands must be between -12 and 12 dB.',
+          );
+        }
+        equalizerPresets[presetName] = bands;
+      }
+    }
+    return NeonAmpPlugin(
+      id: id,
+      name: name,
+      version: (json['version'] as String?)?.trim().isNotEmpty == true
+          ? (json['version'] as String).trim()
+          : '1.0.0',
+      description: (json['description'] as String?)?.trim() ?? '',
+      capabilities:
+          (json['capabilities'] as List?)
+              ?.whereType<String>()
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .toList() ??
+          const [],
+      equalizerPresets: equalizerPresets,
+      enabled: json['enabled'] as bool? ?? true,
+    );
+  }
+
+  final String id;
+  final String name;
+  final String version;
+  final String description;
+  final List<String> capabilities;
+  final Map<String, List<double>> equalizerPresets;
+  final bool enabled;
+
+  NeonAmpPlugin copyWith({bool? enabled}) => NeonAmpPlugin(
+    id: id,
+    name: name,
+    version: version,
+    description: description,
+    capabilities: capabilities,
+    equalizerPresets: equalizerPresets,
+    enabled: enabled ?? this.enabled,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'version': version,
+    'description': description,
+    'capabilities': capabilities,
+    'equalizerPresets': equalizerPresets,
+    'enabled': enabled,
+  };
+}
+
 class Track {
   Track({
     required this.path,
@@ -731,6 +819,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
   final List<SmartPlaylist> _smartPlaylists = [];
+  final Map<String, NeonAmpPlugin> _plugins = {};
   final TextEditingController _searchController = TextEditingController();
   late final AnimationController _pulse = AnimationController(
     vsync: this,
@@ -1014,6 +1103,7 @@ class _PlayerPageState extends State<PlayerPage>
     final savedPodcastFeeds = prefs.getStringList('podcastFeeds') ?? [];
     final savedPlaylists = prefs.getString('playlists');
     final savedSmartPlaylists = prefs.getString('smartPlaylists');
+    final savedPlugins = prefs.getString('plugins');
     final savedSettings = prefs.getString('settings');
     if (!mounted) return;
     setState(() {
@@ -1041,6 +1131,19 @@ class _PlayerPageState extends State<PlayerPage>
             (entry) => SmartPlaylist.fromJson(entry as Map<String, dynamic>),
           ),
         );
+      }
+      if (savedPlugins != null) {
+        final decoded = jsonDecode(savedPlugins) as List;
+        for (final entry in decoded) {
+          try {
+            final plugin = NeonAmpPlugin.fromJson(
+              entry as Map<String, dynamic>,
+            );
+            _plugins[plugin.id] = plugin;
+          } on Object catch (error) {
+            debugPrint('Skipping invalid saved plugin: $error');
+          }
+        }
       }
       if (savedSettings != null) {
         final settings = jsonDecode(savedSettings) as Map<String, dynamic>;
@@ -1081,6 +1184,10 @@ class _PlayerPageState extends State<PlayerPage>
     await prefs.setString(
       'smartPlaylists',
       jsonEncode(_smartPlaylists.map((playlist) => playlist.toJson()).toList()),
+    );
+    await prefs.setString(
+      'plugins',
+      jsonEncode(_plugins.values.map((plugin) => plugin.toJson()).toList()),
     );
     await prefs.setString(
       'settings',
@@ -2934,6 +3041,103 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _importPlugin() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json', 'neonamp-plugin'],
+    );
+    final path = result.isEmpty ? null : result.first.path;
+    if (path == null) return;
+    try {
+      final plugin = NeonAmpPlugin.fromJson(
+        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+      );
+      setState(() => _plugins[plugin.id] = plugin);
+      await _saveQueue();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported plugin: ${plugin.name}')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import plugin: $error')),
+      );
+    }
+  }
+
+  Future<void> _showPluginManager() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Plugins'),
+          content: SizedBox(
+            width: 540,
+            child: _plugins.isEmpty
+                ? const Text('No plugins installed.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: _plugins.values
+                        .map(
+                          (plugin) => ListTile(
+                            leading: const Icon(Icons.extension_outlined),
+                            title: Text('${plugin.name} ${plugin.version}'),
+                            subtitle: Text(
+                              [
+                                plugin.description,
+                                if (plugin.capabilities.isNotEmpty)
+                                  plugin.capabilities.join(', '),
+                              ].where((value) => value.isNotEmpty).join(' · '),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Switch(
+                                  value: plugin.enabled,
+                                  onChanged: (value) {
+                                    setState(
+                                      () => _plugins[plugin.id] = plugin
+                                          .copyWith(enabled: value),
+                                    );
+                                    unawaited(_saveQueue());
+                                    setDialogState(() {});
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: 'Remove plugin',
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: () {
+                                    setState(() => _plugins.remove(plugin.id));
+                                    unawaited(_saveQueue());
+                                    setDialogState(() {});
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _importPlugin();
+              },
+              child: const Text('Import plugin'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _showThemePicker() async {
     final selected = await showDialog<String>(
       context: context,
@@ -3007,7 +3211,21 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _showEqualizer() async {
-    const presets = ['Flat', 'Rock', 'Pop', 'Jazz', 'Classical', 'Bass boost'];
+    const builtInPresets = [
+      'Flat',
+      'Rock',
+      'Pop',
+      'Jazz',
+      'Classical',
+      'Bass boost',
+    ];
+    final pluginPresets = <String, List<double>>{};
+    for (final plugin in _plugins.values.where((plugin) => plugin.enabled)) {
+      pluginPresets.addAll(plugin.equalizerPresets);
+    }
+    final presets = [...builtInPresets, ...pluginPresets.keys];
+    final selectedPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
+    if (_eqPreset != selectedPreset) _eqPreset = selectedPreset;
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -3031,7 +3249,7 @@ class _PlayerPageState extends State<PlayerPage>
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
-                  initialValue: _eqPreset,
+                  initialValue: selectedPreset,
                   decoration: const InputDecoration(labelText: 'Preset'),
                   items: presets
                       .map(
@@ -3045,8 +3263,11 @@ class _PlayerPageState extends State<PlayerPage>
                     if (value == null) return;
                     setState(() {
                       _eqPreset = value;
+                      final pluginBands = pluginPresets[value];
                       for (var i = 0; i < _eqBands.length; i++) {
-                        _eqBands[i] = value == 'Bass boost' && i < 3 ? 6 : 0;
+                        _eqBands[i] =
+                            pluginBands?[i] ??
+                            (value == 'Bass boost' && i < 3 ? 6 : 0);
                       }
                     });
                     if (_dspActive) {
@@ -3414,6 +3635,16 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.file_upload_outlined, color: Colors.white60),
           ),
           IconButton(
+            tooltip: 'Manage plugins',
+            onPressed: _showPluginManager,
+            icon: Icon(
+              Icons.extension_outlined,
+              color: _plugins.values.any((plugin) => plugin.enabled)
+                  ? const Color(0xffef4bff)
+                  : Colors.white60,
+            ),
+          ),
+          IconButton(
             tooltip: 'Export M3U playlist',
             onPressed: _exportPlaylist,
             icon: const Icon(Icons.ios_share, color: Colors.white60),
@@ -3443,6 +3674,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'theme') _showThemePicker();
               if (value == 'importSkin') _importSkin();
+              if (value == 'plugins') _showPluginManager();
               if (value == 'export') _exportPlaylist();
               if (value == 'exportPls') _exportPlsPlaylist();
             },
@@ -3473,6 +3705,7 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'importSkin',
                 child: Text('Import skin package'),
               ),
+              PopupMenuItem(value: 'plugins', child: Text('Manage plugins')),
               PopupMenuItem(
                 value: 'export',
                 child: Text('Export M3U playlist'),

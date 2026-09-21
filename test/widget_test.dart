@@ -43,6 +43,37 @@ void main() {
     expect(merged.single['listeners'], 12);
   });
 
+  test('portable plugins validate and round-trip equalizer presets', () {
+    const bands = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 4.0, 3.0, 2.0, 1.0];
+    const plugin = NeonAmpPlugin(
+      id: 'community.synthwave',
+      name: 'Synthwave Pack',
+      version: '1.2.0',
+      description: 'Community presets',
+      capabilities: ['equalizer-presets'],
+      equalizerPresets: {'Neon drive': bands},
+    );
+
+    final restored = NeonAmpPlugin.fromJson(plugin.toJson());
+
+    expect(restored.id, plugin.id);
+    expect(restored.capabilities, contains('equalizer-presets'));
+    expect(restored.equalizerPresets['Neon drive'], bands);
+  });
+
+  test('portable plugins reject malformed equalizer presets', () {
+    expect(
+      () => NeonAmpPlugin.fromJson({
+        'id': 'broken',
+        'name': 'Broken',
+        'equalizerPresets': {
+          'Bad': [0, 1],
+        },
+      }),
+      throwsFormatException,
+    );
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);
