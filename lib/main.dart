@@ -678,6 +678,7 @@ class _PlayerPageState extends State<PlayerPage>
       '.aac',
       '.wma',
       '.opus',
+      '.ape',
     };
     final files = Directory(directory)
         .listSync(recursive: true)
@@ -1447,6 +1448,21 @@ class _PlayerPageState extends State<PlayerPage>
         metadata.setAlbum(values[2]);
         metadata.setGenres([values[3]]);
       });
+      final written = readMetadata(File(track.path));
+      final titleMatches =
+          values[0].isEmpty || written.title?.trim() == values[0];
+      final artistMatches =
+          values[1].isEmpty || written.artist?.trim() == values[1];
+      final albumMatches =
+          values[2].isEmpty || written.album?.trim() == values[2];
+      final genreMatches =
+          values[3].isEmpty ||
+          written.genres.any((genre) => genre == values[3]);
+      if (!titleMatches || !artistMatches || !albumMatches || !genreMatches) {
+        throw const FormatException(
+          'Metadata writer did not persist the changes.',
+        );
+      }
     } catch (_) {
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
