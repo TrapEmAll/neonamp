@@ -20,6 +20,22 @@ bool isVorbisAudioPath(String path) {
   return extension == 'ogg' || extension == 'opus';
 }
 
+double? parseReplayGainDb(String? value) {
+  if (value == null) return null;
+  final match = RegExp(r'[-+]?\d+(?:\.\d+)?').firstMatch(value);
+  return match == null ? null : double.tryParse(match.group(0)!);
+}
+
+double playbackVolume({
+  required double volume,
+  required double? replayGainDb,
+  required bool replayGainEnabled,
+}) {
+  if (!replayGainEnabled || replayGainDb == null) return volume;
+  final multiplier = math.pow(10, replayGainDb / 20).toDouble();
+  return (volume * multiplier).clamp(0.0, 1.0).toDouble();
+}
+
 Future<void> writeVorbisTags(File file, List<String> values) async {
   final audioFile = await Phonic.fromFileAsync(file.path);
   try {
@@ -100,6 +116,22 @@ Future<void> main() async {
   runApp(const NeonAmpApp());
 }
 
+double? readReplayGainDb(File file) {
+  try {
+    final metadata = readAllMetadata(file, getImage: false);
+    if (metadata is! VorbisMetadata) return null;
+    final trackGain = metadata.replayGainTrackGain.isEmpty
+        ? null
+        : metadata.replayGainTrackGain.first;
+    final albumGain = metadata.replayGainAlbumGain.isEmpty
+        ? null
+        : metadata.replayGainAlbumGain.first;
+    return parseReplayGainDb(trackGain ?? albumGain);
+  } catch (_) {
+    return null;
+  }
+}
+
 class Track {
   Track({
     required this.path,
@@ -117,6 +149,7 @@ class Track {
     this.playCount = 0,
     this.favorite = false,
     this.artwork,
+    this.replayGainDb,
   });
   final String path;
   final String name;
@@ -133,6 +166,7 @@ class Track {
   final int playCount;
   final bool favorite;
   final Uint8List? artwork;
+  final double? replayGainDb;
 
   Track copyWith({
     String? path,
@@ -150,6 +184,7 @@ class Track {
     int? playCount,
     bool? favorite,
     Uint8List? artwork,
+    double? replayGainDb,
   }) => Track(
     path: path ?? this.path,
     name: name ?? this.name,
@@ -166,6 +201,7 @@ class Track {
     playCount: playCount ?? this.playCount,
     favorite: favorite ?? this.favorite,
     artwork: artwork ?? this.artwork,
+    replayGainDb: replayGainDb ?? this.replayGainDb,
   );
 
   Map<String, dynamic> toJson() => {
@@ -184,6 +220,7 @@ class Track {
     'playCount': playCount,
     'favorite': favorite,
     if (artwork != null) 'artwork': base64Encode(artwork!),
+    if (replayGainDb != null) 'replayGainDb': replayGainDb,
   };
 
   static Track fromJson(Map<String, dynamic> json) => Track(
@@ -204,6 +241,7 @@ class Track {
     artwork: json['artwork'] is String
         ? base64Decode(json['artwork'] as String)
         : null,
+    replayGainDb: (json['replayGainDb'] as num?)?.toDouble(),
   );
 }
 
@@ -672,12 +710,19 @@ class _PlayerPageState extends State<PlayerPage>
   bool _crossfadeInProgress = false;
   bool _dspActive = false;
   double _playbackSpeed = 1.0;
+  bool _replayGainEnabled = false;
 
   AudioPlayer get _player => _activePlayer;
 
   Track? get _current =>
       _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
   bool get _isPlaying => _playerState == PlayerState.playing;
+
+  double _volumeFor(Track? track) => playbackVolume(
+    volume: _volume,
+    replayGainDb: track?.replayGainDb,
+    replayGainEnabled: _replayGainEnabled,
+  );
 
   @override
   void initState() {
@@ -878,6 +923,20 @@ class _PlayerPageState extends State<PlayerPage>
     unawaited(_syncWindowsMediaSession());
   }
 
+  Future<void> _setReplayGainEnabled(bool enabled) async {
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _replayGainEnabled = enabled);
+    if (_current != null && (wasPlaying || _dspActive)) {
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
+  }
+
   Future<void> _handleComplete() async {
     if (_crossfadeInProgress) return;
     if (_repeatOne) {
@@ -936,6 +995,7 @@ class _PlayerPageState extends State<PlayerPage>
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
+        _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         _librarySort = settings['librarySort'] as String? ?? 'Added';
         _librarySortDescending =
             settings['librarySortDescending'] as bool? ?? false;
@@ -976,6 +1036,7 @@ class _PlayerPageState extends State<PlayerPage>
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
         'playbackSpeed': _playbackSpeed,
+        'replayGainEnabled': _replayGainEnabled,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
       }),
@@ -1135,6 +1196,7 @@ class _PlayerPageState extends State<PlayerPage>
     final fallback = fileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
     try {
       final metadata = readMetadata(File(path), getImage: true);
+      final replayGainDb = readReplayGainDb(File(path));
       return Track(
         path: path,
         name: metadata.title?.trim().isNotEmpty == true
@@ -1158,6 +1220,7 @@ class _PlayerPageState extends State<PlayerPage>
         artwork: metadata.pictures.isNotEmpty
             ? metadata.pictures.first.bytes
             : null,
+        replayGainDb: replayGainDb,
       );
     } catch (_) {
       return Track(path: path, name: fallback);
@@ -1177,6 +1240,7 @@ class _PlayerPageState extends State<PlayerPage>
         _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
     });
     final track = _queue[index];
+    final trackVolume = _volumeFor(track);
     final shouldUseDsp = _equalizerEnabled && !track.path.startsWith('http');
     if (shouldUseDsp) {
       if (!_dspActive) {
@@ -1185,7 +1249,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await _dspPlayer.play(
         track.path,
-        volume: _volume,
+        volume: trackVolume,
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: true,
         bands: _eqBands,
@@ -1196,7 +1260,7 @@ class _PlayerPageState extends State<PlayerPage>
         await _dspPlayer.stop();
         _dspActive = false;
       }
-      await _player.setVolume(_volume);
+      await _player.setVolume(trackVolume);
       if (_audioHandler != null) {
         await _audioHandler!.playTrack(track);
       } else {
@@ -1249,6 +1313,7 @@ class _PlayerPageState extends State<PlayerPage>
     final next = _shuffle
         ? math.Random().nextInt(_queue.length)
         : (_selected + 1) % _queue.length;
+    final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = AudioPlayer();
     try {
@@ -1274,8 +1339,10 @@ class _PlayerPageState extends State<PlayerPage>
       for (var step = 1; step <= steps; step++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
         final progress = step / steps;
-        await previousPlayer.setVolume(_volume * (1 - progress));
-        await incomingPlayer.setVolume(_volume * progress);
+        await previousPlayer.setVolume(
+          _volumeFor(previousTrack) * (1 - progress),
+        );
+        await incomingPlayer.setVolume(_volumeFor(track) * progress);
       }
       await previousPlayer.stop();
       await previousPlayer.dispose();
@@ -1304,6 +1371,7 @@ class _PlayerPageState extends State<PlayerPage>
     final next = _shuffle
         ? math.Random().nextInt(_queue.length)
         : (_selected + 1) % _queue.length;
+    final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = DspLocalPlayer();
     try {
@@ -1330,8 +1398,10 @@ class _PlayerPageState extends State<PlayerPage>
       for (var step = 1; step <= steps; step++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
         final progress = step / steps;
-        await previousPlayer.setVolume(_volume * (1 - progress));
-        await incomingPlayer.setVolume(_volume * progress);
+        await previousPlayer.setVolume(
+          _volumeFor(previousTrack) * (1 - progress),
+        );
+        await incomingPlayer.setVolume(_volumeFor(track) * progress);
       }
       await previousPlayer.stop();
       await previousPlayer.dispose();
@@ -2841,6 +2911,18 @@ class _PlayerPageState extends State<PlayerPage>
                     setDialogState(() {});
                   },
                 ),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('ReplayGain normalization'),
+                  subtitle: const Text(
+                    'Use embedded track or album gain tags when available',
+                  ),
+                  value: _replayGainEnabled,
+                  onChanged: (value) {
+                    unawaited(_setReplayGainEnabled(value));
+                    setDialogState(() {});
+                  },
+                ),
                 if (_crossfade)
                   Row(
                     children: [
@@ -3044,9 +3126,9 @@ class _PlayerPageState extends State<PlayerPage>
             final nextVolume = muted ? 0.0 : 0.82;
             setState(() => _volume = nextVolume);
             if (_dspActive) {
-              _dspPlayer.setVolume(nextVolume);
+              _dspPlayer.setVolume(_volumeFor(_current));
             } else {
-              _player.setVolume(nextVolume);
+              _player.setVolume(_volumeFor(_current));
             }
             _saveQueue();
             return null;
@@ -4001,9 +4083,9 @@ class _PlayerPageState extends State<PlayerPage>
                   onChanged: (value) {
                     setState(() => _volume = value);
                     if (_dspActive) {
-                      _dspPlayer.setVolume(value);
+                      _dspPlayer.setVolume(_volumeFor(_current));
                     } else {
-                      _player.setVolume(value);
+                      _player.setVolume(_volumeFor(_current));
                     }
                   },
                   activeColor: Colors.white70,

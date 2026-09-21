@@ -4,6 +4,19 @@ import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
 
 void main() {
+  test('ReplayGain parsing and volume normalization are deterministic', () {
+    expect(parseReplayGainDb('-7.25 dB'), -7.25);
+    expect(parseReplayGainDb('not a gain'), isNull);
+    expect(
+      playbackVolume(volume: 0.8, replayGainDb: -6, replayGainEnabled: true),
+      closeTo(0.40095, 0.0001),
+    );
+    expect(
+      playbackVolume(volume: 0.8, replayGainDb: 6, replayGainEnabled: true),
+      1.0,
+    );
+  });
+
   test('recognizes OGG and Opus as writable Vorbis containers', () {
     expect(isVorbisAudioPath('music/track.ogg'), isTrue);
     expect(isVorbisAudioPath('music/track.OPUS'), isTrue);
