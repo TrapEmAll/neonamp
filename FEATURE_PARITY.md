@@ -9,6 +9,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Batch metadata editing for selected library tracks with per-file failure reporting on Windows and Android
 - Embedded album-art reading and display when the source file contains cover art
 - Embedded cover-art replacement for supported local containers
+- Embedded lyrics editing and in-app lyrics viewing
 - Library search across title, artist, album, and genre
 - Smart library filters for favorites, top-rated tracks, and most-played tracks
 - Persistent library sorting by added order, title, artist, album, rating, or play count
@@ -42,7 +43,6 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 - Broaden tag-writing coverage beyond the currently supported containers
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
-- Broader radio-directory metadata and station interoperability
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.

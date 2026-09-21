@@ -26,6 +26,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Persistent queue between launches.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
+- View embedded lyrics directly from library tracks.
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE files are included in folder scans.
 - Select multiple library tracks and apply shared artist, album, genre, year, or rating metadata in one operation on Windows or Android.
 - Persistent smart playlists for favorites, top-rated, most-played, genre, and artist rules, including two-rule all/any matching.
@@ -40,6 +41,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Optional ReplayGain normalization from embedded track or album gain tags, persisted across Windows and Android.
 - Responsive layout for desktop and mobile.
 - Animated spectrum visualizer.
+- Desktop Visuals and Settings actions are available on Windows and Android.
 
 The Android APK is a debug/distribution artifact signed with Flutter's local release key for direct installation. A Play Store release will need a real upload keystore and store configuration.
 

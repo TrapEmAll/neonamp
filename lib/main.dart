@@ -3409,6 +3409,130 @@ class _PlayerPageState extends State<PlayerPage>
     if (selected != null) widget.onThemeChanged?.call(selected);
   }
 
+  Future<void> _showLyrics(Track track) async {
+    final lyrics = track.lyrics?.trim();
+    if (lyrics == null || lyrics.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This track has no embedded lyrics.')),
+      );
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(track.name),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(child: SelectableText(lyrics)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showVisualizer() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Spectrum visualizer'),
+        content: SizedBox(
+          width: 560,
+          height: 220,
+          child: AnimatedBuilder(
+            animation: _pulse,
+            builder: (_, __) => CustomPaint(
+              painter: SpectrumPainter(
+                progress: _pulse.value,
+                active: _isPlaying,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showSettings() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Settings'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Crossfade tracks'),
+                value: _crossfade,
+                onChanged: (value) {
+                  setState(() => _crossfade = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              if (_crossfade)
+                Row(
+                  children: [
+                    const Text('1s'),
+                    Expanded(
+                      child: Slider(
+                        value: _crossfadeSeconds.toDouble(),
+                        min: 1,
+                        max: 12,
+                        divisions: 11,
+                        label: '${_crossfadeSeconds}s',
+                        onChanged: (value) {
+                          setState(() => _crossfadeSeconds = value.round());
+                          unawaited(_saveQueue());
+                          setDialogState(() {});
+                        },
+                      ),
+                    ),
+                    const Text('12s'),
+                  ],
+                ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('ReplayGain normalization'),
+                value: _replayGainEnabled,
+                onChanged: (value) {
+                  unawaited(_setReplayGainEnabled(value));
+                  setDialogState(() {});
+                },
+              ),
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Keyboard controls'),
+                subtitle: Text(
+                  'Space: play/pause · M: mute · Ctrl+arrows: seek',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _playSmartPlaylist(SmartPlaylist playlist) async {
     final tracks = _tracksForSmartPlaylist(playlist);
     if (tracks.isEmpty) {
@@ -3918,6 +4042,8 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.more_vert, color: Colors.white60),
             onSelected: (value) {
               if (value == 'folder') _addFolder();
+              if (value == 'visuals') _showVisualizer();
+              if (value == 'settings') _showSettings();
               if (value == 'rescan') _rescanFolders();
               if (value == 'import') _importPlaylist();
               if (value == 'stream') _addStream();
@@ -3935,6 +4061,8 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'exportPls') _exportPlsPlaylist();
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'visuals', child: Text('Visuals')),
+              PopupMenuItem(value: 'settings', child: Text('Settings')),
               PopupMenuItem(value: 'folder', child: Text('Add folder')),
               PopupMenuItem(
                 value: 'rescan',
@@ -3982,7 +4110,7 @@ class _PlayerPageState extends State<PlayerPage>
   );
 
   Widget _topAction(IconData icon, String label) => TextButton.icon(
-    onPressed: () {},
+    onPressed: label == 'Visuals' ? _showVisualizer : _showSettings,
     icon: Icon(icon, size: 18, color: Colors.white60),
     label: Text(label, style: const TextStyle(color: Colors.white60)),
   );
@@ -4257,6 +4385,16 @@ class _PlayerPageState extends State<PlayerPage>
                     color: Colors.white30,
                   ),
                   onPressed: () => _convertTrackToM4a(track),
+                ),
+              if (track.lyrics?.trim().isNotEmpty == true)
+                IconButton(
+                  tooltip: 'View lyrics',
+                  icon: const Icon(
+                    Icons.lyrics_outlined,
+                    size: 17,
+                    color: Colors.white30,
+                  ),
+                  onPressed: () => _showLyrics(track),
                 ),
               IconButton(
                 icon: const Icon(
