@@ -194,6 +194,20 @@ List<ThemeSkin> builtInSkins() => const [
   ),
 ];
 
+class SmartCriterion {
+  const SmartCriterion({required this.rule, this.value = ''});
+
+  final String rule;
+  final String value;
+
+  Map<String, dynamic> toJson() => {'rule': rule, 'value': value};
+
+  static SmartCriterion fromJson(Map<String, dynamic> json) => SmartCriterion(
+    rule: json['rule'] as String? ?? 'Favorites',
+    value: json['value'] as String? ?? '',
+  );
+}
+
 class SmartPlaylist {
   const SmartPlaylist({
     required this.name,
@@ -202,6 +216,8 @@ class SmartPlaylist {
     this.sortBy = 'Added',
     this.descending = false,
     this.limit = 0,
+    this.criteria,
+    this.matchAll = true,
   });
 
   final String name;
@@ -210,6 +226,13 @@ class SmartPlaylist {
   final String sortBy;
   final bool descending;
   final int limit;
+  final List<SmartCriterion>? criteria;
+  final bool matchAll;
+
+  List<SmartCriterion> get effectiveCriteria =>
+      criteria == null || criteria!.isEmpty
+      ? [SmartCriterion(rule: rule, value: value)]
+      : criteria!;
 
   Map<String, dynamic> toJson() => {
     'name': name,
@@ -218,16 +241,34 @@ class SmartPlaylist {
     'sortBy': sortBy,
     'descending': descending,
     'limit': limit,
+    'matchAll': matchAll,
+    'criteria': effectiveCriteria
+        .map((criterion) => criterion.toJson())
+        .toList(),
   };
 
-  static SmartPlaylist fromJson(Map<String, dynamic> json) => SmartPlaylist(
-    name: json['name'] as String? ?? 'Smart playlist',
-    rule: json['rule'] as String? ?? 'Favorites',
-    value: json['value'] as String? ?? '',
-    sortBy: json['sortBy'] as String? ?? 'Added',
-    descending: json['descending'] as bool? ?? false,
-    limit: (json['limit'] as num?)?.toInt() ?? 0,
-  );
+  static SmartPlaylist fromJson(Map<String, dynamic> json) {
+    final rawCriteria = json['criteria'];
+    final criteria = rawCriteria is List
+        ? rawCriteria
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    SmartCriterion.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .toList()
+        : null;
+    return SmartPlaylist(
+      name: json['name'] as String? ?? 'Smart playlist',
+      rule: json['rule'] as String? ?? 'Favorites',
+      value: json['value'] as String? ?? '',
+      sortBy: json['sortBy'] as String? ?? 'Added',
+      descending: json['descending'] as bool? ?? false,
+      limit: (json['limit'] as num?)?.toInt() ?? 0,
+      criteria: criteria,
+      matchAll: json['matchAll'] as bool? ?? true,
+    );
+  }
 }
 
 class _TogglePlayIntent extends Intent {
@@ -1571,26 +1612,33 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   List<Track> _tracksForSmartPlaylist(SmartPlaylist playlist) {
-    final value = playlist.value.toLowerCase();
     final tracks = _library.where((track) {
-      switch (playlist.rule) {
-        case 'Favorites':
-          return track.favorite;
-        case 'Top rated':
-          return track.rating >= 4;
-        case 'Most played':
-          return track.playCount > 0;
-        case 'Rating at least':
-          return track.rating >= (int.tryParse(playlist.value) ?? 0);
-        case 'Played at least':
-          return track.playCount >= (int.tryParse(playlist.value) ?? 0);
-        case 'Genre':
-          return track.genre.toLowerCase() == value;
-        case 'Artist':
-          return track.artist.toLowerCase() == value;
-        default:
-          return false;
+      bool matches(SmartCriterion criterion) {
+        final value = criterion.value.toLowerCase();
+        switch (criterion.rule) {
+          case 'Favorites':
+            return track.favorite;
+          case 'Top rated':
+            return track.rating >= 4;
+          case 'Most played':
+            return track.playCount > 0;
+          case 'Rating at least':
+            return track.rating >= (int.tryParse(criterion.value) ?? 0);
+          case 'Played at least':
+            return track.playCount >= (int.tryParse(criterion.value) ?? 0);
+          case 'Genre':
+            return track.genre.toLowerCase() == value;
+          case 'Artist':
+            return track.artist.toLowerCase() == value;
+          default:
+            return false;
+        }
       }
+
+      final results = playlist.effectiveCriteria.map(matches);
+      return playlist.matchAll
+          ? results.every((result) => result)
+          : results.any((result) => result);
     }).toList();
     if (playlist.sortBy != 'Added') {
       tracks.sort((a, b) {
@@ -1922,7 +1970,10 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _createSmartPlaylist() async {
     final nameController = TextEditingController();
     final valueController = TextEditingController();
+    final secondValueController = TextEditingController();
     var rule = 'Favorites';
+    var secondRule = 'None';
+    var matchAll = true;
     var sortBy = 'Added';
     var descending = false;
     var limit = 0;
@@ -1993,6 +2044,69 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
+                initialValue: secondRule,
+                decoration: const InputDecoration(
+                  labelText: 'Second rule (optional)',
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'None', child: Text('None')),
+                  DropdownMenuItem(
+                    value: 'Favorites',
+                    child: Text('Favorites'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Top rated',
+                    child: Text('Top rated'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Most played',
+                    child: Text('Most played'),
+                  ),
+                  DropdownMenuItem(value: 'Genre', child: Text('Genre is')),
+                  DropdownMenuItem(value: 'Artist', child: Text('Artist is')),
+                  DropdownMenuItem(
+                    value: 'Rating at least',
+                    child: Text('Rating at least'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Played at least',
+                    child: Text('Played at least'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => secondRule = value);
+                },
+              ),
+              if (secondRule != 'None' &&
+                  (secondRule == 'Genre' ||
+                      secondRule == 'Artist' ||
+                      secondRule == 'Rating at least' ||
+                      secondRule == 'Played at least'))
+                TextField(
+                  controller: secondValueController,
+                  keyboardType:
+                      secondRule == 'Rating at least' ||
+                          secondRule == 'Played at least'
+                      ? TextInputType.number
+                      : null,
+                  decoration: InputDecoration(
+                    labelText: switch (secondRule) {
+                      'Genre' => 'Second genre',
+                      'Artist' => 'Second artist',
+                      'Rating at least' => 'Second minimum rating',
+                      _ => 'Second minimum play count',
+                    },
+                  ),
+                ),
+              if (secondRule != 'None')
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(matchAll ? 'Match all rules' : 'Match any rule'),
+                  value: matchAll,
+                  onChanged: (value) => setDialogState(() => matchAll = value),
+                ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
                 initialValue: sortBy,
                 decoration: const InputDecoration(labelText: 'Sort by'),
                 items: const [
@@ -2035,11 +2149,18 @@ class _PlayerPageState extends State<PlayerPage>
               onPressed: () {
                 final name = nameController.text.trim();
                 final value = valueController.text.trim();
+                final secondValue = secondValueController.text.trim();
                 limit = int.tryParse(limitController.text.trim()) ?? 0;
                 if (name.isEmpty ||
                     ((rule == 'Genre' || rule == 'Artist') && value.isEmpty) ||
                     ((rule == 'Rating at least' || rule == 'Played at least') &&
                         int.tryParse(value) == null) ||
+                    (secondRule != 'None' &&
+                        ((secondRule == 'Genre' || secondRule == 'Artist') &&
+                                secondValue.isEmpty ||
+                            (secondRule == 'Rating at least' ||
+                                    secondRule == 'Played at least') &&
+                                int.tryParse(secondValue) == null)) ||
                     limit < 0) {
                   return;
                 }
@@ -2052,6 +2173,12 @@ class _PlayerPageState extends State<PlayerPage>
                     sortBy: sortBy,
                     descending: descending,
                     limit: limit,
+                    matchAll: matchAll,
+                    criteria: [
+                      SmartCriterion(rule: rule, value: value),
+                      if (secondRule != 'None')
+                        SmartCriterion(rule: secondRule, value: secondValue),
+                    ],
                   ),
                 );
               },

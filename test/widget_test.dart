@@ -12,6 +12,11 @@ void main() {
       sortBy: 'Play count',
       descending: true,
       limit: 25,
+      matchAll: false,
+      criteria: [
+        SmartCriterion(rule: 'Genre', value: 'Synthwave'),
+        SmartCriterion(rule: 'Artist', value: 'The Midnight'),
+      ],
     );
 
     final restored = SmartPlaylist.fromJson(original.toJson());
@@ -22,6 +27,10 @@ void main() {
     expect(restored.sortBy, original.sortBy);
     expect(restored.descending, original.descending);
     expect(restored.limit, original.limit);
+    expect(restored.matchAll, isFalse);
+    expect(restored.effectiveCriteria, hasLength(2));
+    expect(restored.effectiveCriteria.last.rule, 'Artist');
+    expect(restored.effectiveCriteria.last.value, 'The Midnight');
   });
 
   test('track metadata fields round-trip through JSON', () {
