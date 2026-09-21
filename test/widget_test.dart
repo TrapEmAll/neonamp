@@ -4,6 +4,21 @@ import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
 
 void main() {
+  test('normalizes SHOUTcast station records for the shared radio UI', () {
+    final station = normalizeShoutcastStation({
+      'ID': 42,
+      'Name': 'Retro FM',
+      'Genre': 'Pop',
+      'Format': 'audio/mpeg',
+      'Bitrate': 128,
+      'Listeners': 99,
+    });
+    expect(station['name'], 'Retro FM');
+    expect(station['source'], 'SHOUTcast');
+    expect(station['shoutcastId'], 42);
+    expect(station['codec'], 'audio/mpeg');
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);

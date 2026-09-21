@@ -18,7 +18,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Named playlist editing, renaming, deletion, and per-track removal
 - M3U/M3U8 and legacy PLS playlist import/export for local tracks and radio streams
 - HTTP audio stream / internet radio URL playback
-- Internet-radio station discovery through the Radio Browser directory with saved station favorites
+- Internet-radio station discovery through Radio Browser and SHOUTcast with saved station favorites and lazy stream resolution
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
 - Recursive folder scanning and M3U/M3U8 playlist import
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume
@@ -38,7 +38,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 - Broaden tag-writing coverage beyond the currently supported containers
 - Plugin API
-- SHOUTcast-specific directory compatibility
+- Broader radio-directory metadata and station interoperability
 - CD ripping and format conversion on Windows; portable-device sync
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.

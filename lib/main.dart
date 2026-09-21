@@ -132,6 +132,19 @@ double? readReplayGainDb(File file) {
   }
 }
 
+Map<String, dynamic> normalizeShoutcastStation(Map<String, dynamic> station) =>
+    {
+      'name': station['Name'] as String? ?? 'SHOUTcast station',
+      'genre': station['Genre'] as String? ?? 'Radio',
+      'listeners': station['Listeners'] as num? ?? 0,
+      'bitrate': station['Bitrate'] as num? ?? 0,
+      'codec': station['Format'] as String? ?? '',
+      'country': 'SHOUTcast',
+      'source': 'SHOUTcast',
+      'shoutcastId': station['ID'],
+      'streamUrl': station['StreamUrl'] as String?,
+    };
+
 class Track {
   Track({
     required this.path,
@@ -1505,6 +1518,64 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<List<Map<String, dynamic>>> _searchShoutcastStations(
+    String term,
+  ) async {
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(
+        Uri.https('directory.shoutcast.com', '/Search/UpdateSearch'),
+      );
+      request.headers.contentType = ContentType(
+        'application',
+        'x-www-form-urlencoded',
+        charset: 'utf-8',
+      );
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
+      request.write(Uri(queryParameters: {'query': term}).query);
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      if (response.statusCode != HttpStatus.ok) return const [];
+      final decoded = jsonDecode(body);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(normalizeShoutcastStation)
+          .toList();
+    } catch (_) {
+      return const [];
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<String?> _resolveShoutcastStream(Map<String, dynamic> station) async {
+    final id = (station['shoutcastId'] as num?)?.toInt();
+    if (id == null) return null;
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(
+        Uri.https('directory.shoutcast.com', '/Player/GetStreamUrl'),
+      );
+      request.headers.contentType = ContentType(
+        'application',
+        'x-www-form-urlencoded',
+        charset: 'utf-8',
+      );
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
+      request.write(Uri(queryParameters: {'station': '$id'}).query);
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      if (response.statusCode != HttpStatus.ok) return null;
+      final decoded = jsonDecode(body);
+      return decoded is String && decoded.trim().isNotEmpty ? decoded : null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<void> _searchRadioDirectory() async {
     final controller = TextEditingController();
     final term = await showDialog<String>(
@@ -1552,10 +1623,14 @@ class _PlayerPageState extends State<PlayerPage>
       client.close(force: true);
       if (response.statusCode != HttpStatus.ok)
         throw const HttpException('Radio directory request failed');
-      final stations = (jsonDecode(body) as List)
+      final radioBrowserStations = (jsonDecode(body) as List)
           .whereType<Map<String, dynamic>>()
           .where((station) => _stationStreamUrl(station) != null)
           .toList();
+      final stations = [
+        ...radioBrowserStations,
+        ...await _searchShoutcastStations(term.trim()),
+      ];
       if (!mounted) return;
       if (stations.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1580,6 +1655,7 @@ class _PlayerPageState extends State<PlayerPage>
                   final country = station['country'] as String? ?? '';
                   final codec = station['codec'] as String? ?? '';
                   final path = _stationStreamUrl(station);
+                  final isShoutcast = station['source'] == 'SHOUTcast';
                   final saved = path == null
                       ? null
                       : _library.cast<Track?>().firstWhere(
@@ -1605,9 +1681,18 @@ class _PlayerPageState extends State<PlayerPage>
                             : Icons.star_border,
                         color: saved?.favorite == true ? Colors.amber : null,
                       ),
-                      onPressed: path == null
+                      onPressed: path == null && !isShoutcast
                           ? null
                           : () async {
+                              if (_stationStreamUrl(station) == null) {
+                                final resolved = await _resolveShoutcastStream(
+                                  station,
+                                );
+                                if (resolved != null) {
+                                  station['streamUrl'] = resolved;
+                                }
+                              }
+                              if (_stationStreamUrl(station) == null) return;
                               await _toggleRadioFavorite(station);
                               setDialogState(() {});
                             },
@@ -1627,7 +1712,11 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       );
       if (selected == null) return;
-      final path = _stationStreamUrl(selected);
+      var path = _stationStreamUrl(selected);
+      if (path == null && selected['source'] == 'SHOUTcast') {
+        path = await _resolveShoutcastStream(selected);
+        if (path != null) selected['streamUrl'] = path;
+      }
       if (path == null) return;
       final name = (selected['name'] as String? ?? 'Internet radio').trim();
       final track = Track(
@@ -1635,7 +1724,13 @@ class _PlayerPageState extends State<PlayerPage>
         name: name.isEmpty ? 'Internet radio' : name,
         artist: (selected['country'] as String? ?? 'Internet radio').trim(),
         album: 'Internet radio',
-        genre: (selected['tags'] as String? ?? 'Radio').split(',').first.trim(),
+        genre:
+            (selected['tags'] as String? ??
+                    selected['genre'] as String? ??
+                    'Radio')
+                .split(',')
+                .first
+                .trim(),
       );
       setState(() {
         _queue.add(track);
@@ -1654,6 +1749,8 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   String? _stationStreamUrl(Map<String, dynamic> station) {
+    final shoutcast = station['streamUrl'] as String?;
+    if (shoutcast != null && shoutcast.isNotEmpty) return shoutcast;
     final resolved = station['url_resolved'] as String?;
     final fallback = station['url'] as String?;
     final value = (resolved?.trim().isNotEmpty == true ? resolved : fallback)
@@ -1677,10 +1774,13 @@ class _PlayerPageState extends State<PlayerPage>
             name: name.isEmpty ? 'Internet radio' : name,
             artist: (station['country'] as String? ?? 'Internet radio').trim(),
             album: 'Internet radio',
-            genre: (station['tags'] as String? ?? 'Radio')
-                .split(',')
-                .first
-                .trim(),
+            genre:
+                (station['tags'] as String? ??
+                        station['genre'] as String? ??
+                        'Radio')
+                    .split(',')
+                    .first
+                    .trim(),
             favorite: true,
           ),
         );

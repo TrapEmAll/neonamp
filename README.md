@@ -15,7 +15,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
 - Add HTTP audio streams and online radio URLs.
-- Search the Radio Browser internet-radio directory, save station favorites, and play stations directly.
+- Search the Radio Browser and SHOUTcast internet-radio directories, save station favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
 - Subscribe to podcast RSS feeds, add playable episode enclosures, and download episodes locally.
