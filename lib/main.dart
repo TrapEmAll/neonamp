@@ -649,6 +649,135 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _searchRadioDirectory() async {
+    final controller = TextEditingController();
+    final term = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Find internet radio'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Station, genre, or country',
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Search'),
+          ),
+        ],
+      ),
+    );
+    if (term == null || term.trim().isEmpty) return;
+    try {
+      final uri = Uri.https(
+        'de1.api.radio-browser.info',
+        '/json/stations/search',
+        {
+          'name': term.trim(),
+          'limit': '25',
+          'order': 'votes',
+          'reverse': 'true',
+          'hidebroken': 'true',
+        },
+      );
+      final client = HttpClient();
+      final request = await client.getUrl(uri);
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      client.close(force: true);
+      if (response.statusCode != HttpStatus.ok)
+        throw const HttpException('Radio directory request failed');
+      final stations = (jsonDecode(body) as List)
+          .whereType<Map<String, dynamic>>()
+          .where((station) => _stationStreamUrl(station) != null)
+          .toList();
+      if (!mounted) return;
+      if (stations.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No playable stations found.')),
+        );
+        return;
+      }
+      final selected = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Radio stations for “$term”'),
+          content: SizedBox(
+            width: 520,
+            height: 420,
+            child: ListView.builder(
+              itemCount: stations.length,
+              itemBuilder: (_, index) {
+                final station = stations[index];
+                final name = (station['name'] as String? ?? 'Untitled').trim();
+                final country = station['country'] as String? ?? '';
+                final codec = station['codec'] as String? ?? '';
+                return ListTile(
+                  leading: const Icon(Icons.radio, color: Color(0xffef4bff)),
+                  title: Text(name.isEmpty ? 'Untitled station' : name),
+                  subtitle: Text(
+                    [
+                      country,
+                      codec,
+                    ].where((value) => value.isNotEmpty).join(' · '),
+                  ),
+                  onTap: () => Navigator.pop(context, station),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+      if (selected == null) return;
+      final path = _stationStreamUrl(selected);
+      if (path == null) return;
+      final name = (selected['name'] as String? ?? 'Internet radio').trim();
+      final track = Track(
+        path: path,
+        name: name.isEmpty ? 'Internet radio' : name,
+        artist: (selected['country'] as String? ?? 'Internet radio').trim(),
+        album: 'Internet radio',
+        genre: (selected['tags'] as String? ?? 'Radio').split(',').first.trim(),
+      );
+      setState(() {
+        _queue.add(track);
+        _library.removeWhere((item) => item.path == path);
+        _library.add(track);
+        _selected = _queue.length - 1;
+      });
+      await _select(_selected);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not reach the radio directory.')),
+        );
+      }
+    }
+  }
+
+  String? _stationStreamUrl(Map<String, dynamic> station) {
+    final resolved = station['url_resolved'] as String?;
+    final fallback = station['url'] as String?;
+    final value = (resolved?.trim().isNotEmpty == true ? resolved : fallback)
+        ?.trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
   Future<void> _addPodcastFeed() async {
     final controller = TextEditingController();
     final url = await showDialog<String>(
@@ -1442,6 +1571,11 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.link, color: Colors.white60),
           ),
           IconButton(
+            tooltip: 'Find internet radio',
+            onPressed: _searchRadioDirectory,
+            icon: const Icon(Icons.radio, color: Colors.white60),
+          ),
+          IconButton(
             tooltip: 'Subscribe to podcast RSS',
             onPressed: _addPodcastFeed,
             icon: const Icon(Icons.podcasts, color: Colors.white60),
@@ -1479,6 +1613,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'rescan') _rescanFolders();
               if (value == 'import') _importPlaylist();
               if (value == 'stream') _addStream();
+              if (value == 'radio') _searchRadioDirectory();
               if (value == 'podcast') _addPodcastFeed();
               if (value == 'refreshPodcasts') _refreshPodcasts();
               if (value == 'eq') _showEqualizer();
@@ -1495,6 +1630,7 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Import M3U playlist'),
               ),
               PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
+              PopupMenuItem(value: 'radio', child: Text('Find internet radio')),
               PopupMenuItem(
                 value: 'podcast',
                 child: Text('Subscribe to podcast RSS'),
