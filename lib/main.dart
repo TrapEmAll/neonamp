@@ -276,6 +276,26 @@ class NeonAmpPlugin {
   };
 }
 
+String syncFileName(String path) {
+  final base = path.split(RegExp(r'[/\\]')).last.trim();
+  final safe = base.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+  return safe.isEmpty ? 'track' : safe;
+}
+
+String nextSyncFileName(String requested, Set<String> usedNames) {
+  final dot = requested.lastIndexOf('.');
+  final stem = dot > 0 ? requested.substring(0, dot) : requested;
+  final extension = dot > 0 ? requested.substring(dot) : '';
+  var candidate = requested;
+  var suffix = 2;
+  while (usedNames.contains(candidate.toLowerCase())) {
+    candidate = '$stem ($suffix)$extension';
+    suffix++;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
 class Track {
   Track({
     required this.path,
@@ -2138,6 +2158,73 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _syncToDeviceFolder() async {
+    final destination = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Choose a device music folder',
+    );
+    if (destination == null) return;
+    final selected = _selectedLibraryPaths.isEmpty
+        ? _library
+        : _library.where((track) => _selectedLibraryPaths.contains(track.path));
+    final tracks = <Track>[];
+    final seen = <String>{};
+    for (final track in selected) {
+      if (track.path.startsWith('http')) continue;
+      if (seen.add(track.path)) tracks.add(track);
+    }
+    if (tracks.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No local tracks are available to sync.')),
+      );
+      return;
+    }
+
+    final usedNames = <String>{};
+    final manifest = <String>['#EXTM3U'];
+    var copied = 0;
+    var skipped = 0;
+    for (final track in tracks) {
+      final source = File(track.path);
+      if (!await source.exists()) {
+        skipped++;
+        continue;
+      }
+      final name = nextSyncFileName(syncFileName(track.path), usedNames);
+      final target = File('$destination${Platform.pathSeparator}$name');
+      if (source.absolute.path.toLowerCase() ==
+          target.absolute.path.toLowerCase()) {
+        manifest.add(name);
+        copied++;
+        continue;
+      }
+      try {
+        await source.copy(target.path);
+        manifest
+          ..add('#EXTINF:-1,${track.name}')
+          ..add(name);
+        copied++;
+      } on Object {
+        skipped++;
+      }
+    }
+    try {
+      await File('$destination${Platform.pathSeparator}neonamp-sync.m3u8')
+          .writeAsString('${manifest.join('\n')}\n');
+    } on Object {
+      skipped++;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Synced $copied track${copied == 1 ? '' : 's'}'
+          '${skipped == 0 ? '' : ' · $skipped skipped'}',
+        ),
+      ),
+    );
+  }
+
   Future<void> _exportPlsPlaylist() async {
     final lines = <String>['[playlist]'];
     for (var index = 0; index < _queue.length; index++) {
@@ -3650,6 +3737,11 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.ios_share, color: Colors.white60),
           ),
           IconButton(
+            tooltip: 'Sync music to device folder',
+            onPressed: _syncToDeviceFolder,
+            icon: const Icon(Icons.sync, color: Colors.white60),
+          ),
+          IconButton(
             tooltip: 'Export PLS playlist',
             onPressed: _exportPlsPlaylist,
             icon: const Icon(Icons.radio, color: Colors.white60),
@@ -3676,6 +3768,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'importSkin') _importSkin();
               if (value == 'plugins') _showPluginManager();
               if (value == 'export') _exportPlaylist();
+              if (value == 'sync') _syncToDeviceFolder();
               if (value == 'exportPls') _exportPlsPlaylist();
             },
             itemBuilder: (_) => const [
@@ -3709,6 +3802,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'export',
                 child: Text('Export M3U playlist'),
+              ),
+              PopupMenuItem(
+                value: 'sync',
+                child: Text('Sync music to device folder'),
               ),
               PopupMenuItem(
                 value: 'exportPls',

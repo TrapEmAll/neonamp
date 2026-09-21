@@ -74,6 +74,13 @@ void main() {
     );
   });
 
+  test('device sync creates safe, collision-free file names', () {
+    expect(syncFileName(r'C:\Music\live:take?.mp3'), 'live_take_.mp3');
+    final used = <String>{'track.mp3'};
+    expect(nextSyncFileName('track.mp3', used), 'track (2).mp3');
+    expect(nextSyncFileName('track.mp3', used), 'track (3).mp3');
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);

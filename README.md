@@ -19,6 +19,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
 - Import portable JSON plugin packages on Windows or Android; enablement and plugin-provided 10-band equalizer presets persist across launches.
+- Sync local library tracks to a user-selected device folder on Windows or Android with collision-safe names and an M3U8 manifest.
 - Subscribe to podcast RSS feeds, add playable episode enclosures, and download episodes locally.
 - Persistent queue between launches.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
