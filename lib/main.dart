@@ -698,6 +698,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || !_dspActive) return;
       setState(() => _playerState = value);
       _audioHandler?.syncExternalState(position: _position, state: value);
+      unawaited(_syncWindowsMediaSession());
     });
     _dspCompleteSub = _dspPlayer.onPlayerComplete.listen((_) {
       if (_dspActive) unawaited(_handleComplete());

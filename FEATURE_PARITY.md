@@ -31,7 +31,6 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 ## Next parity milestones
 
 - Broaden tag-writing coverage beyond the currently supported containers
-- True DSP equalizer processing
 - Plugin API
 - SHOUTcast-specific directory compatibility
 - CD ripping and format conversion on Windows; portable-device sync
