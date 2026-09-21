@@ -23,13 +23,14 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Spectrum visualization
 - Responsive Windows and Android layouts
 - Android background playback with notification, lock-screen, headset, and Android Auto media controls
+- Windows global media keys for play/pause, stop, previous, and next
 
 ## Next parity milestones
 
 - Broaden tag-writing coverage beyond the currently supported containers
 - True DSP equalizer processing
 - Richer rule-based smart playlist operators and sorting
-- Windows global media keys and system media transport controls
+- Windows system media transport controls beyond global media keys
 - Skin/theme packages and a plugin API
 - SHOUTcast-specific directory compatibility and station favorites
 - CD ripping and format conversion on Windows; portable-device sync

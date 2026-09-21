@@ -310,8 +310,32 @@ class _PlayerPageState extends State<PlayerPage>
   void initState() {
     super.initState();
     _bindPlayerStreams();
+    _initializeWindowsMediaKeys();
     _initializeAudioService();
     _loadQueue();
+  }
+
+  Future<void> _initializeWindowsMediaKeys() async {
+    if (!Platform.isWindows) return;
+    const channel = MethodChannel('neonamp/system_controls');
+    channel.setMethodCallHandler((call) async {
+      if (call.method != 'mediaKey') return null;
+      switch (call.arguments as String?) {
+        case 'playPause':
+          await _togglePlay();
+          break;
+        case 'next':
+          await _next();
+          break;
+        case 'previous':
+          await _previous();
+          break;
+        case 'stop':
+          await _player.stop();
+          break;
+      }
+      return null;
+    });
   }
 
   void _bindPlayerStreams() {

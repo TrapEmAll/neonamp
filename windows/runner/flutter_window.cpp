@@ -25,6 +25,10 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  system_controls_channel_ = std::make_unique<
+      flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "neonamp/system_controls",
+      &flutter::StandardMethodCodec::GetInstance());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -62,6 +66,31 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_APPCOMMAND: {
+      const auto command = GET_APPCOMMAND_LPARAM(lparam);
+      const char* mediaKey = nullptr;
+      switch (command) {
+        case APPCOMMAND_MEDIA_PLAY_PAUSE:
+          mediaKey = "playPause";
+          break;
+        case APPCOMMAND_MEDIA_NEXTTRACK:
+          mediaKey = "next";
+          break;
+        case APPCOMMAND_MEDIA_PREVIOUSTRACK:
+          mediaKey = "previous";
+          break;
+        case APPCOMMAND_MEDIA_STOP:
+          mediaKey = "stop";
+          break;
+      }
+      if (mediaKey != nullptr && system_controls_channel_) {
+        system_controls_channel_->InvokeMethod(
+            "mediaKey",
+            std::make_unique<flutter::EncodableValue>(std::string(mediaKey)));
+        return 0;
+      }
+      break;
+    }
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
