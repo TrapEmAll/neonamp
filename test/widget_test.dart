@@ -10,6 +10,7 @@ void main() {
       value: 'Synthwave',
       sortBy: 'Play count',
       descending: true,
+      limit: 25,
     );
 
     final restored = SmartPlaylist.fromJson(original.toJson());
@@ -19,6 +20,7 @@ void main() {
     expect(restored.value, original.value);
     expect(restored.sortBy, original.sortBy);
     expect(restored.descending, original.descending);
+    expect(restored.limit, original.limit);
   });
 
   test('skin packages round-trip through JSON', () {

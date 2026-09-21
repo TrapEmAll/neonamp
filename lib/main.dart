@@ -163,6 +163,7 @@ class SmartPlaylist {
     this.value = '',
     this.sortBy = 'Added',
     this.descending = false,
+    this.limit = 0,
   });
 
   final String name;
@@ -170,6 +171,7 @@ class SmartPlaylist {
   final String value;
   final String sortBy;
   final bool descending;
+  final int limit;
 
   Map<String, dynamic> toJson() => {
     'name': name,
@@ -177,6 +179,7 @@ class SmartPlaylist {
     'value': value,
     'sortBy': sortBy,
     'descending': descending,
+    'limit': limit,
   };
 
   static SmartPlaylist fromJson(Map<String, dynamic> json) => SmartPlaylist(
@@ -185,6 +188,7 @@ class SmartPlaylist {
     value: json['value'] as String? ?? '',
     sortBy: json['sortBy'] as String? ?? 'Added',
     descending: json['descending'] as bool? ?? false,
+    limit: (json['limit'] as num?)?.toInt() ?? 0,
   );
 }
 
@@ -1353,6 +1357,9 @@ class _PlayerPageState extends State<PlayerPage>
         return playlist.descending ? -comparison : comparison;
       });
     }
+    if (playlist.limit > 0 && tracks.length > playlist.limit) {
+      return tracks.sublist(0, playlist.limit);
+    }
     return tracks;
   }
 
@@ -1554,6 +1561,8 @@ class _PlayerPageState extends State<PlayerPage>
     var rule = 'Favorites';
     var sortBy = 'Added';
     var descending = false;
+    var limit = 0;
+    final limitController = TextEditingController();
     final result = await showDialog<SmartPlaylist>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -1643,6 +1652,14 @@ class _PlayerPageState extends State<PlayerPage>
                 value: descending,
                 onChanged: (value) => setDialogState(() => descending = value),
               ),
+              TextField(
+                controller: limitController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Maximum tracks (optional)',
+                  hintText: '0 for unlimited',
+                ),
+              ),
             ],
           ),
           actions: [
@@ -1654,10 +1671,12 @@ class _PlayerPageState extends State<PlayerPage>
               onPressed: () {
                 final name = nameController.text.trim();
                 final value = valueController.text.trim();
+                limit = int.tryParse(limitController.text.trim()) ?? 0;
                 if (name.isEmpty ||
                     ((rule == 'Genre' || rule == 'Artist') && value.isEmpty) ||
                     ((rule == 'Rating at least' || rule == 'Played at least') &&
-                        int.tryParse(value) == null)) {
+                        int.tryParse(value) == null) ||
+                    limit < 0) {
                   return;
                 }
                 Navigator.pop(
@@ -1668,6 +1687,7 @@ class _PlayerPageState extends State<PlayerPage>
                     value: value,
                     sortBy: sortBy,
                     descending: descending,
+                    limit: limit,
                   ),
                 );
               },
