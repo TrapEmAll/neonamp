@@ -19,6 +19,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
 - Recursive folder scanning and M3U/M3U8 playlist import
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume
+- Persistent queue reordering, per-track removal, and clear-queue controls
 - Native 10-band DSP equalizer for local files with presets and persisted settings
 - Spectrum visualization
 - Built-in Neon, Aurora, Amber, and Classic skins with persisted selection

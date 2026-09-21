@@ -1209,6 +1209,34 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _reorderQueue(int oldIndex, int newIndex) async {
+    if (oldIndex == newIndex || oldIndex < 0 || newIndex < 0) return;
+    final selectedPath = _current?.path;
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final track = _queue.removeAt(oldIndex);
+      _queue.insert(newIndex.clamp(0, _queue.length), track);
+      final selectedIndex = selectedPath == null
+          ? -1
+          : _queue.indexWhere((item) => item.path == selectedPath);
+      if (selectedIndex >= 0) _selected = selectedIndex;
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _clearQueue() async {
+    await _player.stop();
+    if (_dspActive) await _dspPlayer.stop();
+    setState(() {
+      _queue.clear();
+      _selected = 0;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _playerState = PlayerState.stopped;
+    });
+    await _saveQueue();
+  }
+
   Future<void> _addStream() async {
     final controller = TextEditingController();
     final url = await showDialog<String>(
@@ -2758,6 +2786,14 @@ class _PlayerPageState extends State<PlayerPage>
                 '${_queue.length} tracks',
                 style: const TextStyle(color: Colors.white38, fontSize: 11),
               ),
+              if (_queue.isNotEmpty)
+                IconButton(
+                  onPressed: _clearQueue,
+                  icon: const Icon(Icons.clear_all, size: 18),
+                  color: Colors.white38,
+                  tooltip: 'Clear queue',
+                  visualDensity: VisualDensity.compact,
+                ),
             ],
           ),
         ),
@@ -2824,9 +2860,10 @@ class _PlayerPageState extends State<PlayerPage>
               ? _playlistView()
               : _queue.isEmpty
               ? _emptyQueue()
-              : ListView.builder(
+              : ReorderableListView.builder(
                   padding: const EdgeInsets.only(bottom: 12),
                   itemCount: _queue.length,
+                  onReorder: _reorderQueue,
                   itemBuilder: (_, index) => _queueItem(index),
                 ),
         ),
@@ -3087,63 +3124,69 @@ class _PlayerPageState extends State<PlayerPage>
   Widget _queueItem(int index) {
     final track = _queue[index];
     final selected = index == _selected;
-    return InkWell(
-      onTap: () => _select(index),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xff272034) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              decoration: BoxDecoration(
-                color: selected
-                    ? const Color(0xffef4bff)
-                    : const Color(0xff222532),
-                borderRadius: BorderRadius.circular(8),
+    return KeyedSubtree(
+      key: ValueKey(track.path),
+      child: InkWell(
+        onTap: () => _select(index),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xff272034) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? const Color(0xffef4bff)
+                      : const Color(0xff222532),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  selected && _isPlaying ? Icons.graphic_eq : Icons.music_note,
+                  size: 17,
+                  color: selected ? Colors.white : Colors.white38,
+                ),
               ),
-              child: Icon(
-                selected && _isPlaying ? Icons.graphic_eq : Icons.music_note,
-                size: 17,
-                color: selected ? Colors.white : Colors.white38,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    track.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: selected ? Colors.white : Colors.white70,
-                      fontWeight: selected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                      fontSize: 13,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      track.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? Colors.white : Colors.white70,
+                        fontWeight: selected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        fontSize: 13,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    track.artist,
-                    style: const TextStyle(color: Colors.white38, fontSize: 11),
-                  ),
-                ],
+                    const SizedBox(height: 3),
+                    Text(
+                      track.artist,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            IconButton(
-              onPressed: () => _remove(index),
-              icon: const Icon(Icons.close, size: 16, color: Colors.white24),
-              tooltip: 'Remove',
-            ),
-          ],
+              IconButton(
+                onPressed: () => _remove(index),
+                icon: const Icon(Icons.close, size: 16, color: Colors.white24),
+                tooltip: 'Remove',
+              ),
+            ],
+          ),
         ),
       ),
     );
