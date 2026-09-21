@@ -309,6 +309,15 @@ Duration? sleepTimerRemaining(DateTime? deadline, DateTime now) {
   return remaining.isNegative ? Duration.zero : remaining;
 }
 
+List<String> addToPlayHistory(
+  List<String> history,
+  String path, {
+  int maxEntries = 50,
+}) {
+  final next = <String>[path, ...history.where((item) => item != path)];
+  return next.length > maxEntries ? next.sublist(0, maxEntries) : next;
+}
+
 class Track {
   Track({
     required this.path,
@@ -848,6 +857,7 @@ class _PlayerPageState extends State<PlayerPage>
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
   final List<Track> _library = [];
+  final List<String> _playHistory = [];
   final List<String> _libraryFolders = [];
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
@@ -1184,6 +1194,7 @@ class _PlayerPageState extends State<PlayerPage>
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('queue') ?? [];
     final savedLibrary = prefs.getStringList('library') ?? [];
+    final savedPlayHistory = prefs.getStringList('playHistory') ?? [];
     final savedFolders = prefs.getStringList('libraryFolders') ?? [];
     final savedPodcastFeeds = prefs.getStringList('podcastFeeds') ?? [];
     final savedPlaylists = prefs.getString('playlists');
@@ -1202,6 +1213,7 @@ class _PlayerPageState extends State<PlayerPage>
           (value) => Track.fromJson(jsonDecode(value) as Map<String, dynamic>),
         ),
       );
+      _playHistory.addAll(savedPlayHistory);
       _libraryFolders.addAll(savedFolders);
       _podcastFeeds.addAll(savedPodcastFeeds);
       if (savedPlaylists != null) {
@@ -1268,6 +1280,7 @@ class _PlayerPageState extends State<PlayerPage>
       'library',
       _library.map((track) => jsonEncode(track.toJson())).toList(),
     );
+    await prefs.setStringList('playHistory', _playHistory);
     await prefs.setStringList('libraryFolders', _libraryFolders);
     await prefs.setStringList('podcastFeeds', _podcastFeeds);
     await prefs.setString('playlists', jsonEncode(_playlists));
@@ -1487,6 +1500,9 @@ class _PlayerPageState extends State<PlayerPage>
       _selected = index;
       _position = Duration.zero;
       final track = _queue[index];
+      _playHistory
+        ..clear()
+        ..addAll(addToPlayHistory(_playHistory, track.path));
       final libraryIndex = _library.indexWhere(
         (item) => item.path == track.path,
       );
@@ -1574,6 +1590,9 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() {
         _selected = next;
         _position = Duration.zero;
+        _playHistory
+          ..clear()
+          ..addAll(addToPlayHistory(_playHistory, track.path));
         final libraryIndex = _library.indexWhere(
           (item) => item.path == track.path,
         );
@@ -1632,6 +1651,9 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() {
         _selected = next;
         _position = Duration.zero;
+        _playHistory
+          ..clear()
+          ..addAll(addToPlayHistory(_playHistory, track.path));
         final libraryIndex = _library.indexWhere(
           (item) => item.path == track.path,
         );
@@ -4254,6 +4276,7 @@ class _PlayerPageState extends State<PlayerPage>
                 _viewButton('queue', 'Queue', Icons.queue_music),
                 _viewButton('library', 'Library', Icons.library_music),
                 _viewButton('playlists', 'Playlists', Icons.playlist_play),
+                _viewButton('history', 'History', Icons.history),
               ],
             ),
           ),
@@ -4367,6 +4390,8 @@ class _PlayerPageState extends State<PlayerPage>
               ? _libraryView()
               : _activeView == 'playlists'
               ? _playlistView()
+              : _activeView == 'history'
+              ? _historyView()
               : _queue.isEmpty
               ? _emptyQueue()
               : ReorderableListView.builder(
@@ -4503,6 +4528,61 @@ class _PlayerPageState extends State<PlayerPage>
           },
         );
       },
+    );
+  }
+
+  Widget _historyView() {
+    if (_playHistory.isEmpty) return _emptyQueue();
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: () async {
+              setState(_playHistory.clear);
+              await _saveQueue();
+            },
+            icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+            label: const Text('Clear history'),
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.only(bottom: 12),
+            itemCount: _playHistory.length,
+            itemBuilder: (_, index) {
+              final path = _playHistory[index];
+              final track = _library.firstWhere(
+                (item) => item.path == path,
+                orElse: () =>
+                    Track(path: path, name: path.split(RegExp(r'[/\\]')).last),
+              );
+              return ListTile(
+                dense: true,
+                leading: const Icon(Icons.history, size: 18),
+                title: Text(
+                  track.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${track.artist} · ${track.album}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: Colors.white38),
+                ),
+                onTap: () {
+                  setState(() {
+                    _queue.add(track);
+                    _selected = _queue.length - 1;
+                  });
+                  _select(_selected);
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 

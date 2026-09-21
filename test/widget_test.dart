@@ -98,6 +98,15 @@ void main() {
     expect(sleepTimerRemaining(null, now), isNull);
   });
 
+  test('play history moves the newest track to the front and caps entries', () {
+    expect(addToPlayHistory(['b', 'a'], 'a'), ['a', 'b']);
+    expect(addToPlayHistory(['a', 'b', 'c'], 'd', maxEntries: 3), [
+      'd',
+      'a',
+      'b',
+    ]);
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);
