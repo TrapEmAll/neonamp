@@ -949,12 +949,48 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _importPlaylist() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['m3u', 'm3u8'],
+      allowedExtensions: ['m3u', 'm3u8', 'pls'],
     );
     if (result.isEmpty || result.first.path == null) return;
-    final lines = await File(result.first.path!).readAsLines();
-    for (final raw in lines) {
-      final path = raw.trim();
+    final playlistPath = result.first.path!;
+    final lines = await File(playlistPath).readAsLines();
+    final entries = <({String path, String? title})>[];
+    final extension = playlistPath.split('.').last.toLowerCase();
+    if (extension == 'pls') {
+      final paths = <int, String>{};
+      final titles = <int, String>{};
+      for (final line in lines) {
+        final pathMatch = RegExp(r'^\s*File(\d+)\s*=\s*(.+)$', caseSensitive: false)
+            .firstMatch(line);
+        if (pathMatch != null) {
+          paths[int.parse(pathMatch.group(1)!)] = pathMatch.group(2)!.trim();
+          continue;
+        }
+        final titleMatch = RegExp(r'^\s*Title(\d+)\s*=\s*(.*)$', caseSensitive: false)
+            .firstMatch(line);
+        if (titleMatch != null) {
+          titles[int.parse(titleMatch.group(1)!)] = titleMatch.group(2)!.trim();
+        }
+      }
+      for (final index in paths.keys.toList()..sort()) {
+        entries.add((path: paths[index]!, title: titles[index]));
+      }
+    } else {
+      String? pendingTitle;
+      for (final raw in lines) {
+        final line = raw.trim();
+        if (line.toUpperCase().startsWith('#EXTINF:')) {
+          final comma = line.indexOf(',');
+          pendingTitle = comma >= 0 ? line.substring(comma + 1).trim() : null;
+          continue;
+        }
+        if (line.isEmpty || line.startsWith('#')) continue;
+        entries.add((path: line, title: pendingTitle));
+        pendingTitle = null;
+      }
+    }
+    for (final entry in entries) {
+      final path = entry.path;
       if (path.isEmpty ||
           path.startsWith('#') ||
           _queue.any((track) => track.path == path))
@@ -964,7 +1000,9 @@ class _PlayerPageState extends State<PlayerPage>
           : path.split(RegExp(r'[/\\]')).last;
       final track = Track(
         path: path,
-        name: name.replaceFirst(RegExp(r'\.[^.]+$'), ''),
+        name: entry.title?.isNotEmpty == true
+            ? entry.title!
+            : name.replaceFirst(RegExp(r'\.[^.]+$'), ''),
         artist: path.startsWith('http') ? 'Online radio' : 'Local library',
       );
       setState(() {
@@ -1642,6 +1680,27 @@ class _PlayerPageState extends State<PlayerPage>
       mimeType: 'audio/x-mpegurl',
       type: FileType.custom,
       allowedExtensions: ['m3u'],
+    );
+  }
+
+  Future<void> _exportPlsPlaylist() async {
+    final lines = <String>['[playlist]'];
+    for (var index = 0; index < _queue.length; index++) {
+      final track = _queue[index];
+      final number = index + 1;
+      lines
+        ..add('File$number=${track.path}')
+        ..add('Title$number=${track.name}')
+        ..add('Length$number=-1');
+    }
+    lines
+      ..add('NumberOfEntries=${_queue.length}')
+      ..add('Version=2');
+    await FilePicker.saveFile(
+      bytes: Uint8List.fromList(utf8.encode('${lines.join('\n')}\n')),
+      fileName: 'neonamp-playlist.pls',
+      type: FileType.custom,
+      allowedExtensions: ['pls'],
     );
   }
 
@@ -2806,12 +2865,17 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.file_upload_outlined, color: Colors.white60),
           ),
           IconButton(
-            tooltip: 'Export playlist',
+            tooltip: 'Export M3U playlist',
             onPressed: _exportPlaylist,
             icon: const Icon(Icons.ios_share, color: Colors.white60),
           ),
           IconButton(
-            tooltip: 'Import M3U playlist',
+            tooltip: 'Export PLS playlist',
+            onPressed: _exportPlsPlaylist,
+            icon: const Icon(Icons.radio, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Import M3U or PLS playlist',
             onPressed: _importPlaylist,
             icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
           ),
@@ -2830,6 +2894,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'theme') _showThemePicker();
               if (value == 'importSkin') _importSkin();
               if (value == 'export') _exportPlaylist();
+              if (value == 'exportPls') _exportPlsPlaylist();
             },
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'folder', child: Text('Add folder')),
@@ -2839,7 +2904,7 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(
                 value: 'import',
-                child: Text('Import M3U playlist'),
+                child: Text('Import M3U or PLS playlist'),
               ),
               PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
               PopupMenuItem(value: 'radio', child: Text('Find internet radio')),
@@ -2857,7 +2922,11 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'importSkin',
                 child: Text('Import skin package'),
               ),
-              PopupMenuItem(value: 'export', child: Text('Export playlist')),
+              PopupMenuItem(value: 'export', child: Text('Export M3U playlist')),
+              PopupMenuItem(
+                value: 'exportPls',
+                child: Text('Export PLS playlist'),
+              ),
             ],
           ),
       ],

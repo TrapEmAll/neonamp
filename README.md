@@ -26,7 +26,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Persistent smart playlists for favorites, top-rated, most-played, genre, and artist rules, including two-rule all/any matching.
 - Embedded album-art display when cover art is available in the audio file.
 - Replace embedded cover art for supported local audio containers.
-- Named playlists with add-to-playlist actions and M3U export.
+- Named playlists with add-to-playlist actions plus M3U/M3U8 and legacy PLS import/export.
 - Edit named playlists, rename them, remove them, or remove individual tracks.
 - Play, pause, seek, next, previous, shuffle, repeat-all, repeat-one, and volume.
 - Native 10-band DSP equalizer for local files with presets and persisted settings.
