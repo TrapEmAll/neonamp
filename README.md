@@ -19,7 +19,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
 - Subscribe to podcast RSS feeds, add playable episode enclosures, and download episodes locally.
 - Persistent queue between launches.
-- Media library with search, favorites, five-star ratings, play counts, and album/artist/genre fields.
+- Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - Metadata editing now verifies that supported embedded tags were written successfully; APE files are included in folder scans.
 - Persistent smart playlists for favorites, top-rated, most-played, genre, and artist rules.
 - Embedded album-art display when cover art is available in the audio file.

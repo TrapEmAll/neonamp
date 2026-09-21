@@ -24,6 +24,29 @@ void main() {
     expect(restored.limit, original.limit);
   });
 
+  test('track metadata fields round-trip through JSON', () {
+    final original = Track(
+      path: 'song.flac',
+      name: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      genre: 'Synthwave',
+      year: 2026,
+      trackNumber: 2,
+      trackTotal: 9,
+      discNumber: 1,
+      discTotal: 2,
+      lyrics: 'Words',
+    );
+    final restored = Track.fromJson(original.toJson());
+    expect(restored.year, 2026);
+    expect(restored.trackNumber, 2);
+    expect(restored.trackTotal, 9);
+    expect(restored.discNumber, 1);
+    expect(restored.discTotal, 2);
+    expect(restored.lyrics, 'Words');
+  });
+
   test('skin packages round-trip through JSON', () {
     const original = ThemeSkin(
       name: 'Midnight Citrus',

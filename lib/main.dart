@@ -26,6 +26,12 @@ class Track {
     this.artist = 'Local library',
     this.album = 'Unknown album',
     this.genre = 'Unknown genre',
+    this.year,
+    this.trackNumber,
+    this.trackTotal,
+    this.discNumber,
+    this.discTotal,
+    this.lyrics,
     this.rating = 0,
     this.playCount = 0,
     this.favorite = false,
@@ -36,6 +42,12 @@ class Track {
   final String artist;
   final String album;
   final String genre;
+  final int? year;
+  final int? trackNumber;
+  final int? trackTotal;
+  final int? discNumber;
+  final int? discTotal;
+  final String? lyrics;
   final int rating;
   final int playCount;
   final bool favorite;
@@ -47,6 +59,12 @@ class Track {
     String? artist,
     String? album,
     String? genre,
+    int? year,
+    int? trackNumber,
+    int? trackTotal,
+    int? discNumber,
+    int? discTotal,
+    String? lyrics,
     int? rating,
     int? playCount,
     bool? favorite,
@@ -57,6 +75,12 @@ class Track {
     artist: artist ?? this.artist,
     album: album ?? this.album,
     genre: genre ?? this.genre,
+    year: year ?? this.year,
+    trackNumber: trackNumber ?? this.trackNumber,
+    trackTotal: trackTotal ?? this.trackTotal,
+    discNumber: discNumber ?? this.discNumber,
+    discTotal: discTotal ?? this.discTotal,
+    lyrics: lyrics ?? this.lyrics,
     rating: rating ?? this.rating,
     playCount: playCount ?? this.playCount,
     favorite: favorite ?? this.favorite,
@@ -69,6 +93,12 @@ class Track {
     'artist': artist,
     'album': album,
     'genre': genre,
+    if (year != null) 'year': year,
+    if (trackNumber != null) 'trackNumber': trackNumber,
+    if (trackTotal != null) 'trackTotal': trackTotal,
+    if (discNumber != null) 'discNumber': discNumber,
+    if (discTotal != null) 'discTotal': discTotal,
+    if (lyrics != null) 'lyrics': lyrics,
     'rating': rating,
     'playCount': playCount,
     'favorite': favorite,
@@ -81,6 +111,12 @@ class Track {
     artist: json['artist'] as String? ?? 'Local library',
     album: json['album'] as String? ?? 'Unknown album',
     genre: json['genre'] as String? ?? 'Unknown genre',
+    year: (json['year'] as num?)?.toInt(),
+    trackNumber: (json['trackNumber'] as num?)?.toInt(),
+    trackTotal: (json['trackTotal'] as num?)?.toInt(),
+    discNumber: (json['discNumber'] as num?)?.toInt(),
+    discTotal: (json['discTotal'] as num?)?.toInt(),
+    lyrics: json['lyrics'] as String?,
     rating: (json['rating'] as num?)?.toInt() ?? 0,
     playCount: (json['playCount'] as num?)?.toInt() ?? 0,
     favorite: json['favorite'] as bool? ?? false,
@@ -893,6 +929,12 @@ class _PlayerPageState extends State<PlayerPage>
         genre: metadata.genres.isNotEmpty
             ? metadata.genres.first
             : 'Unknown genre',
+        year: metadata.year?.year == 0 ? null : metadata.year?.year,
+        trackNumber: metadata.trackNumber,
+        trackTotal: metadata.trackTotal,
+        discNumber: metadata.discNumber,
+        discTotal: metadata.totalDisc,
+        lyrics: metadata.lyrics,
         artwork: metadata.pictures.isNotEmpty
             ? metadata.pictures.first.bytes
             : null,
@@ -1581,6 +1623,20 @@ class _PlayerPageState extends State<PlayerPage>
     final artist = TextEditingController(text: track.artist);
     final album = TextEditingController(text: track.album);
     final genre = TextEditingController(text: track.genre);
+    final year = TextEditingController(text: track.year?.toString() ?? '');
+    final trackNumber = TextEditingController(
+      text: track.trackNumber?.toString() ?? '',
+    );
+    final trackTotal = TextEditingController(
+      text: track.trackTotal?.toString() ?? '',
+    );
+    final discNumber = TextEditingController(
+      text: track.discNumber?.toString() ?? '',
+    );
+    final discTotal = TextEditingController(
+      text: track.discTotal?.toString() ?? '',
+    );
+    final lyrics = TextEditingController(text: track.lyrics ?? '');
     var rating = track.rating;
     final values = await showDialog<List<String>>(
       context: context,
@@ -1606,6 +1662,55 @@ class _PlayerPageState extends State<PlayerPage>
                 TextField(
                   controller: genre,
                   decoration: const InputDecoration(labelText: 'Genre'),
+                ),
+                TextField(
+                  controller: year,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Release year'),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: trackNumber,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Track #'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: trackTotal,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Tracks'),
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: discNumber,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Disc #'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: discTotal,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Discs'),
+                      ),
+                    ),
+                  ],
+                ),
+                TextField(
+                  controller: lyrics,
+                  minLines: 2,
+                  maxLines: 5,
+                  decoration: const InputDecoration(labelText: 'Lyrics'),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -1638,6 +1743,12 @@ class _PlayerPageState extends State<PlayerPage>
                 album.text.trim(),
                 genre.text.trim(),
                 '$rating',
+                year.text.trim(),
+                trackNumber.text.trim(),
+                trackTotal.text.trim(),
+                discNumber.text.trim(),
+                discTotal.text.trim(),
+                lyrics.text,
               ]),
               child: const Text('Save'),
             ),
@@ -1645,13 +1756,23 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
-    if (values == null || values.length != 5) return;
+    if (values == null || values.length != 11) return;
     try {
       updateMetadata(File(track.path), (metadata) {
         metadata.setTitle(values[0]);
         metadata.setArtist(values[1]);
         metadata.setAlbum(values[2]);
         metadata.setGenres([values[3]]);
+        final parsedYear = int.tryParse(values[5]);
+        final parsedTrack = int.tryParse(values[6]);
+        final parsedTrackTotal = int.tryParse(values[7]);
+        final parsedDisc = int.tryParse(values[8]);
+        final parsedDiscTotal = int.tryParse(values[9]);
+        metadata.setYear(parsedYear == null ? null : DateTime(parsedYear));
+        metadata.setTrackNumber(parsedTrack);
+        metadata.setTrackTotal(parsedTrackTotal);
+        metadata.setCD(parsedDisc, parsedDiscTotal);
+        metadata.setLyrics(values[10].trim().isEmpty ? null : values[10]);
       });
       final written = readMetadata(File(track.path));
       final titleMatches =
@@ -1663,7 +1784,23 @@ class _PlayerPageState extends State<PlayerPage>
       final genreMatches =
           values[3].isEmpty ||
           written.genres.any((genre) => genre == values[3]);
-      if (!titleMatches || !artistMatches || !albumMatches || !genreMatches) {
+      final year = int.tryParse(values[5]);
+      final trackNumber = int.tryParse(values[6]);
+      final trackTotal = int.tryParse(values[7]);
+      final discNumber = int.tryParse(values[8]);
+      final discTotal = int.tryParse(values[9]);
+      final metadataMatches =
+          (year == null || written.year?.year == year) &&
+          (trackNumber == null || written.trackNumber == trackNumber) &&
+          (trackTotal == null || written.trackTotal == trackTotal) &&
+          (discNumber == null || written.discNumber == discNumber) &&
+          (discTotal == null || written.totalDisc == discTotal) &&
+          (values[10].trim().isEmpty || written.lyrics == values[10]);
+      if (!titleMatches ||
+          !artistMatches ||
+          !albumMatches ||
+          !genreMatches ||
+          !metadataMatches) {
         throw const FormatException(
           'Metadata writer did not persist the changes.',
         );
@@ -1682,6 +1819,12 @@ class _PlayerPageState extends State<PlayerPage>
       album: values[2],
       genre: values[3],
       rating: int.tryParse(values[4]) ?? track.rating,
+      year: int.tryParse(values[5]) ?? track.year,
+      trackNumber: int.tryParse(values[6]) ?? track.trackNumber,
+      trackTotal: int.tryParse(values[7]) ?? track.trackTotal,
+      discNumber: int.tryParse(values[8]) ?? track.discNumber,
+      discTotal: int.tryParse(values[9]) ?? track.discTotal,
+      lyrics: values[10].trim().isEmpty ? track.lyrics : values[10],
     );
     setState(() {
       final libraryIndex = _library.indexWhere(
