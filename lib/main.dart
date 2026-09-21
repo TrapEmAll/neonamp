@@ -78,6 +78,27 @@ class Track {
   );
 }
 
+class _TogglePlayIntent extends Intent {
+  const _TogglePlayIntent();
+}
+
+class _NextTrackIntent extends Intent {
+  const _NextTrackIntent();
+}
+
+class _PreviousTrackIntent extends Intent {
+  const _PreviousTrackIntent();
+}
+
+class _SeekIntent extends Intent {
+  const _SeekIntent(this.amount);
+  final Duration amount;
+}
+
+class _MuteIntent extends Intent {
+  const _MuteIntent();
+}
+
 class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   NeonAudioHandler(this.player) {
     player.onPositionChanged.listen(
@@ -304,6 +325,12 @@ class _PlayerPageState extends State<PlayerPage>
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+        final savedBands = (settings['eqBands'] as List?)?.cast<num>();
+        if (savedBands != null && savedBands.length == _eqBands.length) {
+          for (var i = 0; i < _eqBands.length; i++) {
+            _eqBands[i] = savedBands[i].toDouble();
+          }
+        }
       }
     });
   }
@@ -327,6 +354,7 @@ class _PlayerPageState extends State<PlayerPage>
         'crossfadeSeconds': _crossfadeSeconds,
         'equalizerEnabled': _equalizerEnabled,
         'eqPreset': _eqPreset,
+        'eqBands': _eqBands,
       }),
     );
   }
@@ -832,13 +860,54 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   Widget build(BuildContext context) => Shortcuts(
     shortcuts: const <ShortcutActivator, Intent>{
-      SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+      SingleActivator(LogicalKeyboardKey.space): _TogglePlayIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowRight): _NextTrackIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowLeft): _PreviousTrackIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowRight, control: true):
+          _SeekIntent(Duration(seconds: 10)),
+      SingleActivator(LogicalKeyboardKey.arrowLeft, control: true): _SeekIntent(
+        Duration(seconds: -10),
+      ),
+      SingleActivator(LogicalKeyboardKey.keyM): _MuteIntent(),
     },
     child: Actions(
       actions: <Type, Action<Intent>>{
-        ActivateIntent: CallbackAction<ActivateIntent>(
+        _TogglePlayIntent: CallbackAction<_TogglePlayIntent>(
           onInvoke: (_) {
             _togglePlay();
+            return null;
+          },
+        ),
+        _NextTrackIntent: CallbackAction<_NextTrackIntent>(
+          onInvoke: (_) {
+            _next();
+            return null;
+          },
+        ),
+        _PreviousTrackIntent: CallbackAction<_PreviousTrackIntent>(
+          onInvoke: (_) {
+            _previous();
+            return null;
+          },
+        ),
+        _SeekIntent: CallbackAction<_SeekIntent>(
+          onInvoke: (intent) {
+            final target = _position + intent.amount;
+            _player.seek(
+              target < Duration.zero
+                  ? Duration.zero
+                  : (target > _duration ? _duration : target),
+            );
+            return null;
+          },
+        ),
+        _MuteIntent: CallbackAction<_MuteIntent>(
+          onInvoke: (_) {
+            final muted = _volume > 0;
+            final nextVolume = muted ? 0.0 : 0.82;
+            setState(() => _volume = nextVolume);
+            _player.setVolume(nextVolume);
+            _saveQueue();
             return null;
           },
         ),
