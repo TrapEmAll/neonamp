@@ -842,38 +842,65 @@ class _PlayerPageState extends State<PlayerPage>
       }
       final selected = await showDialog<Map<String, dynamic>>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Radio stations for “$term”'),
-          content: SizedBox(
-            width: 520,
-            height: 420,
-            child: ListView.builder(
-              itemCount: stations.length,
-              itemBuilder: (_, index) {
-                final station = stations[index];
-                final name = (station['name'] as String? ?? 'Untitled').trim();
-                final country = station['country'] as String? ?? '';
-                final codec = station['codec'] as String? ?? '';
-                return ListTile(
-                  leading: const Icon(Icons.radio, color: Color(0xffef4bff)),
-                  title: Text(name.isEmpty ? 'Untitled station' : name),
-                  subtitle: Text(
-                    [
-                      country,
-                      codec,
-                    ].where((value) => value.isNotEmpty).join(' · '),
-                  ),
-                  onTap: () => Navigator.pop(context, station),
-                );
-              },
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text('Radio stations for “$term”'),
+            content: SizedBox(
+              width: 520,
+              height: 420,
+              child: ListView.builder(
+                itemCount: stations.length,
+                itemBuilder: (_, index) {
+                  final station = stations[index];
+                  final name = (station['name'] as String? ?? 'Untitled')
+                      .trim();
+                  final country = station['country'] as String? ?? '';
+                  final codec = station['codec'] as String? ?? '';
+                  final path = _stationStreamUrl(station);
+                  final saved = path == null
+                      ? null
+                      : _library.cast<Track?>().firstWhere(
+                          (track) => track?.path == path,
+                          orElse: () => null,
+                        );
+                  return ListTile(
+                    leading: const Icon(Icons.radio, color: Color(0xffef4bff)),
+                    title: Text(name.isEmpty ? 'Untitled station' : name),
+                    subtitle: Text(
+                      [
+                        country,
+                        codec,
+                      ].where((value) => value.isNotEmpty).join(' · '),
+                    ),
+                    trailing: IconButton(
+                      tooltip: saved?.favorite == true
+                          ? 'Remove station favorite'
+                          : 'Save station favorite',
+                      icon: Icon(
+                        saved?.favorite == true
+                            ? Icons.star
+                            : Icons.star_border,
+                        color: saved?.favorite == true ? Colors.amber : null,
+                      ),
+                      onPressed: path == null
+                          ? null
+                          : () async {
+                              await _toggleRadioFavorite(station);
+                              setDialogState(() {});
+                            },
+                    ),
+                    onTap: () => Navigator.pop(context, station),
+                  );
+                },
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-          ],
         ),
       );
       if (selected == null) return;
@@ -909,6 +936,34 @@ class _PlayerPageState extends State<PlayerPage>
     final value = (resolved?.trim().isNotEmpty == true ? resolved : fallback)
         ?.trim();
     return value == null || value.isEmpty ? null : value;
+  }
+
+  Future<void> _toggleRadioFavorite(Map<String, dynamic> station) async {
+    final path = _stationStreamUrl(station);
+    if (path == null) return;
+    final name = (station['name'] as String? ?? 'Internet radio').trim();
+    final existingIndex = _library.indexWhere((track) => track.path == path);
+    setState(() {
+      if (existingIndex >= 0) {
+        final track = _library[existingIndex];
+        _library[existingIndex] = track.copyWith(favorite: !track.favorite);
+      } else {
+        _library.add(
+          Track(
+            path: path,
+            name: name.isEmpty ? 'Internet radio' : name,
+            artist: (station['country'] as String? ?? 'Internet radio').trim(),
+            album: 'Internet radio',
+            genre: (station['tags'] as String? ?? 'Radio')
+                .split(',')
+                .first
+                .trim(),
+            favorite: true,
+          ),
+        );
+      }
+    });
+    await _saveQueue();
   }
 
   Future<void> _addPodcastFeed() async {
