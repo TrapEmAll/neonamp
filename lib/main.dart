@@ -231,6 +231,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<Track> _queue = [];
   final List<Track> _library = [];
   final List<String> _libraryFolders = [];
+  final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
   final TextEditingController _searchController = TextEditingController();
   late final AnimationController _pulse = AnimationController(
@@ -311,6 +312,7 @@ class _PlayerPageState extends State<PlayerPage>
     final saved = prefs.getStringList('queue') ?? [];
     final savedLibrary = prefs.getStringList('library') ?? [];
     final savedFolders = prefs.getStringList('libraryFolders') ?? [];
+    final savedPodcastFeeds = prefs.getStringList('podcastFeeds') ?? [];
     final savedPlaylists = prefs.getString('playlists');
     final savedSettings = prefs.getString('settings');
     if (!mounted) return;
@@ -326,6 +328,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       );
       _libraryFolders.addAll(savedFolders);
+      _podcastFeeds.addAll(savedPodcastFeeds);
       if (savedPlaylists != null) {
         final decoded = jsonDecode(savedPlaylists) as Map<String, dynamic>;
         for (final entry in decoded.entries)
@@ -360,6 +363,7 @@ class _PlayerPageState extends State<PlayerPage>
       _library.map((track) => jsonEncode(track.toJson())).toList(),
     );
     await prefs.setStringList('libraryFolders', _libraryFolders);
+    await prefs.setStringList('podcastFeeds', _podcastFeeds);
     await prefs.setString('playlists', jsonEncode(_playlists));
     await prefs.setString(
       'settings',
@@ -608,6 +612,130 @@ class _PlayerPageState extends State<PlayerPage>
       ),
     );
     await _saveQueue();
+  }
+
+  Future<void> _addPodcastFeed() async {
+    final controller = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Subscribe to podcast RSS'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/podcast.xml',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Subscribe'),
+          ),
+        ],
+      ),
+    );
+    if (url == null || url.isEmpty) return;
+    try {
+      final added = await _loadPodcastFeed(url);
+      if (!_podcastFeeds.contains(url)) _podcastFeeds.add(url);
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added $added podcast episode(s)')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not load that podcast feed.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _refreshPodcasts() async {
+    var added = 0;
+    for (final feed in List<String>.from(_podcastFeeds)) {
+      try {
+        added += await _loadPodcastFeed(feed);
+      } catch (_) {
+        // Keep other subscriptions refreshing if one feed is unavailable.
+      }
+    }
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Refreshed podcasts ($added new episode(s))')),
+      );
+    }
+  }
+
+  Future<int> _loadPodcastFeed(String feedUrl) async {
+    final request = await HttpClient().getUrl(Uri.parse(feedUrl));
+    final response = await request.close();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException('Podcast feed returned ${response.statusCode}');
+    }
+    final xml = await response.transform(utf8.decoder).join();
+    final itemPattern = RegExp(
+      r'<item\b[^>]*>([\s\S]*?)</item>',
+      caseSensitive: false,
+    );
+    final enclosurePattern = RegExp(
+      r'''<enclosure\b[^>]*\burl=["']([^"']+)["']''',
+      caseSensitive: false,
+    );
+    final episodes = <Track>[];
+    for (final match in itemPattern.allMatches(xml)) {
+      final item = match.group(1) ?? '';
+      final enclosure = enclosurePattern.firstMatch(item)?.group(1);
+      if (enclosure == null || enclosure.isEmpty) continue;
+      final title = _rssValue(item, 'title') ?? 'Podcast episode';
+      final author =
+          _rssValue(item, 'author') ?? _rssValue(item, 'creator') ?? 'Podcast';
+      if (_queue.any((track) => track.path == enclosure)) continue;
+      episodes.add(
+        Track(
+          path: enclosure,
+          name: title,
+          artist: author,
+          album: 'Podcast',
+          genre: 'Podcast',
+        ),
+      );
+    }
+    if (episodes.isNotEmpty && mounted) {
+      setState(() {
+        _queue.addAll(episodes);
+        _library.addAll(
+          episodes.where(
+            (episode) => !_library.any((track) => track.path == episode.path),
+          ),
+        );
+      });
+    }
+    return episodes.length;
+  }
+
+  String? _rssValue(String item, String tag) {
+    final match = RegExp(
+      '<(?:[A-Za-z0-9_]+:)?$tag\\b[^>]*>([\\s\\S]*?)</(?:[A-Za-z0-9_]+:)?$tag>',
+      caseSensitive: false,
+    ).firstMatch(item);
+    final value = match?.group(1)?.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+    if (value == null || value.isEmpty) return null;
+    return value
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'");
   }
 
   Future<void> _exportPlaylist() async {
@@ -1062,6 +1190,16 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.link, color: Colors.white60),
           ),
           IconButton(
+            tooltip: 'Subscribe to podcast RSS',
+            onPressed: _addPodcastFeed,
+            icon: const Icon(Icons.podcasts, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Refresh podcasts',
+            onPressed: _refreshPodcasts,
+            icon: const Icon(Icons.podcasts_outlined, color: Colors.white60),
+          ),
+          IconButton(
             tooltip: 'Equalizer',
             onPressed: _showEqualizer,
             icon: Icon(
@@ -1089,6 +1227,8 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'rescan') _rescanFolders();
               if (value == 'import') _importPlaylist();
               if (value == 'stream') _addStream();
+              if (value == 'podcast') _addPodcastFeed();
+              if (value == 'refreshPodcasts') _refreshPodcasts();
               if (value == 'eq') _showEqualizer();
               if (value == 'export') _exportPlaylist();
             },
@@ -1103,6 +1243,14 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Import M3U playlist'),
               ),
               PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
+              PopupMenuItem(
+                value: 'podcast',
+                child: Text('Subscribe to podcast RSS'),
+              ),
+              PopupMenuItem(
+                value: 'refreshPodcasts',
+                child: Text('Refresh podcasts'),
+              ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'export', child: Text('Export playlist')),
             ],

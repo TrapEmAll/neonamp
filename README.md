@@ -13,6 +13,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Android background playback with lock-screen, headset, notification, and Android Auto media controls.
 - Import one or more local audio files.
 - Add HTTP audio streams and online radio URLs.
+- Subscribe to podcast RSS feeds and add playable episode enclosures.
 - Persistent queue between launches.
 - Media library with search, favorites, five-star ratings, play counts, and album/artist/genre fields.
 - Embedded album-art display when cover art is available in the audio file.
