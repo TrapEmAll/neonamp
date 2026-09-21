@@ -13,6 +13,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Persistent smart playlists with favorites, rating, play-count, genre, and artist rules, including two-rule all/any grouping, sorting, and result limits
 - Favorites, five-star ratings, and play counts
 - Named playlists and adding library tracks to playlists
+- Named playlist editing, renaming, deletion, and per-track removal
 - M3U playlist export
 - HTTP audio stream / internet radio URL playback
 - Internet-radio station discovery through the Radio Browser directory with saved station favorites

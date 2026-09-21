@@ -2018,6 +2018,130 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _renamePlaylist(String oldName) async {
+    final controller = TextEditingController(text: oldName);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename playlist'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Playlist name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty || name == oldName) return;
+    if (_playlists.containsKey(name)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('A playlist with that name already exists.'),
+          ),
+        );
+      }
+      return;
+    }
+    setState(() {
+      final renamed = <String, List<String>>{};
+      for (final entry in _playlists.entries) {
+        renamed[entry.key == oldName ? name : entry.key] = entry.value;
+      }
+      _playlists
+        ..clear()
+        ..addAll(renamed);
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _deletePlaylist(String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete playlist?'),
+        content: Text(
+          'Remove "$name"? The audio files will stay in your library.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _playlists.remove(name));
+    await _saveQueue();
+  }
+
+  Future<void> _editPlaylist(String name) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final tracks = _playlists[name] ?? <String>[];
+          return AlertDialog(
+            title: Text('Edit $name'),
+            content: SizedBox(
+              width: 420,
+              height: 360,
+              child: tracks.isEmpty
+                  ? const Center(child: Text('No tracks in this playlist.'))
+                  : ListView.builder(
+                      itemCount: tracks.length,
+                      itemBuilder: (context, index) {
+                        final path = tracks[index];
+                        final track = _library.firstWhere(
+                          (item) => item.path == path,
+                          orElse: () => Track(
+                            path: path,
+                            name: path.split(RegExp(r'[/\\]')).last,
+                          ),
+                        );
+                        return ListTile(
+                          dense: true,
+                          title: Text(track.name),
+                          subtitle: Text(track.artist),
+                          trailing: IconButton(
+                            tooltip: 'Remove from playlist',
+                            icon: const Icon(Icons.remove_circle_outline),
+                            onPressed: () {
+                              setState(() => tracks.removeAt(index));
+                              setDialogState(() {});
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    await _saveQueue();
+  }
+
   Future<void> _createSmartPlaylist() async {
     final nameController = TextEditingController();
     final valueController = TextEditingController();
@@ -3043,6 +3167,30 @@ class _PlayerPageState extends State<PlayerPage>
                           _selected = 0;
                         });
                       },
+                      trailing: PopupMenuButton<String>(
+                        tooltip: 'Playlist actions',
+                        onSelected: (action) {
+                          switch (action) {
+                            case 'edit':
+                              _editPlaylist(name);
+                              break;
+                            case 'rename':
+                              _renamePlaylist(name);
+                              break;
+                            case 'delete':
+                              _deletePlaylist(name);
+                              break;
+                          }
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text('Edit tracks'),
+                          ),
+                          PopupMenuItem(value: 'rename', child: Text('Rename')),
+                          PopupMenuItem(value: 'delete', child: Text('Delete')),
+                        ],
+                      ),
                     ),
                   ),
                   if (_smartPlaylists.isNotEmpty)
