@@ -40,6 +40,7 @@ class Track {
   final Uint8List? artwork;
 
   Track copyWith({
+    String? path,
     String? name,
     String? artist,
     String? album,
@@ -49,7 +50,7 @@ class Track {
     bool? favorite,
     Uint8List? artwork,
   }) => Track(
-    path: path,
+    path: path ?? this.path,
     name: name ?? this.name,
     artist: artist ?? this.artist,
     album: album ?? this.album,
@@ -721,6 +722,54 @@ class _PlayerPageState extends State<PlayerPage>
       });
     }
     return episodes.length;
+  }
+
+  Future<void> _downloadPodcastEpisode(Track track) async {
+    if (!track.path.startsWith('http')) return;
+    final directory = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Choose a podcast download folder',
+    );
+    if (directory == null) return;
+    try {
+      final request = await HttpClient().getUrl(Uri.parse(track.path));
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('Episode returned ${response.statusCode}');
+      }
+      final safeName = track.name
+          .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      final extension = Uri.tryParse(track.path)?.path.split('.').last;
+      final filename =
+          '$safeName.${extension != null && extension.length <= 5 ? extension : 'mp3'}';
+      final target = File(
+        '${Directory(directory).path}${Platform.pathSeparator}$filename',
+      );
+      await response.pipe(target.openWrite());
+      final downloaded = track.copyWith(path: target.path);
+      if (mounted) {
+        setState(() {
+          if (!_queue.any((item) => item.path == downloaded.path)) {
+            _queue.add(downloaded);
+          }
+          if (!_library.any((item) => item.path == downloaded.path)) {
+            _library.add(downloaded);
+          }
+        });
+      }
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Downloaded ${track.name}')));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not download this episode.')),
+        );
+      }
+    }
   }
 
   String? _rssValue(String item, String tag) {
@@ -1454,6 +1503,16 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
                 onPressed: () => _addTrackToPlaylist(track),
               ),
+              if (track.album == 'Podcast' && track.path.startsWith('http'))
+                IconButton(
+                  tooltip: 'Download episode',
+                  icon: const Icon(
+                    Icons.download_outlined,
+                    size: 17,
+                    color: Colors.white30,
+                  ),
+                  onPressed: () => _downloadPodcastEpisode(track),
+                ),
             ],
           ),
           onTap: () {
