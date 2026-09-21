@@ -31,6 +31,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - User-importable JSON skin packages with persisted selection on Windows and Android
 - Portable JSON plugin packages with validated manifests, persisted enablement, and plugin-provided equalizer presets on Windows and Android
 - Portable-device folder sync for local tracks with collision-safe copies and an M3U8 manifest on Windows and Android
+- Native M4A conversion using Media Foundation on Windows and MediaCodec/MediaMuxer on Android, with metadata restoration
 - Responsive Windows and Android layouts
 - Android background playback with notification, lock-screen, headset, and Android Auto media controls
 - Windows global media keys for play/pause, stop, previous, and next
@@ -41,6 +42,6 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Broaden tag-writing coverage beyond the currently supported containers
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Broader radio-directory metadata and station interoperability
-- CD ripping and format conversion on Windows
+- CD ripping on Windows
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.

@@ -1,6 +1,12 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <string>
+
+#include <mfapi.h>
+#include <mferror.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
 
 #include <systemmediatransportcontrolsinterop.h>
 #include <winrt/Windows.Media.h>
@@ -8,6 +14,100 @@
 #include <winrt/base.h>
 
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+
+bool TranscodeToM4a(const std::wstring& input_path,
+                    const std::wstring& output_path) {
+  if (FAILED(MFStartup(MF_VERSION))) return false;
+  bool success = false;
+  winrt::com_ptr<IMFSourceReader> reader;
+  winrt::com_ptr<IMFSinkWriter> writer;
+  try {
+    winrt::check_hresult(MFCreateSourceReaderFromURL(
+        input_path.c_str(), nullptr, reader.put()));
+    constexpr DWORD audio_stream =
+        static_cast<DWORD>(MF_SOURCE_READER_FIRST_AUDIO_STREAM);
+    winrt::check_hresult(reader->SetStreamSelection(
+        static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE));
+    winrt::check_hresult(reader->SetStreamSelection(audio_stream, TRUE));
+
+    winrt::com_ptr<IMFMediaType> native_type;
+    winrt::check_hresult(reader->GetNativeMediaType(audio_stream, 0,
+                                                    native_type.put()));
+    UINT32 sample_rate = 44100;
+    UINT32 channels = 2;
+    native_type->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &sample_rate);
+    native_type->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &channels);
+
+    winrt::com_ptr<IMFMediaType> pcm_type;
+    winrt::check_hresult(MFCreateMediaType(pcm_type.put()));
+    winrt::check_hresult(pcm_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio));
+    winrt::check_hresult(pcm_type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM));
+    winrt::check_hresult(
+        pcm_type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, sample_rate));
+    winrt::check_hresult(
+        pcm_type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, channels));
+    winrt::check_hresult(pcm_type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16));
+    winrt::check_hresult(pcm_type->SetUINT32(
+        MF_MT_AUDIO_BLOCK_ALIGNMENT, channels * sizeof(INT16)));
+    winrt::check_hresult(pcm_type->SetUINT32(
+        MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
+        sample_rate * channels * sizeof(INT16)));
+    winrt::check_hresult(
+        reader->SetCurrentMediaType(audio_stream, nullptr, pcm_type.get()));
+
+    winrt::check_hresult(MFCreateSinkWriterFromURL(
+        output_path.c_str(), nullptr, nullptr, writer.put()));
+    winrt::com_ptr<IMFMediaType> aac_type;
+    winrt::check_hresult(MFCreateMediaType(aac_type.put()));
+    winrt::check_hresult(aac_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio));
+    winrt::check_hresult(aac_type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC));
+    winrt::check_hresult(
+        aac_type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, sample_rate));
+    winrt::check_hresult(
+        aac_type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, channels));
+    winrt::check_hresult(aac_type->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
+                                             192000 / 8));
+
+    DWORD output_stream = 0;
+    winrt::check_hresult(writer->AddStream(aac_type.get(), &output_stream));
+    winrt::check_hresult(
+        writer->SetInputMediaType(output_stream, pcm_type.get(), nullptr));
+    winrt::check_hresult(writer->BeginWriting());
+
+    while (true) {
+      DWORD flags = 0;
+      LONGLONG timestamp = 0;
+      winrt::com_ptr<IMFSample> sample;
+      winrt::check_hresult(reader->ReadSample(audio_stream, 0, nullptr, &flags,
+                                              &timestamp, sample.put()));
+      if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0) break;
+      if (sample) {
+        winrt::check_hresult(sample->SetSampleTime(timestamp));
+        winrt::check_hresult(writer->WriteSample(output_stream, sample.get()));
+      }
+    }
+    winrt::check_hresult(writer->Finalize());
+    success = true;
+  } catch (...) {
+    if (writer) writer->Finalize();
+  }
+  if (!success) DeleteFileW(output_path.c_str());
+  MFShutdown();
+  return success;
+}
+
+std::wstring GetStringArgument(const flutter::EncodableMap& values,
+                               const char* key) {
+  const auto found = values.find(flutter::EncodableValue(key));
+  if (found == values.end()) return {};
+  const auto* value = std::get_if<std::string>(&found->second);
+  if (value == nullptr) return {};
+  return std::wstring(value->begin(), value->end());
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -42,6 +142,17 @@ bool FlutterWindow::OnCreate() {
             UpdateSystemMediaControls(*values);
           }
           result->Success();
+        } else if (call.method_name() == "convertToM4a") {
+          const auto* values = std::get_if<flutter::EncodableMap>(call.arguments());
+          if (values == nullptr) {
+            result->Success(flutter::EncodableValue(false));
+            return;
+          }
+          const auto input_path = GetStringArgument(*values, "inputPath");
+          const auto output_path = GetStringArgument(*values, "outputPath");
+          result->Success(flutter::EncodableValue(
+              !input_path.empty() && !output_path.empty() &&
+              TranscodeToM4a(input_path, output_path)));
         } else {
           result->NotImplemented();
         }

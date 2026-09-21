@@ -296,6 +296,13 @@ String nextSyncFileName(String requested, Set<String> usedNames) {
   return candidate;
 }
 
+String convertedM4aFileName(String path) {
+  final name = syncFileName(path);
+  final dot = name.lastIndexOf('.');
+  final stem = dot > 0 ? name.substring(0, dot) : name;
+  return '$stem.m4a';
+}
+
 class Track {
   Track({
     required this.path,
@@ -2225,6 +2232,77 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _convertTrackToM4a(Track track) async {
+    if (track.path.startsWith('http')) return;
+    final destination = await FilePicker.getDirectoryPath(
+      dialogTitle: 'Choose a conversion folder',
+    );
+    if (destination == null) return;
+    final usedNames = <String>{};
+    final requested = convertedM4aFileName(track.path);
+    final outputName = nextSyncFileName(requested, usedNames);
+    final output = '$destination${Platform.pathSeparator}$outputName';
+    try {
+      final converted = await const MethodChannel('neonamp/converter')
+          .invokeMethod<bool>('convertToM4a', {
+            'inputPath': track.path,
+            'outputPath': output,
+          });
+      if (converted != true) {
+        throw const FormatException(
+          'The native audio converter rejected the file.',
+        );
+      }
+      try {
+        await writeTrackMetadata(File(output), [
+          track.name,
+          track.artist,
+          track.album,
+          track.genre,
+          '',
+          track.year?.toString() ?? '',
+          track.trackNumber?.toString() ?? '',
+          track.trackTotal?.toString() ?? '',
+          track.discNumber?.toString() ?? '',
+          track.discTotal?.toString() ?? '',
+          track.lyrics ?? '',
+        ]);
+      } on Object {
+        // The converted audio remains usable if a target tag writer rejects a field.
+      }
+      final convertedTrack = await _readTrack(output, outputName);
+      final withMetadata = convertedTrack.copyWith(
+        name: track.name,
+        artist: track.artist,
+        album: track.album,
+        genre: track.genre,
+        year: track.year,
+        trackNumber: track.trackNumber,
+        trackTotal: track.trackTotal,
+        discNumber: track.discNumber,
+        discTotal: track.discTotal,
+        lyrics: track.lyrics,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (!_library.any((item) => item.path == output)) {
+          _library.add(withMetadata);
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Converted ${track.name} to M4A')),
+        );
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not convert track: $error')),
+      );
+    }
+  }
+
   Future<void> _exportPlsPlaylist() async {
     final lines = <String>['[playlist]'];
     for (var index = 0; index < _queue.length; index++) {
@@ -4084,6 +4162,16 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
                 onPressed: () => _replaceArtwork(track),
               ),
+              if (!track.path.startsWith('http'))
+                IconButton(
+                  tooltip: 'Convert to M4A',
+                  icon: const Icon(
+                    Icons.transform,
+                    size: 17,
+                    color: Colors.white30,
+                  ),
+                  onPressed: () => _convertTrackToM4a(track),
+                ),
               IconButton(
                 icon: const Icon(
                   Icons.playlist_add,

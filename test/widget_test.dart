@@ -81,6 +81,10 @@ void main() {
     expect(nextSyncFileName('track.mp3', used), 'track (3).mp3');
   });
 
+  test('audio conversion uses a safe M4A output name', () {
+    expect(convertedM4aFileName(r'C:\Music\live:take?.flac'), 'live_take_.m4a');
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);
