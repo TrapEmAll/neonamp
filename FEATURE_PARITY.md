@@ -11,6 +11,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Embedded cover-art replacement for supported local containers
 - Library search across title, artist, album, and genre
 - Smart library filters for favorites, top-rated tracks, and most-played tracks
+- Persistent library sorting by added order, title, artist, album, rating, or play count
 - Persistent smart playlists with favorites, rating, play-count, genre, and artist rules, including two-rule all/any grouping, sorting, and result limits
 - Favorites, five-star ratings, and play counts
 - Named playlists and adding library tracks to playlists

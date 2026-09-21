@@ -664,6 +664,8 @@ class _PlayerPageState extends State<PlayerPage>
   String _activeView = 'queue';
   String _searchQuery = '';
   String _libraryFilter = 'All';
+  String _librarySort = 'Added';
+  bool _librarySortDescending = false;
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
   String _eqPreset = 'Flat';
@@ -934,6 +936,9 @@ class _PlayerPageState extends State<PlayerPage>
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
+        _librarySort = settings['librarySort'] as String? ?? 'Added';
+        _librarySortDescending =
+            settings['librarySortDescending'] as bool? ?? false;
         final savedBands = (settings['eqBands'] as List?)?.cast<num>();
         if (savedBands != null && savedBands.length == _eqBands.length) {
           for (var i = 0; i < _eqBands.length; i++) {
@@ -971,6 +976,8 @@ class _PlayerPageState extends State<PlayerPage>
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
         'playbackSpeed': _playbackSpeed,
+        'librarySort': _librarySort,
+        'librarySortDescending': _librarySortDescending,
       }),
     );
   }
@@ -1820,7 +1827,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   List<Track> get _visibleLibrary {
     final query = _searchQuery.toLowerCase();
-    return _library
+    final tracks = _library
         .where(
           (track) =>
               (_libraryFilter == 'All' ||
@@ -1833,6 +1840,19 @@ class _PlayerPageState extends State<PlayerPage>
                       .contains(query)),
         )
         .toList();
+    if (_librarySort == 'Added') return tracks;
+    tracks.sort((a, b) {
+      final comparison = switch (_librarySort) {
+        'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        'Artist' => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+        'Album' => a.album.toLowerCase().compareTo(b.album.toLowerCase()),
+        'Rating' => a.rating.compareTo(b.rating),
+        'Play count' => a.playCount.compareTo(b.playCount),
+        _ => 0,
+      };
+      return _librarySortDescending ? -comparison : comparison;
+    });
+    return tracks;
   }
 
   List<Track> _tracksForSmartPlaylist(SmartPlaylist playlist) {
@@ -3336,6 +3356,45 @@ class _PlayerPageState extends State<PlayerPage>
                   ],
                   onChanged: (value) {
                     if (value != null) setState(() => _libraryFilter = value);
+                  },
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'Sort library',
+                  icon: const Icon(Icons.sort, size: 19),
+                  onSelected: (value) {
+                    setState(() => _librarySort = value);
+                    _saveQueue();
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(
+                      value: 'Added',
+                      child: Text('Recently added'),
+                    ),
+                    PopupMenuItem(value: 'Title', child: Text('Title')),
+                    PopupMenuItem(value: 'Artist', child: Text('Artist')),
+                    PopupMenuItem(value: 'Album', child: Text('Album')),
+                    PopupMenuItem(value: 'Rating', child: Text('Rating')),
+                    PopupMenuItem(
+                      value: 'Play count',
+                      child: Text('Play count'),
+                    ),
+                  ],
+                ),
+                IconButton(
+                  tooltip: _librarySortDescending
+                      ? 'Sort ascending'
+                      : 'Sort descending',
+                  icon: Icon(
+                    _librarySortDescending
+                        ? Icons.arrow_downward
+                        : Icons.arrow_upward,
+                    size: 17,
+                  ),
+                  onPressed: () {
+                    setState(
+                      () => _librarySortDescending = !_librarySortDescending,
+                    );
+                    _saveQueue();
                   },
                 ),
               ],
