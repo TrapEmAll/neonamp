@@ -307,6 +307,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
+  double _playbackSpeed = 1.0;
 
   void _bindPlayerStreams() {
     _positionSubscription = player.onPositionChanged.listen(
@@ -349,6 +350,13 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           ? UrlSource(track.path)
           : DeviceFileSource(track.path),
     );
+    await player.setPlaybackRate(_playbackSpeed);
+  }
+
+  Future<void> setPlaybackSpeed(double speed) async {
+    _playbackSpeed = speed;
+    await player.setPlaybackRate(speed);
+    _broadcast();
   }
 
   void publishTrack(Track track) {
@@ -421,7 +429,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             : AudioProcessingState.ready,
         playing: currentState == PlayerState.playing,
         updatePosition: position ?? Duration.zero,
-        speed: 1.0,
+        speed: _playbackSpeed,
       ),
     );
   }
@@ -579,6 +587,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
   bool _dspActive = false;
+  double _playbackSpeed = 1.0;
 
   AudioPlayer get _player => _activePlayer;
 
@@ -756,6 +765,20 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _setPlaybackSpeed(double speed) async {
+    final value = speed.clamp(0.5, 2.0).toDouble();
+    setState(() => _playbackSpeed = value);
+    if (_current != null) {
+      if (_dspActive) {
+        await _dspPlayer.setPlaybackSpeed(value);
+      } else {
+        await _player.setPlaybackRate(value);
+      }
+      await _audioHandler?.setPlaybackSpeed(value);
+    }
+    await _saveQueue();
+  }
+
   Future<void> _setEqualizerEnabled(bool enabled) async {
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
@@ -828,6 +851,7 @@ class _PlayerPageState extends State<PlayerPage>
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+        _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         final savedBands = (settings['eqBands'] as List?)?.cast<num>();
         if (savedBands != null && savedBands.length == _eqBands.length) {
           for (var i = 0; i < _eqBands.length; i++) {
@@ -864,6 +888,7 @@ class _PlayerPageState extends State<PlayerPage>
         'equalizerEnabled': _equalizerEnabled,
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
+        'playbackSpeed': _playbackSpeed,
       }),
     );
   }
@@ -960,14 +985,18 @@ class _PlayerPageState extends State<PlayerPage>
       final paths = <int, String>{};
       final titles = <int, String>{};
       for (final line in lines) {
-        final pathMatch = RegExp(r'^\s*File(\d+)\s*=\s*(.+)$', caseSensitive: false)
-            .firstMatch(line);
+        final pathMatch = RegExp(
+          r'^\s*File(\d+)\s*=\s*(.+)$',
+          caseSensitive: false,
+        ).firstMatch(line);
         if (pathMatch != null) {
           paths[int.parse(pathMatch.group(1)!)] = pathMatch.group(2)!.trim();
           continue;
         }
-        final titleMatch = RegExp(r'^\s*Title(\d+)\s*=\s*(.*)$', caseSensitive: false)
-            .firstMatch(line);
+        final titleMatch = RegExp(
+          r'^\s*Title(\d+)\s*=\s*(.*)$',
+          caseSensitive: false,
+        ).firstMatch(line);
         if (titleMatch != null) {
           titles[int.parse(titleMatch.group(1)!)] = titleMatch.group(2)!.trim();
         }
@@ -1068,6 +1097,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _dspPlayer.play(
         track.path,
         volume: _volume,
+        playbackSpeed: _playbackSpeed,
         equalizerEnabled: true,
         bands: _eqBands,
       );
@@ -1087,6 +1117,7 @@ class _PlayerPageState extends State<PlayerPage>
               ? UrlSource(track.path)
               : DeviceFileSource(track.path),
         );
+        await _player.setPlaybackRate(_playbackSpeed);
       }
     }
     await _saveQueue();
@@ -1202,6 +1233,7 @@ class _PlayerPageState extends State<PlayerPage>
       await incomingPlayer.play(
         track.path,
         volume: 0,
+        playbackSpeed: _playbackSpeed,
         equalizerEnabled: true,
         bands: _eqBands,
       );
@@ -2671,6 +2703,56 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _showPlaybackSpeed() async {
+    var selected = _playbackSpeed;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Playback speed'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('${selected.toStringAsFixed(2)}×'),
+              Slider(
+                value: selected,
+                min: 0.5,
+                max: 2.0,
+                divisions: 15,
+                label: '${selected.toStringAsFixed(2)}×',
+                onChanged: (value) {
+                  selected = value;
+                  setDialogState(() {});
+                  unawaited(_setPlaybackSpeed(value));
+                },
+              ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final speed in [0.5, 1.0, 1.25, 1.5, 2.0])
+                    OutlinedButton(
+                      onPressed: () {
+                        selected = speed;
+                        setDialogState(() {});
+                        unawaited(_setPlaybackSpeed(speed));
+                      },
+                      child: Text('${speed}×'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _positionSub?.cancel();
@@ -2855,6 +2937,11 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           ),
           IconButton(
+            tooltip: 'Playback speed',
+            onPressed: _showPlaybackSpeed,
+            icon: const Icon(Icons.speed, color: Colors.white60),
+          ),
+          IconButton(
             tooltip: 'Choose skin',
             onPressed: _showThemePicker,
             icon: const Icon(Icons.palette_outlined, color: Colors.white60),
@@ -2891,6 +2978,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'podcast') _addPodcastFeed();
               if (value == 'refreshPodcasts') _refreshPodcasts();
               if (value == 'eq') _showEqualizer();
+              if (value == 'speed') _showPlaybackSpeed();
               if (value == 'theme') _showThemePicker();
               if (value == 'importSkin') _importSkin();
               if (value == 'export') _exportPlaylist();
@@ -2917,12 +3005,16 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Refresh podcasts'),
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
+              PopupMenuItem(value: 'speed', child: Text('Playback speed')),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
               PopupMenuItem(
                 value: 'importSkin',
                 child: Text('Import skin package'),
               ),
-              PopupMenuItem(value: 'export', child: Text('Export M3U playlist')),
+              PopupMenuItem(
+                value: 'export',
+                child: Text('Export M3U playlist'),
+              ),
               PopupMenuItem(
                 value: 'exportPls',
                 child: Text('Export PLS playlist'),

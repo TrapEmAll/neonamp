@@ -48,6 +48,7 @@ class DspLocalPlayer {
   Future<void> play(
     String path, {
     required double volume,
+    required double playbackSpeed,
     required bool equalizerEnabled,
     required List<double> bands,
   }) async {
@@ -65,6 +66,7 @@ class DspLocalPlayer {
       equalizer.bandGain(index).value = gain;
     }
     final handle = soloud.SoLoud.instance.play(source, volume: volume);
+    soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
     _source = source;
     _handle = handle;
     _completionSent = false;
@@ -119,6 +121,14 @@ class DspLocalPlayer {
     if (handle != null &&
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
       soloud.SoLoud.instance.setVolume(handle, volume);
+    }
+  }
+
+  Future<void> setPlaybackSpeed(double speed) async {
+    final handle = _handle;
+    if (handle != null &&
+        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      soloud.SoLoud.instance.setRelativePlaySpeed(handle, speed);
     }
   }
 
