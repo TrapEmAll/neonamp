@@ -107,6 +107,12 @@ void main() {
     ]);
   });
 
+  test('resume positions ignore the beginning of a track', () {
+    expect(restoreResumePosition(null), isNull);
+    expect(restoreResumePosition(3000), isNull);
+    expect(restoreResumePosition(3001), const Duration(milliseconds: 3001));
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);

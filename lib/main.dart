@@ -318,6 +318,11 @@ List<String> addToPlayHistory(
   return next.length > maxEntries ? next.sublist(0, maxEntries) : next;
 }
 
+Duration? restoreResumePosition(int? milliseconds) {
+  if (milliseconds == null || milliseconds <= 3000) return null;
+  return Duration(milliseconds: milliseconds);
+}
+
 class Track {
   Track({
     required this.path,
@@ -858,6 +863,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<Track> _queue = [];
   final List<Track> _library = [];
   final List<String> _playHistory = [];
+  final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
@@ -900,6 +906,7 @@ class _PlayerPageState extends State<PlayerPage>
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
   Timer? _sleepTimer;
+  Timer? _resumeSaveTimer;
   DateTime? _sleepDeadline;
 
   AudioPlayer get _player => _activePlayer;
@@ -979,6 +986,7 @@ class _PlayerPageState extends State<PlayerPage>
     _positionSub = _player.onPositionChanged.listen((value) {
       if (!mounted) return;
       setState(() => _position = value);
+      _rememberResumePosition(value);
       if (_crossfade && !_crossfadeInProgress && _isPlaying) {
         final remaining = _duration - value;
         if (remaining <= Duration(seconds: _crossfadeSeconds) &&
@@ -1005,6 +1013,7 @@ class _PlayerPageState extends State<PlayerPage>
     _dspPositionSub = _dspPlayer.onPositionChanged.listen((value) {
       if (!mounted || !_dspActive) return;
       setState(() => _position = value);
+      _rememberResumePosition(value);
       if (_crossfade && !_crossfadeInProgress && _isPlaying) {
         final remaining = _duration - value;
         if (remaining <= Duration(seconds: _crossfadeSeconds) &&
@@ -1129,6 +1138,11 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _handleComplete() async {
     if (_crossfadeInProgress) return;
+    final path = _current?.path;
+    if (path != null) {
+      _resumePositions.remove(path);
+      unawaited(_saveQueue());
+    }
     if (_repeatOne) {
       await _seekCurrent(Duration.zero);
       await _playCurrent();
@@ -1195,6 +1209,7 @@ class _PlayerPageState extends State<PlayerPage>
     final saved = prefs.getStringList('queue') ?? [];
     final savedLibrary = prefs.getStringList('library') ?? [];
     final savedPlayHistory = prefs.getStringList('playHistory') ?? [];
+    final savedResumePositions = prefs.getString('resumePositions');
     final savedFolders = prefs.getStringList('libraryFolders') ?? [];
     final savedPodcastFeeds = prefs.getStringList('podcastFeeds') ?? [];
     final savedPlaylists = prefs.getString('playlists');
@@ -1214,6 +1229,16 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       );
       _playHistory.addAll(savedPlayHistory);
+      if (savedResumePositions != null) {
+        final decoded =
+            jsonDecode(savedResumePositions) as Map<String, dynamic>;
+        for (final entry in decoded.entries) {
+          final position = (entry.value as num?)?.toInt();
+          if (position != null && position > 0) {
+            _resumePositions[entry.key] = position;
+          }
+        }
+      }
       _libraryFolders.addAll(savedFolders);
       _podcastFeeds.addAll(savedPodcastFeeds);
       if (savedPlaylists != null) {
@@ -1281,6 +1306,7 @@ class _PlayerPageState extends State<PlayerPage>
       _library.map((track) => jsonEncode(track.toJson())).toList(),
     );
     await prefs.setStringList('playHistory', _playHistory);
+    await prefs.setString('resumePositions', jsonEncode(_resumePositions));
     await prefs.setStringList('libraryFolders', _libraryFolders);
     await prefs.setStringList('podcastFeeds', _podcastFeeds);
     await prefs.setString('playlists', jsonEncode(_playlists));
@@ -1510,6 +1536,7 @@ class _PlayerPageState extends State<PlayerPage>
         _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
     });
     final track = _queue[index];
+    final resumePosition = restoreResumePosition(_resumePositions[track.path]);
     final trackVolume = _volumeFor(track);
     final shouldUseDsp = _equalizerEnabled && !track.path.startsWith('http');
     if (shouldUseDsp) {
@@ -1543,7 +1570,18 @@ class _PlayerPageState extends State<PlayerPage>
         await _player.setPlaybackRate(_playbackSpeed);
       }
     }
+    if (resumePosition != null) await _seekCurrent(resumePosition);
     await _saveQueue();
+  }
+
+  void _rememberResumePosition(Duration position) {
+    final path = _current?.path;
+    if (path == null || position <= Duration.zero) return;
+    _resumePositions[path] = position.inMilliseconds;
+    _resumeSaveTimer?.cancel();
+    _resumeSaveTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_saveQueue());
+    });
   }
 
   Future<void> _togglePlay() async {
@@ -3892,6 +3930,7 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void dispose() {
     _sleepTimer?.cancel();
+    _resumeSaveTimer?.cancel();
     _positionSub?.cancel();
     _durationSub?.cancel();
     _stateSub?.cancel();

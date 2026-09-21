@@ -26,6 +26,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Adjustable 0.5×–2× playback speed with persisted settings on Windows and Android
 - Persistent sleep timer with 15/30/60/90-minute playback stop options on Windows and Android
 - Persistent recently played history shared by the Windows and Android UIs
+- Per-track playback-position resume shared by the Windows and Android UIs
 - Persistent queue reordering, per-track removal, and clear-queue controls
 - Native 10-band DSP equalizer for local files with presets and persisted settings
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android

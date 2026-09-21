@@ -39,6 +39,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Adjustable 0.5×–2× playback speed with persisted settings on Windows and Android.
 - Persistent 15/30/60/90-minute sleep timer that stops playback on Windows and Android.
 - Persistent recently played history with one-tap replay and clear controls.
+- Persistent per-track playback positions that resume after restarting the app.
 - Native 10-band DSP equalizer for local files with presets and persisted settings.
 - Optional ReplayGain normalization from embedded track or album gain tags, persisted across Windows and Android.
 - Responsive layout for desktop and mobile.
