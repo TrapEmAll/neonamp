@@ -247,29 +247,67 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 }
 
-class NeonAmpApp extends StatelessWidget {
+class NeonAmpApp extends StatefulWidget {
   const NeonAmpApp({super.key});
+
+  @override
+  State<NeonAmpApp> createState() => _NeonAmpAppState();
+}
+
+class _NeonAmpAppState extends State<NeonAmpApp> {
+  String _themeName = 'Neon';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _themeName = prefs.getString('themeName') ?? 'Neon');
+  }
+
+  Future<void> _setTheme(String themeName) async {
+    setState(() => _themeName = themeName);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('themeName', themeName);
+  }
+
+  ThemeData _themeData() {
+    final seedColor = switch (_themeName) {
+      'Aurora' => const Color(0xff35e6ff),
+      'Amber' => const Color(0xffffa62b),
+      'Classic' => const Color(0xff7dff55),
+      _ => const Color(0xffef4bff),
+    };
+    return ThemeData(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: const Color(0xff090a10),
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: seedColor,
+        brightness: Brightness.dark,
+      ),
+      fontFamily: 'Segoe UI',
+      useMaterial3: true,
+    );
+  }
 
   @override
   Widget build(BuildContext context) => MaterialApp(
     title: 'NeonAmp',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: const Color(0xff090a10),
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xffef4bff),
-        brightness: Brightness.dark,
-      ),
-      fontFamily: 'Segoe UI',
-      useMaterial3: true,
-    ),
-    home: const PlayerPage(),
+    theme: _themeData(),
+    home: PlayerPage(themeName: _themeName, onThemeChanged: _setTheme),
   );
 }
 
 class PlayerPage extends StatefulWidget {
-  const PlayerPage({super.key});
+  const PlayerPage({super.key, this.themeName = 'Neon', this.onThemeChanged});
+
+  final String themeName;
+  final ValueChanged<String>? onThemeChanged;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -1532,6 +1570,27 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _showThemePicker() async {
+    const themes = ['Neon', 'Aurora', 'Amber', 'Classic'];
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Choose a skin'),
+        children: themes
+            .map(
+              (theme) => RadioListTile<String>(
+                value: theme,
+                groupValue: widget.themeName,
+                title: Text(theme),
+                onChanged: (value) => Navigator.pop(context, value),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (selected != null) widget.onThemeChanged?.call(selected);
+  }
+
   Future<void> _playSmartPlaylist(SmartPlaylist playlist) async {
     final tracks = _tracksForSmartPlaylist(playlist);
     if (tracks.isEmpty) {
@@ -1890,6 +1949,11 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           ),
           IconButton(
+            tooltip: 'Choose skin',
+            onPressed: _showThemePicker,
+            icon: const Icon(Icons.palette_outlined, color: Colors.white60),
+          ),
+          IconButton(
             tooltip: 'Export playlist',
             onPressed: _exportPlaylist,
             icon: const Icon(Icons.ios_share, color: Colors.white60),
@@ -1911,6 +1975,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'podcast') _addPodcastFeed();
               if (value == 'refreshPodcasts') _refreshPodcasts();
               if (value == 'eq') _showEqualizer();
+              if (value == 'theme') _showThemePicker();
               if (value == 'export') _exportPlaylist();
             },
             itemBuilder: (_) => const [
@@ -1934,6 +1999,7 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Refresh podcasts'),
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
+              PopupMenuItem(value: 'theme', child: Text('Choose skin')),
               PopupMenuItem(value: 'export', child: Text('Export playlist')),
             ],
           ),
