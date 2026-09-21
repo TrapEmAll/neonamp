@@ -2,7 +2,7 @@ name: NeonAmp build
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   pull_request:
     branches: [main]
 
