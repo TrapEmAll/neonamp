@@ -10,9 +10,67 @@ import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:phonic/phonic.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dsp_local_player.dart';
+
+bool isVorbisAudioPath(String path) {
+  final extension = path.split('.').last.toLowerCase();
+  return extension == 'ogg' || extension == 'opus';
+}
+
+Future<void> writeVorbisTags(File file, List<String> values) async {
+  final audioFile = await Phonic.fromFileAsync(file.path);
+  try {
+    void setText(
+      TagKey key,
+      MetadataTag Function(String) create,
+      String value,
+    ) {
+      if (value.isEmpty) {
+        audioFile.removeTag(key);
+      } else {
+        audioFile.setTag(create(value));
+      }
+    }
+
+    setText(TagKey.title, TitleTag.new, values[0]);
+    setText(TagKey.artist, ArtistTag.new, values[1]);
+    setText(TagKey.album, AlbumTag.new, values[2]);
+    if (values[3].isEmpty) {
+      audioFile.removeTag(TagKey.genre);
+    } else {
+      audioFile.setTag(GenreTag([values[3]]));
+    }
+
+    final year = int.tryParse(values[5]);
+    if (year == null) {
+      audioFile.removeTag(TagKey.year);
+    } else {
+      audioFile.setTag(YearTag(year));
+    }
+    final trackNumber = int.tryParse(values[6]);
+    if (trackNumber == null) {
+      audioFile.removeTag(TagKey.trackNumber);
+    } else {
+      audioFile.setTag(TrackNumberTag(trackNumber));
+    }
+    final discNumber = int.tryParse(values[8]);
+    if (discNumber == null) {
+      audioFile.removeTag(TagKey.discNumber);
+    } else {
+      audioFile.setTag(DiscNumberTag(discNumber));
+    }
+    setText(TagKey.lyrics, LyricsTag.new, values[10].trim());
+
+    if (audioFile.isDirty) {
+      await file.writeAsBytes(await audioFile.encode());
+    }
+  } finally {
+    audioFile.dispose();
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1948,22 +2006,26 @@ class _PlayerPageState extends State<PlayerPage>
     );
     if (values == null || values.length != 11) return;
     try {
-      updateMetadata(File(track.path), (metadata) {
-        metadata.setTitle(values[0]);
-        metadata.setArtist(values[1]);
-        metadata.setAlbum(values[2]);
-        metadata.setGenres([values[3]]);
-        final parsedYear = int.tryParse(values[5]);
-        final parsedTrack = int.tryParse(values[6]);
-        final parsedTrackTotal = int.tryParse(values[7]);
-        final parsedDisc = int.tryParse(values[8]);
-        final parsedDiscTotal = int.tryParse(values[9]);
-        metadata.setYear(parsedYear == null ? null : DateTime(parsedYear));
-        metadata.setTrackNumber(parsedTrack);
-        metadata.setTrackTotal(parsedTrackTotal);
-        metadata.setCD(parsedDisc, parsedDiscTotal);
-        metadata.setLyrics(values[10].trim().isEmpty ? null : values[10]);
-      });
+      if (isVorbisAudioPath(track.path)) {
+        await writeVorbisTags(File(track.path), values);
+      } else {
+        updateMetadata(File(track.path), (metadata) {
+          metadata.setTitle(values[0]);
+          metadata.setArtist(values[1]);
+          metadata.setAlbum(values[2]);
+          metadata.setGenres([values[3]]);
+          final parsedYear = int.tryParse(values[5]);
+          final parsedTrack = int.tryParse(values[6]);
+          final parsedTrackTotal = int.tryParse(values[7]);
+          final parsedDisc = int.tryParse(values[8]);
+          final parsedDiscTotal = int.tryParse(values[9]);
+          metadata.setYear(parsedYear == null ? null : DateTime(parsedYear));
+          metadata.setTrackNumber(parsedTrack);
+          metadata.setTrackTotal(parsedTrackTotal);
+          metadata.setCD(parsedDisc, parsedDiscTotal);
+          metadata.setLyrics(values[10].trim().isEmpty ? null : values[10]);
+        });
+      }
       final written = readMetadata(File(track.path));
       final titleMatches =
           values[0].isEmpty || written.title?.trim() == values[0];

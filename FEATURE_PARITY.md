@@ -5,7 +5,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 ## Implemented in the current build
 
 - Local audio queue and persistent library
-- Embedded metadata reading and tag editing for supported MP3/FLAC/M4A/WAV/APE containers, including year, track/disc numbers, lyrics, and write verification
+- Embedded metadata reading and tag editing for supported MP3/FLAC/M4A/WAV/APE containers plus core Vorbis tags in OGG/Opus, including year, track/disc numbers, lyrics, and write verification
 - Embedded album-art reading and display when the source file contains cover art
 - Embedded cover-art replacement for supported local containers
 - Library search across title, artist, album, and genre
@@ -33,7 +33,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 ## Next parity milestones
 
-- Broaden tag-writing coverage beyond the currently supported containers
+- Broaden tag-writing coverage beyond the currently supported containers, including batch editing
 - Plugin API
 - SHOUTcast-specific directory compatibility
 - CD ripping and format conversion on Windows; portable-device sync

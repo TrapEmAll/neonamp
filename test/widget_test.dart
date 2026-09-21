@@ -4,6 +4,12 @@ import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
 
 void main() {
+  test('recognizes OGG and Opus as writable Vorbis containers', () {
+    expect(isVorbisAudioPath('music/track.ogg'), isTrue);
+    expect(isVorbisAudioPath('music/track.OPUS'), isTrue);
+    expect(isVorbisAudioPath('music/track.flac'), isFalse);
+  });
+
   test('smart playlist rules round-trip through JSON', () {
     const original = SmartPlaylist(
       name: 'Synthwave favorites',
