@@ -918,6 +918,8 @@ class _PlayerPageState extends State<PlayerPage>
   String _time(Duration value) =>
       '${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
 
+  String _ratingLabel(int rating) => '${'★' * rating}${'☆' * (5 - rating)}';
+
   @override
   Widget build(BuildContext context) => Shortcuts(
     shortcuts: const <ShortcutActivator, Intent>{
@@ -1236,7 +1238,7 @@ class _PlayerPageState extends State<PlayerPage>
             style: const TextStyle(fontSize: 12),
           ),
           subtitle: Text(
-            '${track.artist} · ${track.album}',
+            '${track.artist} · ${track.album} · ${_ratingLabel(track.rating)}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 10, color: Colors.white38),
