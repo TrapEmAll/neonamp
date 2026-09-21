@@ -12,6 +12,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'dsp_local_player.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const NeonAmpApp());
@@ -221,6 +223,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   AudioPlayer player;
   Future<void> Function()? onNext;
   Future<void> Function()? onPrevious;
+  Future<void> Function()? onPlayRequested;
+  Future<void> Function()? onPauseRequested;
+  Future<void> Function()? onStopRequested;
+  Future<void> Function(Duration position)? onSeekRequested;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
@@ -268,17 +274,42 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     );
   }
 
-  @override
-  Future<void> play() => player.resume();
+  void publishTrack(Track track) {
+    mediaItem.add(
+      MediaItem(
+        id: track.path,
+        title: track.name,
+        artist: track.artist,
+        album: track.album,
+        artUri: null,
+      ),
+    );
+  }
+
+  void syncExternalState({
+    Duration? position,
+    Duration? duration,
+    required PlayerState state,
+  }) {
+    final current = mediaItem.value;
+    if (current != null && duration != null) {
+      mediaItem.add(current.copyWith(duration: duration));
+    }
+    _broadcast(position: position, state: state);
+  }
 
   @override
-  Future<void> pause() => player.pause();
+  Future<void> play() => onPlayRequested?.call() ?? player.resume();
 
   @override
-  Future<void> stop() => player.stop();
+  Future<void> pause() => onPauseRequested?.call() ?? player.pause();
 
   @override
-  Future<void> seek(Duration position) => player.seek(position);
+  Future<void> stop() => onStopRequested?.call() ?? player.stop();
+
+  @override
+  Future<void> seek(Duration position) =>
+      onSeekRequested?.call(position) ?? player.seek(position);
 
   @override
   Future<void> skipToNext() async {
@@ -432,6 +463,7 @@ class PlayerPage extends StatefulWidget {
 class _PlayerPageState extends State<PlayerPage>
     with SingleTickerProviderStateMixin {
   AudioPlayer _activePlayer = AudioPlayer();
+  DspLocalPlayer _dspPlayer = DspLocalPlayer();
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
   final List<Track> _library = [];
@@ -448,6 +480,10 @@ class _PlayerPageState extends State<PlayerPage>
   StreamSubscription<Duration>? _durationSub;
   StreamSubscription<PlayerState>? _stateSub;
   StreamSubscription<void>? _completeSub;
+  StreamSubscription<Duration>? _dspPositionSub;
+  StreamSubscription<Duration>? _dspDurationSub;
+  StreamSubscription<PlayerState>? _dspStateSub;
+  StreamSubscription<void>? _dspCompleteSub;
   Duration _position = Duration.zero;
   Duration _duration = const Duration(minutes: 4, seconds: 12);
   PlayerState _playerState = PlayerState.stopped;
@@ -465,6 +501,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<double> _eqBands = List<double>.filled(10, 0);
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
+  bool _dspActive = false;
 
   AudioPlayer get _player => _activePlayer;
 
@@ -476,6 +513,7 @@ class _PlayerPageState extends State<PlayerPage>
   void initState() {
     super.initState();
     _bindPlayerStreams();
+    _bindDspStreams();
     _initializeWindowsMediaKeys();
     _initializeAudioService();
     _loadQueue();
@@ -509,6 +547,10 @@ class _PlayerPageState extends State<PlayerPage>
     _durationSub?.cancel();
     _stateSub?.cancel();
     _completeSub?.cancel();
+    _dspPositionSub?.cancel();
+    _dspDurationSub?.cancel();
+    _dspStateSub?.cancel();
+    _dspCompleteSub?.cancel();
     _positionSub = _player.onPositionChanged.listen((value) {
       if (!mounted) return;
       setState(() => _position = value);
@@ -529,6 +571,41 @@ class _PlayerPageState extends State<PlayerPage>
     _completeSub = _player.onPlayerComplete.listen((_) => _handleComplete());
   }
 
+  void _bindDspStreams() {
+    _dspPositionSub?.cancel();
+    _dspDurationSub?.cancel();
+    _dspStateSub?.cancel();
+    _dspCompleteSub?.cancel();
+    _dspPositionSub = _dspPlayer.onPositionChanged.listen((value) {
+      if (!mounted || !_dspActive) return;
+      setState(() => _position = value);
+      if (_crossfade && !_crossfadeInProgress && _isPlaying) {
+        final remaining = _duration - value;
+        if (remaining <= Duration(seconds: _crossfadeSeconds) &&
+            remaining > Duration.zero) {
+          unawaited(_crossfadeToNext());
+        }
+      }
+      _audioHandler?.syncExternalState(
+        position: value,
+        state: PlayerState.playing,
+      );
+    });
+    _dspDurationSub = _dspPlayer.onDurationChanged.listen((value) {
+      if (!mounted || !_dspActive) return;
+      setState(() => _duration = value);
+      _audioHandler?.syncExternalState(duration: value, state: _playerState);
+    });
+    _dspStateSub = _dspPlayer.onPlayerStateChanged.listen((value) {
+      if (!mounted || !_dspActive) return;
+      setState(() => _playerState = value);
+      _audioHandler?.syncExternalState(position: _position, state: value);
+    });
+    _dspCompleteSub = _dspPlayer.onPlayerComplete.listen((_) {
+      if (_dspActive) unawaited(_handleComplete());
+    });
+  }
+
   Future<void> _initializeAudioService() async {
     if (!Platform.isAndroid) return;
     _audioHandler = await AudioService.init(
@@ -542,18 +619,68 @@ class _PlayerPageState extends State<PlayerPage>
     );
     _audioHandler!.onNext = _next;
     _audioHandler!.onPrevious = _previous;
+    _audioHandler!.onPlayRequested = _playCurrent;
+    _audioHandler!.onPauseRequested = _pauseCurrent;
+    _audioHandler!.onStopRequested = _stopCurrent;
+    _audioHandler!.onSeekRequested = _seekCurrent;
+  }
+
+  Future<void> _playCurrent() async {
+    if (_dspActive) {
+      await _dspPlayer.resume();
+    } else {
+      await _player.resume();
+    }
+  }
+
+  Future<void> _pauseCurrent() async {
+    if (_dspActive) {
+      await _dspPlayer.pause();
+    } else {
+      await _player.pause();
+    }
+  }
+
+  Future<void> _stopCurrent() async {
+    if (_dspActive) {
+      await _dspPlayer.stop();
+    } else {
+      await _player.stop();
+    }
+  }
+
+  Future<void> _seekCurrent(Duration position) async {
+    if (_dspActive) {
+      await _dspPlayer.seek(position);
+    } else {
+      await _player.seek(position);
+    }
+  }
+
+  Future<void> _setEqualizerEnabled(bool enabled) async {
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _equalizerEnabled = enabled);
+    if (_current != null && (wasPlaying || _dspActive)) {
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
   }
 
   Future<void> _handleComplete() async {
     if (_crossfadeInProgress) return;
     if (_repeatOne) {
-      await _player.seek(Duration.zero);
-      await _player.resume();
+      await _seekCurrent(Duration.zero);
+      await _playCurrent();
     } else if (_queue.isNotEmpty &&
         (_repeat || _shuffle || _selected < _queue.length - 1)) {
       await _next();
     } else {
-      await _player.stop();
+      await _stopCurrent();
     }
   }
 
@@ -787,17 +914,36 @@ class _PlayerPageState extends State<PlayerPage>
       if (libraryIndex >= 0)
         _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
     });
-    await _player.setVolume(_volume);
     final track = _queue[index];
-    if (_audioHandler != null) {
-      await _audioHandler!.playTrack(track);
-    } else {
-      await _player.stop();
-      await _player.play(
-        track.path.startsWith('http')
-            ? UrlSource(track.path)
-            : DeviceFileSource(track.path),
+    final shouldUseDsp = _equalizerEnabled && !track.path.startsWith('http');
+    if (shouldUseDsp) {
+      if (!_dspActive) {
+        await _player.stop();
+        _dspActive = true;
+      }
+      await _dspPlayer.play(
+        track.path,
+        volume: _volume,
+        equalizerEnabled: true,
+        bands: _eqBands,
       );
+      _audioHandler?.publishTrack(track);
+    } else {
+      if (_dspActive) {
+        await _dspPlayer.stop();
+        _dspActive = false;
+      }
+      await _player.setVolume(_volume);
+      if (_audioHandler != null) {
+        await _audioHandler!.playTrack(track);
+      } else {
+        await _player.stop();
+        await _player.play(
+          track.path.startsWith('http')
+              ? UrlSource(track.path)
+              : DeviceFileSource(track.path),
+        );
+      }
     }
     await _saveQueue();
   }
@@ -808,9 +954,9 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     if (_isPlaying) {
-      await (_audioHandler?.pause() ?? _player.pause());
+      await _pauseCurrent();
     } else if (_playerState == PlayerState.paused) {
-      await (_audioHandler?.play() ?? _player.resume());
+      await _playCurrent();
     } else {
       await _select(_selected);
     }
@@ -830,6 +976,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _crossfadeToNext() async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_dspActive) {
+      await _crossfadeDspToNext();
+      return;
+    }
     _crossfadeInProgress = true;
     final previousPlayer = _player;
     final next = _shuffle
@@ -883,9 +1033,64 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _crossfadeDspToNext() async {
+    if (_queue.isEmpty || _crossfadeInProgress) return;
+    _crossfadeInProgress = true;
+    final previousPlayer = _dspPlayer;
+    final next = _shuffle
+        ? math.Random().nextInt(_queue.length)
+        : (_selected + 1) % _queue.length;
+    final track = _queue[next];
+    final incomingPlayer = DspLocalPlayer();
+    try {
+      setState(() {
+        _selected = next;
+        _position = Duration.zero;
+        final libraryIndex = _library.indexWhere(
+          (item) => item.path == track.path,
+        );
+        if (libraryIndex >= 0) {
+          _library[libraryIndex] = track.copyWith(
+            playCount: track.playCount + 1,
+          );
+        }
+      });
+      await incomingPlayer.play(
+        track.path,
+        volume: 0,
+        equalizerEnabled: true,
+        bands: _eqBands,
+      );
+      final steps = math.max(1, _crossfadeSeconds * 10);
+      for (var step = 1; step <= steps; step++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final progress = step / steps;
+        await previousPlayer.setVolume(_volume * (1 - progress));
+        await incomingPlayer.setVolume(_volume * progress);
+      }
+      await previousPlayer.stop();
+      await previousPlayer.dispose();
+      _dspPlayer = incomingPlayer;
+      _bindDspStreams();
+      _audioHandler?.publishTrack(track);
+      await _saveQueue();
+    } catch (_) {
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      _crossfadeInProgress = false;
+    }
+  }
+
   Future<void> _previous() async {
     if (_queue.isEmpty) return;
-    if (_position.inSeconds > 3) return _player.seek(Duration.zero);
+    if (_position.inSeconds > 3) return _seekCurrent(Duration.zero);
     await _select((_selected - 1 + _queue.length) % _queue.length);
   }
 
@@ -1828,7 +2033,7 @@ class _PlayerPageState extends State<PlayerPage>
               Switch(
                 value: _equalizerEnabled,
                 onChanged: (value) {
-                  setState(() => _equalizerEnabled = value);
+                  unawaited(_setEqualizerEnabled(value));
                   setDialogState(() {});
                 },
               ),
@@ -1858,6 +2063,12 @@ class _PlayerPageState extends State<PlayerPage>
                         _eqBands[i] = value == 'Bass boost' && i < 3 ? 6 : 0;
                       }
                     });
+                    if (_dspActive) {
+                      _dspPlayer.applyEqualizer(
+                        enabled: _equalizerEnabled,
+                        bands: _eqBands,
+                      );
+                    }
                     setDialogState(() {});
                   },
                 ),
@@ -1916,6 +2127,12 @@ class _PlayerPageState extends State<PlayerPage>
                                           setState(
                                             () => _eqBands[index] = value,
                                           );
+                                          if (_dspActive) {
+                                            _dspPlayer.applyEqualizer(
+                                              enabled: true,
+                                              bands: _eqBands,
+                                            );
+                                          }
                                           setDialogState(() {});
                                         }
                                       : null,
@@ -1959,6 +2176,7 @@ class _PlayerPageState extends State<PlayerPage>
     _searchController.dispose();
     _pulse.dispose();
     _player.dispose();
+    unawaited(_dspPlayer.dispose());
     super.dispose();
   }
 
@@ -2003,7 +2221,7 @@ class _PlayerPageState extends State<PlayerPage>
         _SeekIntent: CallbackAction<_SeekIntent>(
           onInvoke: (intent) {
             final target = _position + intent.amount;
-            _player.seek(
+            _seekCurrent(
               target < Duration.zero
                   ? Duration.zero
                   : (target > _duration ? _duration : target),
@@ -2016,7 +2234,11 @@ class _PlayerPageState extends State<PlayerPage>
             final muted = _volume > 0;
             final nextVolume = muted ? 0.0 : 0.82;
             setState(() => _volume = nextVolume);
-            _player.setVolume(nextVolume);
+            if (_dspActive) {
+              _dspPlayer.setVolume(nextVolume);
+            } else {
+              _player.setVolume(nextVolume);
+            }
             _saveQueue();
             return null;
           },
@@ -2767,7 +2989,7 @@ class _PlayerPageState extends State<PlayerPage>
                           .clamp(0.0, 1.0),
                 onChanged: _duration.inMilliseconds == 0
                     ? null
-                    : (value) => _player.seek(
+                    : (value) => _seekCurrent(
                         Duration(
                           milliseconds: (_duration.inMilliseconds * value)
                               .round(),
@@ -2848,7 +3070,11 @@ class _PlayerPageState extends State<PlayerPage>
                   value: _volume,
                   onChanged: (value) {
                     setState(() => _volume = value);
-                    _player.setVolume(value);
+                    if (_dspActive) {
+                      _dspPlayer.setVolume(value);
+                    } else {
+                      _player.setVolume(value);
+                    }
                   },
                   activeColor: Colors.white70,
                   inactiveColor: Colors.white12,

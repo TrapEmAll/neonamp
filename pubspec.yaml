@@ -39,6 +39,7 @@ dependencies:
   shared_preferences: ^2.5.5
   audio_metadata_reader: ^1.8.0
   audio_service: ^0.18.19
+  flutter_soloud: ^5.1.2
 
 dev_dependencies:
   flutter_test:

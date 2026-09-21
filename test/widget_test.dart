@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:neonamp/main.dart';
+import 'package:neonamp/dsp_local_player.dart';
 
 void main() {
   test('smart playlist rules round-trip through JSON', () {
@@ -46,6 +47,13 @@ void main() {
       }),
       throwsFormatException,
     );
+  });
+
+  test('DSP equalizer converts decibels to linear gain', () {
+    expect(dspGainForDb(0), closeTo(1, 0.0001));
+    expect(dspGainForDb(6), closeTo(1.995, 0.001));
+    expect(dspGainForDb(12), closeTo(3.981, 0.001));
+    expect(dspGainForDb(-12), closeTo(0.251, 0.001));
   });
 
   testWidgets('renders the empty NeonAmp player', (tester) async {
