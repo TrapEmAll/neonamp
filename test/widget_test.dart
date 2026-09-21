@@ -19,6 +19,30 @@ void main() {
     expect(station['codec'], 'audio/mpeg');
   });
 
+  test('normalizes and merges radio directory station metadata', () {
+    final radioBrowser = normalizeRadioBrowserStation({
+      'name': 'Retro FM',
+      'tags': 'synthwave,80s',
+      'votes': 8,
+      'bitrate': 128,
+      'codec': 'MP3',
+      'country': 'US',
+      'url_resolved': 'HTTP://radio.example/stream',
+    });
+    final shoutcast = normalizeShoutcastStation({
+      'ID': 7,
+      'Name': 'Retro FM mirror',
+      'Listeners': 12,
+      'StreamUrl': 'http://radio.example/stream',
+    });
+
+    final merged = mergeRadioStations([radioBrowser, shoutcast]);
+
+    expect(merged, hasLength(1));
+    expect(merged.single['name'], 'Retro FM mirror');
+    expect(merged.single['listeners'], 12);
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);

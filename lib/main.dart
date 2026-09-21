@@ -145,6 +145,49 @@ Map<String, dynamic> normalizeShoutcastStation(Map<String, dynamic> station) =>
       'streamUrl': station['StreamUrl'] as String?,
     };
 
+Map<String, dynamic> normalizeRadioBrowserStation(
+  Map<String, dynamic> station,
+) => {
+  'name': station['name'] as String? ?? 'Radio Browser station',
+  'genre': station['tags'] as String? ?? 'Radio',
+  'listeners': station['votes'] as num? ?? 0,
+  'bitrate': station['bitrate'] as num? ?? 0,
+  'codec': station['codec'] as String? ?? '',
+  'country': station['country'] as String? ?? '',
+  'source': 'Radio Browser',
+  'url_resolved': station['url_resolved'] as String?,
+  'url': station['url'] as String?,
+};
+
+List<Map<String, dynamic>> mergeRadioStations(
+  Iterable<Map<String, dynamic>> stations,
+) {
+  final merged = <String, Map<String, dynamic>>{};
+  final unresolved = <Map<String, dynamic>>[];
+  for (final station in stations) {
+    final resolved =
+        station['streamUrl'] ?? station['url_resolved'] ?? station['url'];
+    final key = resolved is String ? resolved.trim().toLowerCase() : '';
+    if (key.isEmpty) {
+      unresolved.add(station);
+      continue;
+    }
+    final existing = merged[key];
+    if (existing == null ||
+        ((station['listeners'] as num?)?.toInt() ?? 0) >
+            ((existing['listeners'] as num?)?.toInt() ?? 0)) {
+      merged[key] = station;
+    }
+  }
+  final result = [...merged.values, ...unresolved];
+  result.sort(
+    (a, b) => ((b['listeners'] as num?)?.toInt() ?? 0).compareTo(
+      (a['listeners'] as num?)?.toInt() ?? 0,
+    ),
+  );
+  return result;
+}
+
 class Track {
   Track({
     required this.path,
@@ -1626,11 +1669,12 @@ class _PlayerPageState extends State<PlayerPage>
       final radioBrowserStations = (jsonDecode(body) as List)
           .whereType<Map<String, dynamic>>()
           .where((station) => _stationStreamUrl(station) != null)
+          .map(normalizeRadioBrowserStation)
           .toList();
-      final stations = [
+      final stations = mergeRadioStations([
         ...radioBrowserStations,
         ...await _searchShoutcastStations(term.trim()),
-      ];
+      ]);
       if (!mounted) return;
       if (stations.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1654,6 +1698,16 @@ class _PlayerPageState extends State<PlayerPage>
                       .trim();
                   final country = station['country'] as String? ?? '';
                   final codec = station['codec'] as String? ?? '';
+                  final genre =
+                      (station['genre'] as String? ??
+                              station['tags'] as String? ??
+                              '')
+                          .split(',')
+                          .first
+                          .trim();
+                  final listeners =
+                      (station['listeners'] as num?)?.toInt() ?? 0;
+                  final bitrate = (station['bitrate'] as num?)?.toInt() ?? 0;
                   final path = _stationStreamUrl(station);
                   final isShoutcast = station['source'] == 'SHOUTcast';
                   final saved = path == null
@@ -1669,6 +1723,9 @@ class _PlayerPageState extends State<PlayerPage>
                       [
                         country,
                         codec,
+                        if (genre.isNotEmpty) genre,
+                        if (bitrate > 0) '$bitrate kbps',
+                        if (listeners > 0) '$listeners listeners',
                       ].where((value) => value.isNotEmpty).join(' · '),
                     ),
                     trailing: IconButton(
