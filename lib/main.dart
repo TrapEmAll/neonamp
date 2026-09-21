@@ -303,6 +303,12 @@ String convertedM4aFileName(String path) {
   return '$stem.m4a';
 }
 
+Duration? sleepTimerRemaining(DateTime? deadline, DateTime now) {
+  if (deadline == null) return null;
+  final remaining = deadline.difference(now);
+  return remaining.isNegative ? Duration.zero : remaining;
+}
+
 class Track {
   Track({
     required this.path,
@@ -883,6 +889,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _dspActive = false;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
+  Timer? _sleepTimer;
+  DateTime? _sleepDeadline;
 
   AudioPlayer get _player => _activePlayer;
 
@@ -1122,6 +1130,56 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  void _armSleepTimer() {
+    _sleepTimer?.cancel();
+    final deadline = _sleepDeadline;
+    if (deadline == null) return;
+    final remaining = sleepTimerRemaining(deadline, DateTime.now())!;
+    if (remaining == Duration.zero) {
+      unawaited(_stopCurrent());
+      return;
+    }
+    _sleepTimer = Timer(remaining, () {
+      _sleepDeadline = null;
+      unawaited(_stopCurrent());
+      unawaited(_saveQueue());
+    });
+  }
+
+  Future<void> _setSleepTimer(Duration? duration) async {
+    _sleepTimer?.cancel();
+    setState(
+      () => _sleepDeadline = duration == null
+          ? null
+          : DateTime.now().add(duration),
+    );
+    _armSleepTimer();
+    await _saveQueue();
+  }
+
+  Future<void> _showSleepTimer() async {
+    final minutes = await showDialog<int>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Sleep timer'),
+        children: [
+          if (_sleepDeadline != null)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 0),
+              child: const Text('Turn off timer'),
+            ),
+          for (final value in [15, 30, 60, 90])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, value),
+              child: Text('$value minutes'),
+            ),
+        ],
+      ),
+    );
+    if (minutes == null) return;
+    await _setSleepTimer(minutes == 0 ? null : Duration(minutes: minutes));
+  }
+
   Future<void> _loadQueue() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('queue') ?? [];
@@ -1182,6 +1240,10 @@ class _PlayerPageState extends State<PlayerPage>
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
+        final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
+        _sleepDeadline = sleepTimerEnd == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(sleepTimerEnd);
         _librarySort = settings['librarySort'] as String? ?? 'Added';
         _librarySortDescending =
             settings['librarySortDescending'] as bool? ?? false;
@@ -1193,6 +1255,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
       }
     });
+    _armSleepTimer();
   }
 
   Future<void> _saveQueue() async {
@@ -1227,6 +1290,7 @@ class _PlayerPageState extends State<PlayerPage>
         'eqBands': _eqBands,
         'playbackSpeed': _playbackSpeed,
         'replayGainEnabled': _replayGainEnabled,
+        'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
       }),
@@ -3805,6 +3869,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   @override
   void dispose() {
+    _sleepTimer?.cancel();
     _positionSub?.cancel();
     _durationSub?.cancel();
     _stateSub?.cancel();
@@ -3955,6 +4020,17 @@ class _PlayerPageState extends State<PlayerPage>
             onPressed: _importAudioCd,
             icon: const Icon(Icons.album_outlined, color: Colors.white60),
           ),
+        if (MediaQuery.sizeOf(context).width >= 1000)
+          IconButton(
+            tooltip: 'Sleep timer',
+            onPressed: _showSleepTimer,
+            icon: Icon(
+              Icons.bedtime_outlined,
+              color: _sleepDeadline == null
+                  ? Colors.white60
+                  : const Color(0xffef4bff),
+            ),
+          ),
         IconButton(
           tooltip: 'Rescan library folders',
           onPressed: _rescanFolders,
@@ -4058,6 +4134,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'export') _exportPlaylist();
               if (value == 'sync') _syncToDeviceFolder();
               if (value == 'cd') _importAudioCd();
+              if (value == 'sleep') _showSleepTimer();
               if (value == 'exportPls') _exportPlsPlaylist();
             },
             itemBuilder: (_) => const [
@@ -4099,6 +4176,7 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Sync music to device folder'),
               ),
               PopupMenuItem(value: 'cd', child: Text('Import audio CD')),
+              PopupMenuItem(value: 'sleep', child: Text('Sleep timer')),
               PopupMenuItem(
                 value: 'exportPls',
                 child: Text('Export PLS playlist'),

@@ -85,6 +85,19 @@ void main() {
     expect(convertedM4aFileName(r'C:\Music\live:take?.flac'), 'live_take_.m4a');
   });
 
+  test('sleep timer remaining duration is restart-safe', () {
+    final now = DateTime(2026, 9, 21, 12);
+    expect(
+      sleepTimerRemaining(now.add(const Duration(minutes: 30)), now),
+      const Duration(minutes: 30),
+    );
+    expect(
+      sleepTimerRemaining(now.subtract(const Duration(seconds: 1)), now),
+      Duration.zero,
+    );
+    expect(sleepTimerRemaining(null, now), isNull);
+  });
+
   test('ReplayGain parsing and volume normalization are deterministic', () {
     expect(parseReplayGainDb('-7.25 dB'), -7.25);
     expect(parseReplayGainDb('not a gain'), isNull);
