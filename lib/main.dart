@@ -982,6 +982,59 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _replaceArtwork(Track track) async {
+    if (track.path.startsWith('http')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cover art can only be embedded in local files.'),
+        ),
+      );
+      return;
+    }
+    final result = await FilePicker.pickFiles(type: FileType.image);
+    if (result.isEmpty || result.first.path == null) return;
+    final imageFile = File(result.first.path!);
+    final bytes = await imageFile.readAsBytes();
+    if (bytes.isEmpty) return;
+    final extension = imageFile.path.split('.').last.toLowerCase();
+    final mimeType = switch (extension) {
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      _ => 'image/jpeg',
+    };
+    try {
+      updateMetadata(File(track.path), (metadata) {
+        metadata.setPictures([
+          Picture(bytes, mimeType, PictureType.coverFront),
+        ]);
+      });
+      final updated = track.copyWith(artwork: bytes);
+      setState(() {
+        final libraryIndex = _library.indexWhere(
+          (item) => item.path == track.path,
+        );
+        if (libraryIndex >= 0) _library[libraryIndex] = updated;
+        for (var i = 0; i < _queue.length; i++) {
+          if (_queue[i].path == track.path) _queue[i] = updated;
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Embedded cover art updated.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This file format cannot embed cover art.'),
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _createPlaylist() async {
     final controller = TextEditingController();
     final name = await showDialog<String>(
@@ -1644,6 +1697,15 @@ class _PlayerPageState extends State<PlayerPage>
                   color: Colors.white30,
                 ),
                 onPressed: () => _editTrack(track),
+              ),
+              IconButton(
+                tooltip: 'Replace cover art',
+                icon: const Icon(
+                  Icons.image_outlined,
+                  size: 17,
+                  color: Colors.white30,
+                ),
+                onPressed: () => _replaceArtwork(track),
               ),
               IconButton(
                 icon: const Icon(
