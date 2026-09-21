@@ -254,6 +254,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _equalizerEnabled = false;
   String _activeView = 'queue';
   String _searchQuery = '';
+  String _libraryFilter = 'All';
   final List<double> _eqBands = List<double>.filled(10, 0);
   String _eqPreset = 'Flat';
 
@@ -627,10 +628,14 @@ class _PlayerPageState extends State<PlayerPage>
     return _library
         .where(
           (track) =>
-              query.isEmpty ||
-              '${track.name} ${track.artist} ${track.album} ${track.genre}'
-                  .toLowerCase()
-                  .contains(query),
+              (_libraryFilter == 'All' ||
+                  (_libraryFilter == 'Favorites' && track.favorite) ||
+                  (_libraryFilter == 'Top rated' && track.rating >= 4) ||
+                  (_libraryFilter == 'Most played' && track.playCount > 0)) &&
+              (query.isEmpty ||
+                  '${track.name} ${track.artist} ${track.album} ${track.genre}'
+                      .toLowerCase()
+                      .contains(query)),
         )
         .toList();
   }
@@ -1172,14 +1177,43 @@ class _PlayerPageState extends State<PlayerPage>
         if (_activeView == 'library')
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: TextField(
-              controller: _searchController,
-              onChanged: (value) => setState(() => _searchQuery = value),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search, size: 18),
-                hintText: 'Search artist, album, genre…',
-                isDense: true,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (value) => setState(() => _searchQuery = value),
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search, size: 18),
+                      hintText: 'Search artist, album, genre…',
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<String>(
+                  value: _libraryFilter,
+                  underline: const SizedBox.shrink(),
+                  items: const [
+                    DropdownMenuItem(value: 'All', child: Text('All')),
+                    DropdownMenuItem(
+                      value: 'Favorites',
+                      child: Text('Favorites'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Top rated',
+                      child: Text('Top rated'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Most played',
+                      child: Text('Most played'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setState(() => _libraryFilter = value);
+                  },
+                ),
+              ],
             ),
           ),
         Expanded(

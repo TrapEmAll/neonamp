@@ -8,6 +8,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Embedded metadata reading and tag editing for supported MP3/FLAC/M4A/WAV containers
 - Embedded album-art reading and display when the source file contains cover art
 - Library search across title, artist, album, and genre
+- Smart library filters for favorites, top-rated tracks, and most-played tracks
 - Favorites, five-star ratings, and play counts
 - Named playlists and adding library tracks to playlists
 - M3U playlist export
@@ -23,7 +24,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 - Edit embedded album art and broaden tag-writing coverage
 - True DSP equalizer and crossfade audio processing
-- Folder/library rescans and smart playlists
+- Smart playlist persistence and richer rule-based library views
 - Windows global media keys and system media transport controls
 - Skin/theme packages and a plugin API
 - Podcast/RSS subscriptions, downloads, and SHOUTcast directory
