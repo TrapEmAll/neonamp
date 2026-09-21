@@ -72,6 +72,29 @@ Future<void> writeVorbisTags(File file, List<String> values) async {
   }
 }
 
+Future<void> writeTrackMetadata(File file, List<String> values) async {
+  if (isVorbisAudioPath(file.path)) {
+    await writeVorbisTags(file, values);
+    return;
+  }
+  updateMetadata(file, (metadata) {
+    metadata.setTitle(values[0]);
+    metadata.setArtist(values[1]);
+    metadata.setAlbum(values[2]);
+    metadata.setGenres([values[3]]);
+    final parsedYear = int.tryParse(values[5]);
+    final parsedTrack = int.tryParse(values[6]);
+    final parsedTrackTotal = int.tryParse(values[7]);
+    final parsedDisc = int.tryParse(values[8]);
+    final parsedDiscTotal = int.tryParse(values[9]);
+    metadata.setYear(parsedYear == null ? null : DateTime(parsedYear));
+    metadata.setTrackNumber(parsedTrack);
+    metadata.setTrackTotal(parsedTrackTotal);
+    metadata.setCD(parsedDisc, parsedDiscTotal);
+    metadata.setLyrics(values[10].trim().isEmpty ? null : values[10]);
+  });
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const NeonAmpApp());
@@ -641,6 +664,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _activeView = 'queue';
   String _searchQuery = '';
   String _libraryFilter = 'All';
+  final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
@@ -2006,26 +2030,7 @@ class _PlayerPageState extends State<PlayerPage>
     );
     if (values == null || values.length != 11) return;
     try {
-      if (isVorbisAudioPath(track.path)) {
-        await writeVorbisTags(File(track.path), values);
-      } else {
-        updateMetadata(File(track.path), (metadata) {
-          metadata.setTitle(values[0]);
-          metadata.setArtist(values[1]);
-          metadata.setAlbum(values[2]);
-          metadata.setGenres([values[3]]);
-          final parsedYear = int.tryParse(values[5]);
-          final parsedTrack = int.tryParse(values[6]);
-          final parsedTrackTotal = int.tryParse(values[7]);
-          final parsedDisc = int.tryParse(values[8]);
-          final parsedDiscTotal = int.tryParse(values[9]);
-          metadata.setYear(parsedYear == null ? null : DateTime(parsedYear));
-          metadata.setTrackNumber(parsedTrack);
-          metadata.setTrackTotal(parsedTrackTotal);
-          metadata.setCD(parsedDisc, parsedDiscTotal);
-          metadata.setLyrics(values[10].trim().isEmpty ? null : values[10]);
-        });
-      }
+      await writeTrackMetadata(File(track.path), values);
       final written = readMetadata(File(track.path));
       final titleMatches =
           values[0].isEmpty || written.title?.trim() == values[0];
@@ -2088,6 +2093,142 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     await _saveQueue();
+  }
+
+  void _toggleLibrarySelection(Track track) {
+    setState(() {
+      if (!_selectedLibraryPaths.add(track.path)) {
+        _selectedLibraryPaths.remove(track.path);
+      }
+    });
+  }
+
+  Future<void> _editSelectedTracks() async {
+    final selected = _library
+        .where((track) => _selectedLibraryPaths.contains(track.path))
+        .toList();
+    if (selected.isEmpty) return;
+    final artist = TextEditingController();
+    final album = TextEditingController();
+    final genre = TextEditingController();
+    final year = TextEditingController();
+    final rating = TextEditingController();
+    final values = await showDialog<List<String>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit ${selected.length} tracks'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Leave a field empty to keep each track’s current value.',
+                  style: TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+              ),
+              TextField(
+                controller: artist,
+                decoration: const InputDecoration(labelText: 'Artist'),
+              ),
+              TextField(
+                controller: album,
+                decoration: const InputDecoration(labelText: 'Album'),
+              ),
+              TextField(
+                controller: genre,
+                decoration: const InputDecoration(labelText: 'Genre'),
+              ),
+              TextField(
+                controller: year,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Release year'),
+              ),
+              TextField(
+                controller: rating,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Rating (0–5)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, [
+              artist.text.trim(),
+              album.text.trim(),
+              genre.text.trim(),
+              year.text.trim(),
+              rating.text.trim(),
+            ]),
+            child: const Text('Apply to selected'),
+          ),
+        ],
+      ),
+    );
+    if (values == null) return;
+
+    var updatedCount = 0;
+    var failedCount = 0;
+    final updatedTracks = <String, Track>{};
+    for (final track in selected) {
+      final updated = track.copyWith(
+        artist: values[0].isEmpty ? track.artist : values[0],
+        album: values[1].isEmpty ? track.album : values[1],
+        genre: values[2].isEmpty ? track.genre : values[2],
+        year: values[3].isEmpty ? track.year : int.tryParse(values[3]),
+        rating: values[4].isEmpty
+            ? track.rating
+            : (int.tryParse(values[4]) ?? track.rating).clamp(0, 5).toInt(),
+      );
+      final metadataValues = [
+        updated.name,
+        updated.artist,
+        updated.album,
+        updated.genre,
+        '${updated.rating}',
+        updated.year?.toString() ?? '',
+        updated.trackNumber?.toString() ?? '',
+        updated.trackTotal?.toString() ?? '',
+        updated.discNumber?.toString() ?? '',
+        updated.discTotal?.toString() ?? '',
+        updated.lyrics ?? '',
+      ];
+      try {
+        await writeTrackMetadata(File(track.path), metadataValues);
+        updatedTracks[track.path] = updated;
+        updatedCount++;
+      } catch (_) {
+        failedCount++;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      for (var index = 0; index < _library.length; index++) {
+        final updated = updatedTracks[_library[index].path];
+        if (updated != null) _library[index] = updated;
+      }
+      for (var index = 0; index < _queue.length; index++) {
+        final updated = updatedTracks[_queue[index].path];
+        if (updated != null) _queue[index] = updated;
+      }
+      _selectedLibraryPaths.clear();
+    });
+    await _saveQueue();
+    if (failedCount > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$updatedCount updated; $failedCount failed.')),
+      );
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$updatedCount tracks updated.')));
+    }
   }
 
   Future<void> _replaceArtwork(Track track) async {
@@ -3200,6 +3341,29 @@ class _PlayerPageState extends State<PlayerPage>
               ],
             ),
           ),
+        if (_activeView == 'library' && _selectedLibraryPaths.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: [
+                Text(
+                  '${_selectedLibraryPaths.length} selected',
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _editSelectedTracks,
+                  icon: const Icon(Icons.edit_note, size: 17),
+                  label: const Text('Edit metadata'),
+                ),
+                IconButton(
+                  tooltip: 'Clear selection',
+                  onPressed: () => setState(_selectedLibraryPaths.clear),
+                  icon: const Icon(Icons.close, size: 17),
+                ),
+              ],
+            ),
+          ),
         Expanded(
           child: _activeView == 'library'
               ? _libraryView()
@@ -3245,10 +3409,10 @@ class _PlayerPageState extends State<PlayerPage>
         final track = tracks[index];
         return ListTile(
           dense: true,
-          leading: const Icon(
-            Icons.music_note,
-            color: Colors.white38,
-            size: 18,
+          leading: Checkbox(
+            value: _selectedLibraryPaths.contains(track.path),
+            onChanged: (_) => _toggleLibrarySelection(track),
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
           title: Text(
             track.name,
