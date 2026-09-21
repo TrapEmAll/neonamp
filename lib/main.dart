@@ -93,18 +93,30 @@ class SmartPlaylist {
     required this.name,
     required this.rule,
     this.value = '',
+    this.sortBy = 'Added',
+    this.descending = false,
   });
 
   final String name;
   final String rule;
   final String value;
+  final String sortBy;
+  final bool descending;
 
-  Map<String, String> toJson() => {'name': name, 'rule': rule, 'value': value};
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'rule': rule,
+    'value': value,
+    'sortBy': sortBy,
+    'descending': descending,
+  };
 
   static SmartPlaylist fromJson(Map<String, dynamic> json) => SmartPlaylist(
     name: json['name'] as String? ?? 'Smart playlist',
     rule: json['rule'] as String? ?? 'Favorites',
     value: json['value'] as String? ?? '',
+    sortBy: json['sortBy'] as String? ?? 'Added',
+    descending: json['descending'] as bool? ?? false,
   );
 }
 
@@ -1103,7 +1115,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   List<Track> _tracksForSmartPlaylist(SmartPlaylist playlist) {
     final value = playlist.value.toLowerCase();
-    return _library.where((track) {
+    final tracks = _library.where((track) {
       switch (playlist.rule) {
         case 'Favorites':
           return track.favorite;
@@ -1111,6 +1123,10 @@ class _PlayerPageState extends State<PlayerPage>
           return track.rating >= 4;
         case 'Most played':
           return track.playCount > 0;
+        case 'Rating at least':
+          return track.rating >= (int.tryParse(playlist.value) ?? 0);
+        case 'Played at least':
+          return track.playCount >= (int.tryParse(playlist.value) ?? 0);
         case 'Genre':
           return track.genre.toLowerCase() == value;
         case 'Artist':
@@ -1119,6 +1135,20 @@ class _PlayerPageState extends State<PlayerPage>
           return false;
       }
     }).toList();
+    if (playlist.sortBy != 'Added') {
+      tracks.sort((a, b) {
+        final comparison = switch (playlist.sortBy) {
+          'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          'Artist' => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+          'Album' => a.album.toLowerCase().compareTo(b.album.toLowerCase()),
+          'Rating' => a.rating.compareTo(b.rating),
+          'Play count' => a.playCount.compareTo(b.playCount),
+          _ => 0,
+        };
+        return playlist.descending ? -comparison : comparison;
+      });
+    }
+    return tracks;
   }
 
   void _toggleFavorite(Track track) {
@@ -1317,6 +1347,8 @@ class _PlayerPageState extends State<PlayerPage>
     final nameController = TextEditingController();
     final valueController = TextEditingController();
     var rule = 'Favorites';
+    var sortBy = 'Added';
+    var descending = false;
     final result = await showDialog<SmartPlaylist>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -1349,18 +1381,63 @@ class _PlayerPageState extends State<PlayerPage>
                   ),
                   DropdownMenuItem(value: 'Genre', child: Text('Genre is')),
                   DropdownMenuItem(value: 'Artist', child: Text('Artist is')),
+                  DropdownMenuItem(
+                    value: 'Rating at least',
+                    child: Text('Rating at least'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Played at least',
+                    child: Text('Played at least'),
+                  ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => rule = value);
                 },
               ),
-              if (rule == 'Genre' || rule == 'Artist')
+              if (rule == 'Genre' ||
+                  rule == 'Artist' ||
+                  rule == 'Rating at least' ||
+                  rule == 'Played at least')
                 TextField(
                   controller: valueController,
+                  keyboardType:
+                      rule == 'Rating at least' || rule == 'Played at least'
+                      ? TextInputType.number
+                      : null,
                   decoration: InputDecoration(
-                    labelText: rule == 'Genre' ? 'Genre' : 'Artist',
+                    labelText: switch (rule) {
+                      'Genre' => 'Genre',
+                      'Artist' => 'Artist',
+                      'Rating at least' => 'Minimum rating (1-5)',
+                      _ => 'Minimum play count',
+                    },
                   ),
                 ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: sortBy,
+                decoration: const InputDecoration(labelText: 'Sort by'),
+                items: const [
+                  DropdownMenuItem(value: 'Added', child: Text('Added order')),
+                  DropdownMenuItem(value: 'Title', child: Text('Title')),
+                  DropdownMenuItem(value: 'Artist', child: Text('Artist')),
+                  DropdownMenuItem(value: 'Album', child: Text('Album')),
+                  DropdownMenuItem(value: 'Rating', child: Text('Rating')),
+                  DropdownMenuItem(
+                    value: 'Play count',
+                    child: Text('Play count'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => sortBy = value);
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Descending'),
+                value: descending,
+                onChanged: (value) => setDialogState(() => descending = value),
+              ),
             ],
           ),
           actions: [
@@ -1373,12 +1450,20 @@ class _PlayerPageState extends State<PlayerPage>
                 final name = nameController.text.trim();
                 final value = valueController.text.trim();
                 if (name.isEmpty ||
-                    ((rule == 'Genre' || rule == 'Artist') && value.isEmpty)) {
+                    ((rule == 'Genre' || rule == 'Artist') && value.isEmpty) ||
+                    ((rule == 'Rating at least' || rule == 'Played at least') &&
+                        int.tryParse(value) == null)) {
                   return;
                 }
                 Navigator.pop(
                   context,
-                  SmartPlaylist(name: name, rule: rule, value: value),
+                  SmartPlaylist(
+                    name: name,
+                    rule: rule,
+                    value: value,
+                    sortBy: sortBy,
+                    descending: descending,
+                  ),
                 );
               },
               child: const Text('Create'),

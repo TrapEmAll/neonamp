@@ -7,6 +7,8 @@ void main() {
       name: 'Synthwave favorites',
       rule: 'Genre',
       value: 'Synthwave',
+      sortBy: 'Play count',
+      descending: true,
     );
 
     final restored = SmartPlaylist.fromJson(original.toJson());
@@ -14,6 +16,8 @@ void main() {
     expect(restored.name, original.name);
     expect(restored.rule, original.rule);
     expect(restored.value, original.value);
+    expect(restored.sortBy, original.sortBy);
+    expect(restored.descending, original.descending);
   });
 
   testWidgets('renders the empty NeonAmp player', (tester) async {
