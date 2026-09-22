@@ -27,6 +27,8 @@ PlaylistDocument parsePlaylistDocument(String source, String extension) {
       return _parseB4s(source);
     case 'wpl':
       return _parseWpl(source);
+    case 'asx':
+      return _parseAsx(source);
     default:
       throw FormatException('Unsupported playlist format: $extension');
   }
@@ -149,6 +151,52 @@ PlaylistDocument _parseWpl(String source) {
   );
 }
 
+PlaylistDocument _parseAsx(String source) {
+  final document = XmlDocument.parse(source);
+  final root = document.descendants.whereType<XmlElement>().where(
+    (element) => element.name.local.toLowerCase() == 'asx',
+  );
+  if (root.isEmpty) throw const FormatException('ASX root element is missing.');
+
+  final rootElement = root.first;
+  final head = rootElement.children.whereType<XmlElement>().where(
+    (element) => element.name.local.toLowerCase() == 'head',
+  );
+  final title = head.isEmpty
+      ? null
+      : head.first.descendants
+            .whereType<XmlElement>()
+            .where((element) => element.name.local.toLowerCase() == 'title')
+            .firstOrNull
+            ?.innerText
+            .trim();
+
+  final entries = <PlaylistEntry>[];
+  for (final entry in rootElement.descendants.whereType<XmlElement>()) {
+    if (entry.name.local.toLowerCase() != 'entry') continue;
+    final entryTitle = entry.children
+        .whereType<XmlElement>()
+        .where((element) => element.name.local.toLowerCase() == 'title')
+        .firstOrNull
+        ?.innerText
+        .trim();
+    for (final reference in entry.descendants.whereType<XmlElement>()) {
+      if (reference.name.local.toLowerCase() != 'ref') continue;
+      final href = reference.attributes
+          .where((attribute) => attribute.name.local.toLowerCase() == 'href')
+          .firstOrNull
+          ?.value
+          .trim();
+      if (href == null || href.isEmpty) continue;
+      entries.add(PlaylistEntry(path: href, title: entryTitle));
+    }
+  }
+  return PlaylistDocument(
+    name: title == null || title.isEmpty ? null : title,
+    entries: entries,
+  );
+}
+
 String resolvePlaylistPath(String entry, String playlistPath) {
   final value = entry.trim();
   if (value.isEmpty || value.startsWith('#')) return value;
@@ -223,6 +271,32 @@ String buildWplPlaylist(
         ]),
       ]),
     ]),
+  ]);
+  return document.toXmlString(pretty: true, indent: '  ');
+}
+
+String buildAsxPlaylist(
+  List<PlaylistEntry> entries, {
+  String name = 'NeonAmp playlist',
+}) {
+  final document = XmlDocument([
+    XmlElement(
+      XmlName.parts('asx'),
+      [XmlAttribute(XmlName.parts('version'), '3.0')],
+      [
+        XmlElement(XmlName.parts('head'), [], [
+          XmlElement(XmlName.parts('title'), [], [XmlText(name)]),
+        ]),
+        for (final entry in entries)
+          XmlElement(XmlName.parts('entry'), [], [
+            if (entry.title?.isNotEmpty == true)
+              XmlElement(XmlName.parts('title'), [], [XmlText(entry.title!)]),
+            XmlElement(XmlName.parts('ref'), [
+              XmlAttribute(XmlName.parts('href'), entry.path),
+            ]),
+          ]),
+      ],
+    ),
   ]);
   return document.toXmlString(pretty: true, indent: '  ');
 }

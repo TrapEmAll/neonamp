@@ -26,7 +26,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Named playlists and adding library tracks to playlists
 - Persistent bookmarks for local tracks, CUE tracks, and radio/stream URLs
 - Named playlist editing, renaming, deletion, and per-track removal
-- M3U/M3U8, PLS, Winamp B4S, and WPL playlist import/export for local tracks and radio streams, including relative local paths
+- M3U/M3U8, PLS, Winamp B4S, WPL, and ASX playlist import/export for local tracks and radio streams, including relative local paths
 - iTunes-compatible XML library import/export with track metadata and named playlists
 - CUE sheet import with virtual per-track queue entries backed by the original continuous audio file and segment-aware seek/progress on Windows and Android
 - HTTP audio stream / internet radio URL playback
