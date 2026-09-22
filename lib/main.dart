@@ -1653,6 +1653,17 @@ Duration? restoreResumePosition(int? milliseconds) {
   return Duration(milliseconds: milliseconds);
 }
 
+Duration seekByOffset({
+  required Duration position,
+  required Duration duration,
+  required Duration offset,
+}) {
+  final target = position + offset;
+  if (target < Duration.zero) return Duration.zero;
+  if (duration > Duration.zero && target > duration) return duration;
+  return target;
+}
+
 List<Track> toggleTrackBookmark(List<Track> bookmarks, Track track) {
   if (bookmarks.any((item) => item.identityKey == track.identityKey)) {
     return bookmarks
@@ -2530,6 +2541,10 @@ class _PlayerPageState extends State<PlayerPage>
       await _player.seek(sourcePosition);
     }
   }
+
+  Future<void> _skipBy(Duration offset) => _seekCurrent(
+    seekByOffset(position: _position, duration: _duration, offset: offset),
+  );
 
   Future<void> _setPlaybackSpeed(double speed) async {
     final value = speed.clamp(0.5, 2.0).toDouble();
@@ -7152,6 +7167,12 @@ class _PlayerPageState extends State<PlayerPage>
         Row(
           children: [
             IconButton(
+              tooltip: 'Rewind 15 seconds',
+              onPressed: () => _skipBy(const Duration(seconds: -15)),
+              icon: const Icon(Icons.fast_rewind_rounded),
+              color: Colors.white70,
+            ),
+            IconButton(
               onPressed: _previous,
               icon: const Icon(Icons.skip_previous_rounded),
               color: Colors.white70,
@@ -7178,6 +7199,12 @@ class _PlayerPageState extends State<PlayerPage>
               ),
             ),
             const Spacer(),
+            IconButton(
+              tooltip: 'Skip forward 15 seconds',
+              onPressed: () => _skipBy(const Duration(seconds: 15)),
+              icon: const Icon(Icons.fast_forward_rounded),
+              color: Colors.white70,
+            ),
             IconButton(
               onPressed: _next,
               icon: const Icon(Icons.skip_next_rounded),
