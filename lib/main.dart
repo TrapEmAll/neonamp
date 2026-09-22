@@ -13,6 +13,26 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dsp_local_player.dart';
+import 'video_player_page.dart';
+
+const supportedVideoExtensions = {
+  'avi',
+  'mkv',
+  'mov',
+  'mp4',
+  'mpeg',
+  'mpg',
+  'webm',
+  'wmv',
+};
+
+bool isSupportedVideoPath(String path) =>
+    supportedVideoExtensions.contains(path.split('.').last.toLowerCase());
+
+int wrappedVideoIndex(int index, int length) {
+  if (length <= 0) throw ArgumentError.value(length, 'length');
+  return ((index % length) + length) % length;
+}
 
 bool isVorbisAudioPath(String path) {
   final extension = path.split('.').last.toLowerCase();
@@ -3148,6 +3168,28 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _openVideoPicker() async {
+    final selectedFiles = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: supportedVideoExtensions.toList()..sort(),
+      dialogTitle: 'Choose videos to play',
+    );
+    if (!mounted) return;
+    final files = selectedFiles
+        .where((file) => file.path != null && isSupportedVideoPath(file.path!))
+        .map((file) => File(file.path!))
+        .toList();
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No playable video files were selected.')),
+      );
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => VideoPlayerPage(files: files)),
+    );
+  }
+
   Future<List<Map<String, dynamic>>> _searchShoutcastStations(
     String term,
   ) async {
@@ -5612,6 +5654,14 @@ class _PlayerPageState extends State<PlayerPage>
             onPressed: _importPlaylist,
             icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
           ),
+          IconButton(
+            tooltip: 'Play videos',
+            onPressed: _openVideoPicker,
+            icon: const Icon(
+              Icons.video_library_outlined,
+              color: Colors.white60,
+            ),
+          ),
         ] else
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.white60),
@@ -5635,6 +5685,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'cd') _importAudioCd();
               if (value == 'sleep') _showSleepTimer();
               if (value == 'exportPls') _exportPlsPlaylist();
+              if (value == 'video') _openVideoPicker();
             },
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
@@ -5680,6 +5731,7 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'exportPls',
                 child: Text('Export PLS playlist'),
               ),
+              PopupMenuItem(value: 'video', child: Text('Play videos')),
             ],
           ),
       ],
