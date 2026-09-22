@@ -1,23 +1,33 @@
 package com.neonamp.neonamp
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
+import java.util.Locale
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import com.ryanheise.audioservice.AudioServiceActivity
 
 class MainActivity : AudioServiceActivity() {
     private val converterChannel = "neonamp/converter"
+    private val libraryChannel = "neonamp/library"
     private val nearbyPermissionRequest = 4021
+    private val folderPickerRequest = 4022
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nearbyPermissionResult: MethodChannel.Result? = null
+    private var folderPickerResult: MethodChannel.Result? = null
 
     private external fun nativeReadTrackerInfo(inputPath: String): Array<String>?
     private external fun nativeRenderTrackerToWav(inputPath: String, outputPath: String): Boolean
@@ -30,6 +40,68 @@ class MainActivity : AudioServiceActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, libraryChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "pickFolder" -> pickLibraryFolder(result)
+                    "scanFolder" -> {
+                        val folderUri = call.argument<String>("uri")
+                        if (folderUri.isNullOrBlank()) {
+                            result.error("invalid_arguments", "A folder URI is required.", null)
+                        } else {
+                            Thread {
+                                try {
+                                    val files = scanSafFolder(Uri.parse(folderUri))
+                                    runOnUiThread { result.success(files) }
+                                } catch (error: Throwable) {
+                                    runOnUiThread {
+                                        result.error("folder_scan_failed", error.message, null)
+                                    }
+                                }
+                            }.start()
+                        }
+                    }
+                    "copyFileToFolder" -> {
+                        val folderUri = call.argument<String>("uri")
+                        val sourcePath = call.argument<String>("sourcePath")
+                        val fileName = call.argument<String>("fileName")
+                        if (folderUri.isNullOrBlank() || sourcePath.isNullOrBlank() || fileName.isNullOrBlank()) {
+                            result.error("invalid_arguments", "Folder URI, source file, and name are required.", null)
+                        } else {
+                            Thread {
+                                try {
+                                    writeFileToSafFolder(Uri.parse(folderUri), File(sourcePath), fileName)
+                                    runOnUiThread { result.success(true) }
+                                } catch (error: Throwable) {
+                                    runOnUiThread {
+                                        result.error("folder_write_failed", error.message, null)
+                                    }
+                                }
+                            }.start()
+                        }
+                    }
+                    "writeTextToFolder" -> {
+                        val folderUri = call.argument<String>("uri")
+                        val fileName = call.argument<String>("fileName")
+                        val contents = call.argument<String>("contents")
+                        if (folderUri.isNullOrBlank() || fileName.isNullOrBlank() || contents == null) {
+                            result.error("invalid_arguments", "Folder URI, file name, and contents are required.", null)
+                        } else {
+                            Thread {
+                                try {
+                                    writeTextToSafFolder(Uri.parse(folderUri), fileName, contents)
+                                    runOnUiThread { result.success(true) }
+                                } catch (error: Throwable) {
+                                    runOnUiThread {
+                                        result.error("folder_write_failed", error.message, null)
+                                    }
+                                }
+                            }.start()
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, converterChannel)
             .setMethodCallHandler { call, result ->
                 if (call.method != "convertToM4a") {
@@ -119,6 +191,204 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun pickLibraryFolder(result: MethodChannel.Result) {
+        if (folderPickerResult != null) {
+            result.error("picker_busy", "A folder picker is already open.", null)
+            return
+        }
+        folderPickerResult = result
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PREFIX_URI_PERMISSION,
+                )
+            }
+            startActivityForResult(intent, folderPickerRequest)
+        } catch (error: Throwable) {
+            folderPickerResult = null
+            result.error("folder_picker_failed", error.message, null)
+        }
+    }
+
+    @Deprecated("Deprecated in Android, retained for the Storage Access Framework result")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != folderPickerRequest) return
+        val pendingResult = folderPickerResult ?: return
+        folderPickerResult = null
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) {
+            pendingResult.success(null)
+            return
+        }
+        try {
+            val persistableFlags = (data.flags) and
+                (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            contentResolver.takePersistableUriPermission(uri, persistableFlags)
+            pendingResult.success(mapOf("uri" to uri.toString(), "name" to folderName(uri)))
+        } catch (error: Throwable) {
+            pendingResult.error("folder_permission_failed", error.message, null)
+        }
+    }
+
+    private fun folderName(treeUri: Uri): String {
+        val documentUri = DocumentsContract.buildDocumentUriUsingTree(
+            treeUri,
+            DocumentsContract.getTreeDocumentId(treeUri),
+        )
+        contentResolver.query(
+            documentUri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) return cursor.getString(nameIndex)
+            }
+        }
+        return "Selected folder"
+    }
+
+    private fun scanSafFolder(treeUri: Uri): List<Map<String, String>> {
+        val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        val audioExtensions = setOf(
+            "mp3", "flac", "wav", "ogg", "m4a", "mp4", "aac", "wma",
+            "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
+            "mka", "mid", "midi", "kar", "669", "amf", "ams", "dbm",
+            "dmf", "dsm", "far", "gdm", "gtk", "it", "j2b", "m15",
+            "med", "mod", "mtm", "okt", "psm", "pt36", "ptm", "s3m",
+            "stm", "stp", "stx", "ult", "umx", "xm", "xmz", "itz", "s3z",
+        )
+        val results = mutableListOf<Map<String, String>>()
+        val visited = mutableSetOf<String>()
+        val rootDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
+        val pending = ArrayDeque<String>()
+        pending.add(rootDocumentId)
+        while (pending.isNotEmpty()) {
+            val parentId = pending.removeLast()
+            if (!visited.add(parentId)) continue
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentId)
+            contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    DocumentsContract.Document.COLUMN_SIZE,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val mimeColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                val sizeColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                val modifiedColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                while (cursor.moveToNext()) {
+                    val documentId = cursor.getString(idColumn)
+                    val name = cursor.getString(nameColumn) ?: continue
+                    if (cursor.getString(mimeColumn) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        pending.add(documentId)
+                        continue
+                    }
+                    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                    if (extension !in audioExtensions) continue
+                    val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+                    val cacheName = sha256(documentUri.toString()) + "." + extension
+                    val cachedFile = File(cacheDirectory, cacheName)
+                    val sourceSize = if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) cursor.getLong(sizeColumn) else -1L
+                    val sourceModified = if (modifiedColumn >= 0 && !cursor.isNull(modifiedColumn)) cursor.getLong(modifiedColumn) else -1L
+                    if (!cachedFile.isFile || (sourceSize >= 0 && cachedFile.length() != sourceSize) ||
+                        (sourceModified > 0 && cachedFile.lastModified() != sourceModified)
+                    ) {
+                        val temporaryFile = File(cacheDirectory, "$cacheName.tmp")
+                        contentResolver.openInputStream(documentUri)?.use { input ->
+                            FileOutputStream(temporaryFile).use { output -> input.copyTo(output) }
+                        } ?: continue
+                        if (!temporaryFile.renameTo(cachedFile)) {
+                            temporaryFile.copyTo(cachedFile, overwrite = true)
+                            temporaryFile.delete()
+                        }
+                        if (sourceModified > 0) cachedFile.setLastModified(sourceModified)
+                    }
+                    results.add(mapOf("path" to cachedFile.absolutePath, "name" to name))
+                }
+            } ?: throw IllegalStateException("Android could not read this folder. Re-add it to restore access.")
+        }
+        return results
+    }
+
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+
+    private fun writeFileToSafFolder(treeUri: Uri, source: File, fileName: String) {
+        if (!source.isFile) throw IllegalArgumentException("The source audio file is unavailable.")
+        val mimeType = when (source.extension.lowercase(Locale.ROOT)) {
+            "mp3" -> "audio/mpeg"
+            "m4a", "aac" -> "audio/mp4"
+            "flac" -> "audio/flac"
+            "wav" -> "audio/wav"
+            "ogg", "opus" -> "audio/ogg"
+            else -> "application/octet-stream"
+        }
+        val destination = createSafFile(treeUri, fileName, mimeType)
+        contentResolver.openOutputStream(destination, "w")?.use { output ->
+            source.inputStream().use { input -> input.copyTo(output) }
+        } ?: throw IllegalStateException("Android could not write the selected folder.")
+    }
+
+    private fun writeTextToSafFolder(treeUri: Uri, fileName: String, contents: String) {
+        val destination = createSafFile(treeUri, fileName, "application/x-mpegURL")
+        contentResolver.openOutputStream(destination, "w")?.bufferedWriter()?.use { writer ->
+            writer.write(contents)
+        } ?: throw IllegalStateException("Android could not write the selected folder.")
+    }
+
+    private fun createSafFile(treeUri: Uri, fileName: String, mimeType: String): Uri {
+        val rootUri = DocumentsContract.buildDocumentUriUsingTree(
+            treeUri,
+            DocumentsContract.getTreeDocumentId(treeUri),
+        )
+        contentResolver.query(
+            DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                DocumentsContract.getTreeDocumentId(treeUri),
+            ),
+            arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            ),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            )
+            val nameColumn = cursor.getColumnIndexOrThrow(
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            )
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameColumn) == fileName) {
+                    return DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        cursor.getString(idColumn),
+                    )
+                }
+            }
+        }
+        return DocumentsContract.createDocument(contentResolver, rootUri, mimeType, fileName)
+            ?: throw IllegalStateException("Android could not create $fileName in the selected folder.")
     }
 
     private fun beginDlnaDiscovery(result: MethodChannel.Result) {

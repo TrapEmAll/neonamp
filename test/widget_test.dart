@@ -1398,6 +1398,30 @@ FILE "disc image.flac" WAVE
     expect(find.text('Your library is quiet.'), findsOneWidget);
   });
 
+  testWidgets('phone layout gives the library more room than now playing', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NeonAmpApp());
+    await tester.pump();
+
+    expect(find.text('NOW PLAYING'), findsOneWidget);
+    expect(find.text('QUEUE'), findsOneWidget);
+    expect(find.text('Your library is quiet.'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Add folder'), findsOneWidget);
+    expect(find.text('Equalizer'), findsOneWidget);
+    expect(find.text('Playback speed'), findsOneWidget);
+    expect(find.text('Sync music to device folder'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('custom player controls restore and persist from the editor', (
     tester,
   ) async {

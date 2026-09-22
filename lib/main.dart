@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
+import 'package:path_provider/path_provider.dart';
 import 'package:upnp_client/upnp_client.dart' show MediaRenderer;
 
 import 'dsp_local_player.dart';
@@ -25,6 +26,7 @@ import 'dlna_cast.dart';
 import 'playlist_formats.dart';
 import 'tracker_modules.dart';
 import 'windows_midi_player.dart';
+import 'equalizer_presets.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -2779,6 +2781,16 @@ class _PlayerPageState extends State<PlayerPage>
   );
 
   Future<void> _setPlaybackSpeed(double speed) async {
+    if (_casting) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This network player does not expose speed control.'),
+          ),
+        );
+      }
+      return;
+    }
     final value = speed.clamp(0.5, 2.0).toDouble();
     setState(() => _playbackSpeed = value);
     if (_current != null) {
@@ -3159,29 +3171,91 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _addFolder() async {
-    final directory = await FilePicker.getDirectoryPath(
-      dialogTitle: 'Choose a music folder',
-    );
-    if (directory == null) return;
-    if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
-    await _scanFolder(directory);
-    await _saveQueue();
+    try {
+      final directory = await _pickFolderLocation('Choose a music folder');
+      if (directory == null) return;
+      if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
+      await _scanFolder(directory);
+      await _saveQueue();
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not add music folder: $error')),
+      );
+    }
+  }
+
+  Future<String?> _pickFolderLocation(String dialogTitle) async {
+    if (Platform.isAndroid) {
+      final selection = await const MethodChannel('neonamp/library')
+          .invokeMapMethod<String, dynamic>('pickFolder');
+      return selection?['uri'] as String?;
+    }
+    return FilePicker.getDirectoryPath(dialogTitle: dialogTitle);
+  }
+
+  Future<void> _copyFileToFolder(
+    String folder,
+    String sourcePath,
+    String fileName,
+  ) async {
+    if (Platform.isAndroid) {
+      await const MethodChannel('neonamp/library').invokeMethod<bool>(
+        'copyFileToFolder',
+        {'uri': folder, 'sourcePath': sourcePath, 'fileName': fileName},
+      );
+      return;
+    }
+    await File(sourcePath).copy('$folder${Platform.pathSeparator}$fileName');
+  }
+
+  Future<void> _writeTextToFolder(
+    String folder,
+    String fileName,
+    String contents,
+  ) async {
+    if (Platform.isAndroid) {
+      await const MethodChannel('neonamp/library').invokeMethod<bool>(
+        'writeTextToFolder',
+        {'uri': folder, 'fileName': fileName, 'contents': contents},
+      );
+      return;
+    }
+    await File('$folder${Platform.pathSeparator}$fileName')
+        .writeAsString(contents);
   }
 
   Future<void> _scanFolder(String directory) async {
-    final files = Directory(directory)
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where((file) => isSupportedLibraryAudioPath(file.path))
-        .toList();
+    final List<({String path, String name})> files;
+    if (Platform.isAndroid) {
+      if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
+        throw StateError('Reselect this folder to grant Android media access.');
+      }
+      final results = await const MethodChannel('neonamp/library')
+          .invokeListMethod<Map<Object?, Object?>>('scanFolder', {
+            'uri': directory,
+          });
+      files = (results ?? []).map((item) {
+        final path = item['path'] as String;
+        return (path: path, name: item['name'] as String? ?? path);
+      }).toList();
+    } else {
+      files = Directory(directory)
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((file) => isSupportedLibraryAudioPath(file.path))
+          .map((file) => (path: file.path, name: file.uri.pathSegments.last))
+          .toList();
+    }
     for (final file in files) {
-      if (_queue.any((track) => track.path == file.path)) continue;
-      final track = await _readTrack(file.path, file.uri.pathSegments.last);
+      final alreadyQueued = _queue.any((track) => track.path == file.path);
+      final alreadyInLibrary = _library.any((track) => track.path == file.path);
+      if (alreadyQueued && alreadyInLibrary) continue;
+      final track = await _readTrack(file.path, file.name);
       if (!mounted) return;
       setState(() {
-        _queue.add(track);
-        if (!_library.any((item) => item.path == file.path))
-          _library.add(track);
+        if (!alreadyQueued) _queue.add(track);
+        if (!alreadyInLibrary) _library.add(track);
       });
     }
   }
@@ -3191,8 +3265,53 @@ class _PlayerPageState extends State<PlayerPage>
       await _addFolder();
       return;
     }
+    if (Platform.isAndroid) {
+      final oldFilesystemFolders = _libraryFolders
+          .where((folder) => Uri.tryParse(folder)?.scheme != 'content')
+          .toList();
+      if (oldFilesystemFolders.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Android needs you to reselect each saved music folder to restore access.',
+            ),
+          ),
+        );
+        for (final oldFolder in oldFilesystemFolders) {
+          try {
+            final directory = await _pickFolderLocation(
+              'Choose a saved music folder again',
+            );
+            if (directory == null) return;
+            await _scanFolder(directory);
+            final index = _libraryFolders.indexOf(oldFolder);
+            if (index >= 0) _libraryFolders[index] = directory;
+            await _saveQueue();
+          } on Object catch (error) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Could not restore folder access: $error'),
+                ),
+              );
+            }
+            return;
+          }
+        }
+        return;
+      }
+    }
     for (final folder in List<String>.from(_libraryFolders)) {
-      if (Directory(folder).existsSync()) await _scanFolder(folder);
+      try {
+        if (Platform.isAndroid || Directory(folder).existsSync()) {
+          await _scanFolder(folder);
+        }
+      } on Object catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not rescan a library folder: $error')),
+        );
+      }
     }
     await _saveQueue();
     if (mounted) {
@@ -3674,6 +3793,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
       });
       await incomingPlayer.setVolume(0);
+      await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
         track.path.startsWith('http')
             ? UrlSource(track.path)
@@ -4399,12 +4519,13 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _downloadPodcastEpisode(Track track) async {
     if (!track.path.startsWith('http')) return;
-    final directory = await FilePicker.getDirectoryPath(
-      dialogTitle: 'Choose a podcast download folder',
+    final directory = await _pickFolderLocation(
+      'Choose a podcast download folder',
     );
     if (directory == null) return;
+    final client = HttpClient();
     try {
-      final request = await HttpClient().getUrl(Uri.parse(track.path));
+      final request = await client.getUrl(Uri.parse(track.path));
       final response = await request.close();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('Episode returned ${response.statusCode}');
@@ -4416,11 +4537,20 @@ class _PlayerPageState extends State<PlayerPage>
       final extension = Uri.tryParse(track.path)?.path.split('.').last;
       final filename =
           '$safeName.${extension != null && extension.length <= 5 ? extension : 'mp3'}';
-      final target = File(
-        '${Directory(directory).path}${Platform.pathSeparator}$filename',
-      );
+      final usedNames = <String>{};
+      final safeFilename = nextSyncFileName(filename, usedNames);
+      final target = Platform.isAndroid
+          ? File(
+              '${(await getApplicationSupportDirectory()).path}'
+              '${Platform.pathSeparator}podcasts${Platform.pathSeparator}$safeFilename',
+            )
+          : File('$directory${Platform.pathSeparator}$safeFilename');
+      await target.parent.create(recursive: true);
       await response.pipe(target.openWrite());
-      final downloaded = track.copyWith(path: target.path);
+      if (Platform.isAndroid) {
+        await _copyFileToFolder(directory, target.path, safeFilename);
+      }
+      final downloaded = track.copyWith(path: target.path, name: safeFilename);
       if (mounted) {
         setState(() {
           if (!_queue.any((item) => item.path == downloaded.path)) {
@@ -4442,6 +4572,8 @@ class _PlayerPageState extends State<PlayerPage>
           const SnackBar(content: Text('Could not download this episode.')),
         );
       }
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -4513,8 +4645,8 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _syncToDeviceFolder() async {
-    final destination = await FilePicker.getDirectoryPath(
-      dialogTitle: 'Choose a device music folder',
+    final destination = await _pickFolderLocation(
+      'Choose a device music folder',
     );
     if (destination == null) return;
     final selected = _selectedLibraryPaths.isEmpty
@@ -4545,15 +4677,18 @@ class _PlayerPageState extends State<PlayerPage>
         continue;
       }
       final name = nextSyncFileName(syncFileName(track.path), usedNames);
-      final target = File('$destination${Platform.pathSeparator}$name');
-      if (source.absolute.path.toLowerCase() ==
-          target.absolute.path.toLowerCase()) {
+      final samePath =
+          !Platform.isAndroid &&
+          source.absolute.path.toLowerCase() ==
+              File('$destination${Platform.pathSeparator}$name').absolute.path
+                  .toLowerCase();
+      if (samePath) {
         manifest.add(name);
         copied++;
         continue;
       }
       try {
-        await source.copy(target.path);
+        await _copyFileToFolder(destination, track.path, name);
         manifest
           ..add('#EXTINF:-1,${track.name}')
           ..add(name);
@@ -4563,8 +4698,11 @@ class _PlayerPageState extends State<PlayerPage>
       }
     }
     try {
-      await File('$destination${Platform.pathSeparator}neonamp-sync.m3u8')
-          .writeAsString('${manifest.join('\n')}\n');
+      await _writeTextToFolder(
+        destination,
+        'neonamp-sync.m3u8',
+        '${manifest.join('\n')}\n',
+      );
     } on Object {
       skipped++;
     }
@@ -4581,15 +4719,22 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _convertTrackToM4a(Track track) async {
     if (track.path.startsWith('http')) return;
-    final destination = await FilePicker.getDirectoryPath(
-      dialogTitle: 'Choose a conversion folder',
-    );
+    final destination = await _pickFolderLocation('Choose a conversion folder');
     if (destination == null) return;
     final usedNames = <String>{};
     final requested = convertedM4aFileName(track.path);
     final outputName = nextSyncFileName(requested, usedNames);
-    final output = '$destination${Platform.pathSeparator}$outputName';
+    var output = '$destination${Platform.pathSeparator}$outputName';
     try {
+      if (Platform.isAndroid) {
+        final supportDirectory = await getApplicationSupportDirectory();
+        final convertedDirectory = Directory(
+          '${supportDirectory.path}${Platform.pathSeparator}converted',
+        );
+        await convertedDirectory.create(recursive: true);
+        output =
+            '${convertedDirectory.path}${Platform.pathSeparator}$outputName';
+      }
       final converted = await const MethodChannel('neonamp/converter')
           .invokeMethod<bool>('convertToM4a', {
             'inputPath': track.path,
@@ -4616,6 +4761,9 @@ class _PlayerPageState extends State<PlayerPage>
         ]);
       } on Object {
         // The converted audio remains usable if a target tag writer rejects a field.
+      }
+      if (Platform.isAndroid) {
+        await _copyFileToFolder(destination, output, outputName);
       }
       final convertedTrack = await _readTrack(output, outputName);
       final withMetadata = convertedTrack.copyWith(
@@ -6035,14 +6183,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _showEqualizer() async {
-    const builtInPresets = [
-      'Flat',
-      'Rock',
-      'Pop',
-      'Jazz',
-      'Classical',
-      'Bass boost',
-    ];
+    final builtInPresets = builtInEqualizerPresets.keys.toList();
     final pluginPresets = <String, List<double>>{};
     for (final plugin in _plugins.values.where((plugin) => plugin.enabled)) {
       pluginPresets.addAll(plugin.equalizerPresets);
@@ -6092,12 +6233,14 @@ class _PlayerPageState extends State<PlayerPage>
                             if (value == null) return;
                             setState(() {
                               _eqPreset = value;
-                              final pluginBands = pluginPresets[value];
-                              for (var i = 0; i < _eqBands.length; i++) {
-                                _eqBands[i] =
-                                    pluginBands?[i] ??
-                                    (value == 'Bass boost' && i < 3 ? 6 : 0);
-                              }
+                              _eqBands.setAll(
+                                0,
+                                equalizerPresetBands(
+                                  value,
+                                  pluginPresets: pluginPresets,
+                                  bandCount: _eqBands.length,
+                                ),
+                              );
                             });
                             if (_dspActive) {
                               _dspPlayer.applyEqualizer(
@@ -6257,6 +6400,11 @@ class _PlayerPageState extends State<PlayerPage>
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (_casting)
+                const Text(
+                  'Speed control is unavailable while casting to this player.',
+                  textAlign: TextAlign.center,
+                ),
               Text('${selected.toStringAsFixed(2)}×'),
               Slider(
                 value: selected,
@@ -6264,22 +6412,28 @@ class _PlayerPageState extends State<PlayerPage>
                 max: 2.0,
                 divisions: 15,
                 label: '${selected.toStringAsFixed(2)}×',
-                onChanged: (value) {
-                  selected = value;
-                  setDialogState(() {});
-                  unawaited(_setPlaybackSpeed(value));
-                },
+                onChanged: _casting
+                    ? null
+                    : (value) {
+                        selected = value;
+                        setDialogState(() {});
+                      },
+                onChangeEnd: _casting
+                    ? null
+                    : (value) => unawaited(_setPlaybackSpeed(value)),
               ),
               Wrap(
                 spacing: 8,
                 children: [
                   for (final speed in [0.5, 1.0, 1.25, 1.5, 2.0])
                     OutlinedButton(
-                      onPressed: () {
-                        selected = speed;
-                        setDialogState(() {});
-                        unawaited(_setPlaybackSpeed(speed));
-                      },
+                      onPressed: _casting
+                          ? null
+                          : () {
+                              selected = speed;
+                              setDialogState(() {});
+                              unawaited(_setPlaybackSpeed(speed));
+                            },
                       child: Text('${speed}×'),
                     ),
                 ],
@@ -6638,7 +6792,12 @@ class _PlayerPageState extends State<PlayerPage>
   );
 
   Widget _topBar(bool compact) => Padding(
-    padding: const EdgeInsets.fromLTRB(24, 18, 24, 12),
+    padding: EdgeInsets.fromLTRB(
+      compact ? 12 : 24,
+      compact ? 8 : 18,
+      compact ? 8 : 24,
+      compact ? 4 : 12,
+    ),
     child: Row(
       children: [
         Container(
@@ -6669,15 +6828,26 @@ class _PlayerPageState extends State<PlayerPage>
           _topAction(Icons.settings_outlined, 'Settings'),
           const SizedBox(width: 16),
         ],
-        FilledButton.icon(
-          onPressed: _addFiles,
-          icon: const Icon(Icons.add, size: 18),
-          label: const Text('Add music'),
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xffef4bff),
-            foregroundColor: Colors.white,
+        if (compact)
+          IconButton.filled(
+            tooltip: 'Add music',
+            onPressed: _addFiles,
+            icon: const Icon(Icons.add),
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xffef4bff),
+              foregroundColor: Colors.white,
+            ),
+          )
+        else
+          FilledButton.icon(
+            onPressed: _addFiles,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add music'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xffef4bff),
+              foregroundColor: Colors.white,
+            ),
           ),
-        ),
         if (MediaQuery.sizeOf(context).width >= 1600)
           IconButton(
             tooltip: 'Add folder',
@@ -6704,11 +6874,12 @@ class _PlayerPageState extends State<PlayerPage>
                   : const Color(0xffef4bff),
             ),
           ),
-        IconButton(
-          tooltip: 'Rescan library folders',
-          onPressed: _rescanFolders,
-          icon: const Icon(Icons.refresh, color: Colors.white60),
-        ),
+        if (!compact)
+          IconButton(
+            tooltip: 'Rescan library folders',
+            onPressed: _rescanFolders,
+            icon: const Icon(Icons.refresh, color: Colors.white60),
+          ),
         if (MediaQuery.sizeOf(context).width >= 1600) ...[
           const SizedBox(width: 8),
           IconButton(
@@ -6883,7 +7054,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'exportAsx') _exportAsxPlaylist();
               if (value == 'video') _openVideoPicker();
             },
-            itemBuilder: (_) => const [
+            itemBuilder: (_) => [
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
               PopupMenuItem(value: 'folder', child: Text('Add folder')),
@@ -6949,7 +7120,11 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'sync',
                 child: Text('Sync music to device folder'),
               ),
-              PopupMenuItem(value: 'cd', child: Text('Import audio CD')),
+              if (!Platform.isAndroid)
+                const PopupMenuItem(
+                  value: 'cd',
+                  child: Text('Import audio CD'),
+                ),
               PopupMenuItem(value: 'sleep', child: Text('Sleep timer')),
               PopupMenuItem(
                 value: 'exportPls',
@@ -6987,13 +7162,15 @@ class _PlayerPageState extends State<PlayerPage>
   );
   Widget _compactLayout() => Column(
     children: [
-      Expanded(child: _heroPanel()),
-      SizedBox(height: 220, child: _queuePanel()),
+      SizedBox(height: 104, child: _heroPanel(compact: true)),
+      Expanded(child: _queuePanel()),
     ],
   );
 
   Widget _queuePanel() => Container(
-    margin: const EdgeInsets.fromLTRB(24, 8, 12, 12),
+    margin: MediaQuery.sizeOf(context).width < 600
+        ? const EdgeInsets.fromLTRB(8, 4, 8, 6)
+        : const EdgeInsets.fromLTRB(24, 8, 12, 12),
     decoration: BoxDecoration(
       color: const Color(0xff11131c),
       borderRadius: BorderRadius.circular(20),
@@ -7669,10 +7846,12 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
-  Widget _heroPanel() => AnimatedBuilder(
+  Widget _heroPanel({bool compact = false}) => AnimatedBuilder(
     animation: _pulse,
     builder: (_, __) => Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 24, 12),
+      padding: compact
+          ? const EdgeInsets.fromLTRB(8, 4, 8, 4)
+          : const EdgeInsets.fromLTRB(12, 8, 24, 12),
       child: Container(
         decoration: BoxDecoration(
           gradient: const LinearGradient(
@@ -7705,70 +7884,146 @@ class _PlayerPageState extends State<PlayerPage>
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Text(
-                        'NOW PLAYING',
-                        style: TextStyle(
-                          color: Color(0xffef4bff),
-                          fontSize: 11,
-                          letterSpacing: 2,
-                          fontWeight: FontWeight.bold,
+              padding: EdgeInsets.all(compact ? 12 : 32),
+              child: compact
+                  ? Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: _current?.artwork != null
+                              ? Image.memory(
+                                  _current!.artwork!,
+                                  width: 58,
+                                  height: 58,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.graphic_eq,
+                                    size: 42,
+                                    color: Colors.white24,
+                                  ),
+                                )
+                              : const SizedBox(
+                                  width: 58,
+                                  height: 58,
+                                  child: Icon(
+                                    Icons.graphic_eq,
+                                    size: 42,
+                                    color: Colors.white24,
+                                  ),
+                                ),
                         ),
-                      ),
-                      const Spacer(),
-                      Icon(
-                        _isPlaying ? Icons.waves : Icons.pause_circle_outline,
-                        color: Colors.white30,
-                        size: 20,
-                      ),
-                    ],
-                  ),
-                  const Spacer(),
-                  Center(
-                    child: _current?.artwork != null
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(18),
-                            child: Image.memory(
-                              _current!.artwork!,
-                              width: 180,
-                              height: 180,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const Icon(
-                                Icons.graphic_eq,
-                                size: 80,
-                                color: Colors.white24,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'NOW PLAYING',
+                                style: TextStyle(
+                                  color: Color(0xffef4bff),
+                                  fontSize: 9,
+                                  letterSpacing: 1.6,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _current?.name ?? 'Nothing queued',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                _current?.artist ?? 'Add local music to begin',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          _isPlaying ? Icons.waves : Icons.pause_circle_outline,
+                          color: Colors.white30,
+                          size: 20,
+                        ),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              'NOW PLAYING',
+                              style: TextStyle(
+                                color: Color(0xffef4bff),
+                                fontSize: 11,
+                                letterSpacing: 2,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                          )
-                        : const Icon(
-                            Icons.graphic_eq,
-                            size: 80,
-                            color: Colors.white24,
+                            const Spacer(),
+                            Icon(
+                              _isPlaying
+                                  ? Icons.waves
+                                  : Icons.pause_circle_outline,
+                              color: Colors.white30,
+                              size: 20,
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        Center(
+                          child: _current?.artwork != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(18),
+                                  child: Image.memory(
+                                    _current!.artwork!,
+                                    width: 180,
+                                    height: 180,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Icon(
+                                      Icons.graphic_eq,
+                                      size: 80,
+                                      color: Colors.white24,
+                                    ),
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.graphic_eq,
+                                  size: 80,
+                                  color: Colors.white24,
+                                ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          _current?.name ?? 'Nothing queued',
+                          style: const TextStyle(
+                            fontSize: 30,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -.7,
                           ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    _current?.name ?? 'Nothing queued',
-                    style: const TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -.7,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _current?.artist ?? 'Add local music to begin',
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _current?.artist ?? 'Add local music to begin',
-                    style: const TextStyle(color: Colors.white54, fontSize: 14),
-                  ),
-                ],
-              ),
             ),
           ],
         ),
@@ -7777,7 +8032,9 @@ class _PlayerPageState extends State<PlayerPage>
   );
 
   Widget _bottomPlayer() => Container(
-    padding: const EdgeInsets.fromLTRB(24, 10, 24, 18),
+    padding: MediaQuery.sizeOf(context).width < 600
+        ? const EdgeInsets.fromLTRB(8, 2, 8, 4)
+        : const EdgeInsets.fromLTRB(24, 10, 24, 18),
     decoration: const BoxDecoration(
       color: Color(0xff0c0d14),
       border: Border(top: BorderSide(color: Colors.white10)),
