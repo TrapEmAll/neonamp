@@ -2966,13 +2966,16 @@ class _PlayerPageState extends State<PlayerPage>
       final trackTotal = int.tryParse(values[7]);
       final discNumber = int.tryParse(values[8]);
       final discTotal = int.tryParse(values[9]);
+      final writtenLyrics = isAiffAudioPath(track.path)
+          ? readAiffId3Lyrics(await File(track.path).readAsBytes())
+          : written.lyrics;
       final metadataMatches =
           (year == null || written.year?.year == year) &&
           (trackNumber == null || written.trackNumber == trackNumber) &&
           (trackTotal == null || written.trackTotal == trackTotal) &&
           (discNumber == null || written.discNumber == discNumber) &&
           (discTotal == null || written.totalDisc == discTotal) &&
-          (values[10].trim().isEmpty || written.lyrics == values[10]);
+          (values[10].trim().isEmpty || writtenLyrics == values[10]);
       if (!titleMatches ||
           !artistMatches ||
           !albumMatches ||
