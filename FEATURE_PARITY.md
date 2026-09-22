@@ -32,7 +32,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - CUE sheet import with virtual per-track queue entries backed by the original continuous audio file and segment-aware seek/progress on Windows and Android
 - HTTP audio stream / internet radio URL playback
 - DLNA/UPnP renderer discovery and casting of HTTP(S) streams, local audio files, and segment-aware CUE virtual tracks on Windows and Android, with receiver transport controls, relative seek/progress, segment-boundary advancement, and byte-range file serving
-- Chromecast audio discovery and playback for MP3, AAC/M4A, WAV, OGG/Opus, and FLAC on Windows and Android, with remote play/pause/seek/volume/progress controls; Chromecast CUE segments and MIDI/KAR remain unsupported
+- Chromecast audio discovery and playback for MP3, AAC/M4A, WAV, OGG/Opus, and FLAC on Windows and Android, with remote play/pause/seek/volume/progress controls and CUE-segment-aware queue advancement; MIDI/KAR casting remains unsupported
 - Local video queue for Windows and Android with play/pause, seeking, volume, speed, and fullscreen controls; supported video codecs depend on the platform's native decoder
 - Internet-radio station discovery through Radio Browser and SHOUTcast with normalized metadata, duplicate-stream merging, listener sorting, saved station favorites, and lazy stream resolution
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
@@ -48,8 +48,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Per-track playback-position resume shared by the Windows and Android UIs
 - Persistent queue reordering, per-track removal, and clear-queue controls
 - Native 10-band DSP equalizer for local files with presets and persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android; importing a user-owned SF2 SoundFont enables shared DSP processing for MIDI/KAR on both platforms
-- Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, and Matroska/WebM audio when the platform and primary DSP decoders cannot open the original file; decoded audio is temporary and uses the shared playback controls and DSP path
-- Cross-platform decoding, recursive library scanning, and Android folder import for AMR narrowband, AMR-WB, and Speex audio through the bundled LGPL audio decoder
+- Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, Matroska/WebM, AMR/AMR-WB, Speex, M4B, 3GP, Ogg/OGA/OGX, and MPEG Layer I/II audio when native playback cannot open the original; decoded audio is temporary and uses the shared playback controls and DSP path
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android
 - ReplayGain reads Vorbis comments, MP3 ID3 user-text, and APEv2 fields, preferring valid track gain before album gain
 - Spectrum visualization
@@ -70,7 +69,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
 - AirPlay and other non-DLNA/non-Chromecast casting protocols
-- Chromecast CUE segment transcoding and MIDI/KAR rendering
+- Chromecast MIDI/KAR rendering
 - Equalizer processing for native system-synth MIDI/KAR playback when no SF2 SoundFont is configured; imported-SoundFont rendering routes MIDI/KAR through the shared DSP path on Windows and Android
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.

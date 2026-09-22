@@ -55,7 +55,7 @@ int wrappedVideoIndex(int index, int length) {
 
 bool isVorbisAudioPath(String path) {
   final extension = path.split('.').last.toLowerCase();
-  return extension == 'ogg' || extension == 'opus';
+  return extension == 'ogg' || extension == 'oga' || extension == 'opus';
 }
 
 bool isAiffAudioPath(String path) {
@@ -90,6 +90,12 @@ bool isCrossPlatformFallbackAudioPath(String path) {
     'mka',
     'mkv',
     'webm',
+    'm4b',
+    '3gp',
+    'oga',
+    'ogx',
+    'mp1',
+    'mp2',
     'amr',
     'awb',
     'spx',
@@ -118,6 +124,12 @@ bool isSupportedLibraryAudioPath(String path) {
     '.amr',
     '.awb',
     '.spx',
+    '.m4b',
+    '.3gp',
+    '.oga',
+    '.ogx',
+    '.mp1',
+    '.mp2',
   };
   final lowerPath = path.toLowerCase();
   final dot = lowerPath.lastIndexOf('.');

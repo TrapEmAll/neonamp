@@ -1048,7 +1048,18 @@ FILE "disc image.flac" WAVE
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
     expect(isSupportedLibraryAudioPath('track.wma'), isTrue);
-    for (final extension in ['amr', 'awb', 'spx']) {
+    expect(isVorbisAudioPath('recording.OGA'), isTrue);
+    for (final extension in [
+      'amr',
+      'awb',
+      'spx',
+      'm4b',
+      '3gp',
+      'oga',
+      'ogx',
+      'mp1',
+      'mp2',
+    ]) {
       final path = 'recording.$extension';
       expect(isSupportedLibraryAudioPath(path), isTrue);
       expect(isCrossPlatformFallbackAudioPath(path), isTrue);
