@@ -14,6 +14,15 @@ void main() {
     expect(isSupportedLibraryAudioPath('C:/Music/readme.txt'), isFalse);
   });
 
+  test('MIDI and karaoke MIDI files are recognized for library scans', () {
+    for (final extension in midiFileExtensions) {
+      expect(isMidiFilePath('C:/Music/song.$extension'), isTrue);
+      expect(isSupportedLibraryAudioPath('C:/Music/song.$extension'), isTrue);
+    }
+    expect(isMidiFilePath('C:/Music/song.KAR'), isTrue);
+    expect(isMidiFilePath('C:/Music/song.mp3'), isFalse);
+  });
+
   test('module metadata remains distinct from ordinary file tags', () {
     final info = TrackerModuleInfo.fromMap({
       'title': 'Space Journey',

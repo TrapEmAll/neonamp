@@ -35,6 +35,11 @@ const trackerModuleExtensions = <String>{
 bool isTrackerModulePath(String path) =>
     trackerModuleExtensions.contains(path.split('.').last.toLowerCase());
 
+const midiFileExtensions = <String>{'mid', 'midi', 'kar'};
+
+bool isMidiFilePath(String path) =>
+    midiFileExtensions.contains(path.split('.').last.toLowerCase());
+
 class TrackerModuleInfo {
   const TrackerModuleInfo({required this.title, required this.format});
 

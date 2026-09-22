@@ -2,7 +2,9 @@
 
 #include <optional>
 #include <algorithm>
+#include <cwchar>
 #include <fstream>
+#include <iterator>
 #include <thread>
 #include <vector>
 #include <string>
@@ -11,6 +13,7 @@
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <mmsystem.h>
 #include <ntddcdrm.h>
 #include <winioctl.h>
 
@@ -23,6 +26,83 @@
 #include "../../native/tracker/include/tracker_decoder.h"
 
 namespace {
+
+bool g_midiOpen = false;
+std::string ToUtf8(const std::wstring& value);
+
+bool SendMidiCommand(const std::wstring& command,
+                     std::wstring* response,
+                     std::wstring* error) {
+  wchar_t output[256] = {};
+  const auto result = mciSendStringW(command.c_str(), output,
+                                     static_cast<UINT>(std::size(output)),
+                                     nullptr);
+  if (result == 0) {
+    if (response != nullptr) *response = output;
+    return true;
+  }
+  wchar_t message[256] = {};
+  if (!mciGetErrorStringW(result, message,
+                          static_cast<UINT>(std::size(message)))) {
+    *error = L"Windows could not perform the MIDI operation.";
+  } else {
+    *error = message;
+  }
+  return false;
+}
+
+std::wstring GetWideStringArgument(const flutter::EncodableMap& values,
+                                   const char* key) {
+  const auto found = values.find(flutter::EncodableValue(key));
+  if (found == values.end()) return {};
+  const auto* value = std::get_if<std::string>(&found->second);
+  if (value == nullptr || value->empty()) return {};
+  const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                       value->data(),
+                                       static_cast<int>(value->size()),
+                                       nullptr, 0);
+  if (size <= 0) return {};
+  std::wstring result(size, L'\0');
+  MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value->data(),
+                      static_cast<int>(value->size()), result.data(), size);
+  return result;
+}
+
+double GetDoubleArgument(const flutter::EncodableMap& values,
+                         const char* key,
+                         double fallback) {
+  const auto found = values.find(flutter::EncodableValue(key));
+  if (found == values.end()) return fallback;
+  if (const auto* value = std::get_if<double>(&found->second)) return *value;
+  if (const auto* value = std::get_if<int32_t>(&found->second)) {
+    return static_cast<double>(*value);
+  }
+  if (const auto* value = std::get_if<int64_t>(&found->second)) {
+    return static_cast<double>(*value);
+  }
+  return fallback;
+}
+
+bool GetMidiState(flutter::EncodableMap* state, std::wstring* error) {
+  std::wstring mode;
+  std::wstring position;
+  std::wstring length;
+  if (!g_midiOpen ||
+      !SendMidiCommand(L"status neonamp_midi mode", &mode, error) ||
+      !SendMidiCommand(L"status neonamp_midi position", &position, error) ||
+      !SendMidiCommand(L"status neonamp_midi length", &length, error)) {
+    return false;
+  }
+  state->emplace(flutter::EncodableValue("mode"),
+                 flutter::EncodableValue(ToUtf8(mode)));
+  state->emplace(flutter::EncodableValue("positionMs"),
+                 flutter::EncodableValue(static_cast<int64_t>(
+                     std::wcstoll(position.c_str(), nullptr, 10))));
+  state->emplace(flutter::EncodableValue("durationMs"),
+                 flutter::EncodableValue(static_cast<int64_t>(
+                     std::wcstoll(length.c_str(), nullptr, 10))));
+  return true;
+}
 
 bool TranscodeToM4a(const std::wstring& input_path,
                     const std::wstring& output_path) {
@@ -402,6 +482,133 @@ bool FlutterWindow::OnCreate() {
           return;
         }
         result->NotImplemented();
+      });
+  midi_channel_ = std::make_unique<
+      flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "neonamp/midi",
+      &flutter::StandardMethodCodec::GetInstance());
+  midi_channel_->SetMethodCallHandler(
+      [](const auto& call, auto result) {
+        const auto* values =
+            std::get_if<flutter::EncodableMap>(call.arguments());
+        const flutter::EncodableMap empty;
+        const auto& args = values == nullptr ? empty : *values;
+        std::wstring error;
+        auto close_player = [&]() {
+          if (!g_midiOpen) return;
+          SendMidiCommand(L"stop neonamp_midi", nullptr, &error);
+          SendMidiCommand(L"close neonamp_midi", nullptr, &error);
+          g_midiOpen = false;
+        };
+        if (call.method_name() == "openAndPlay") {
+          close_player();
+          const auto path = GetWideStringArgument(args, "path");
+          if (path.empty()) {
+            result->Error("invalid_arguments", "A MIDI file path is required.");
+            return;
+          }
+          if (!SendMidiCommand(L"open \"" + path +
+                                   L"\" type sequencer alias neonamp_midi",
+                               nullptr, &error)) {
+            result->Error("midi_open_failed", ToUtf8(error));
+            return;
+          }
+          g_midiOpen = true;
+          if (!SendMidiCommand(L"set neonamp_midi time format milliseconds",
+                               nullptr, &error)) {
+            close_player();
+            result->Error("midi_setup_failed", ToUtf8(error));
+            return;
+          }
+          const auto speed = std::clamp(GetDoubleArgument(args, "speed", 1.0),
+                                        0.5, 2.0);
+          const auto speed_value = static_cast<long long>(speed * 1000.0);
+          if (!SendMidiCommand(L"set neonamp_midi speed " +
+                                   std::to_wstring(speed_value),
+                               nullptr, &error)) {
+            close_player();
+            result->Error("midi_speed_failed", ToUtf8(error));
+            return;
+          }
+          if (!SendMidiCommand(L"play neonamp_midi", nullptr, &error)) {
+            close_player();
+            result->Error("midi_play_failed", ToUtf8(error));
+            return;
+          }
+          flutter::EncodableMap state;
+          if (!GetMidiState(&state, &error)) {
+            close_player();
+            result->Error("midi_state_failed", ToUtf8(error));
+            return;
+          }
+          flutter::EncodableMap response;
+          response[flutter::EncodableValue("durationMs")] =
+              state.at(flutter::EncodableValue("durationMs"));
+          result->Success(flutter::EncodableValue(response));
+          return;
+        }
+        if (call.method_name() == "close" || call.method_name() == "stop") {
+          close_player();
+          result->Success();
+          return;
+        }
+        if (call.method_name() == "getState") {
+          flutter::EncodableMap state;
+          if (!GetMidiState(&state, &error)) {
+            result->Error("midi_state_failed", ToUtf8(error));
+            return;
+          }
+          result->Success(flutter::EncodableValue(state));
+          return;
+        }
+        if (!g_midiOpen) {
+          result->Error("midi_not_open", "No MIDI file is currently open.");
+          return;
+        }
+        if (call.method_name() == "pause") {
+          if (!SendMidiCommand(L"pause neonamp_midi", nullptr, &error)) {
+            result->Error("midi_pause_failed", ToUtf8(error));
+            return;
+          }
+          result->Success();
+        } else if (call.method_name() == "resume") {
+          if (!SendMidiCommand(L"resume neonamp_midi", nullptr, &error)) {
+            result->Error("midi_resume_failed", ToUtf8(error));
+            return;
+          }
+          result->Success();
+        } else if (call.method_name() == "seek") {
+          const auto position = static_cast<long long>(
+              GetDoubleArgument(args, "positionMs", 0));
+          std::wstring mode;
+          SendMidiCommand(L"status neonamp_midi mode", &mode, &error);
+          if (!SendMidiCommand(L"seek neonamp_midi to " +
+                                   std::to_wstring(std::max(0LL, position)),
+                               nullptr, &error)) {
+            result->Error("midi_seek_failed", ToUtf8(error));
+            return;
+          }
+          if (mode == L"playing") {
+            SendMidiCommand(L"play neonamp_midi", nullptr, &error);
+          } else if (mode == L"paused") {
+            SendMidiCommand(L"play neonamp_midi", nullptr, &error);
+            SendMidiCommand(L"pause neonamp_midi", nullptr, &error);
+          }
+          result->Success();
+        } else if (call.method_name() == "setPlaybackSpeed") {
+          const auto speed = std::clamp(
+              GetDoubleArgument(args, "speed", 1.0), 0.5, 2.0);
+          const auto speed_value = static_cast<long long>(speed * 1000.0);
+          if (!SendMidiCommand(L"set neonamp_midi speed " +
+                                   std::to_wstring(speed_value),
+                               nullptr, &error)) {
+            result->Error("midi_speed_failed", ToUtf8(error));
+            return;
+          }
+          result->Success();
+        } else {
+          result->NotImplemented();
+        }
       });
   InitializeSystemMediaControls();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
