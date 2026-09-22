@@ -34,6 +34,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Persistent queue reordering, per-track removal, and clear-queue controls
 - Native 10-band DSP equalizer for local files with presets and persisted settings
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android
+- ReplayGain reads Vorbis comments, MP3 ID3 user-text, and APEv2 fields, preferring valid track gain before album gain
 - Spectrum visualization
 - Built-in Neon, Aurora, Amber, and Classic skins with persisted selection
 - User-importable JSON skin packages with persisted selection on Windows and Android

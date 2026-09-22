@@ -47,6 +47,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Persistent per-track playback positions that resume after restarting the app.
 - Native 10-band DSP equalizer for local files with presets and persisted settings.
 - Optional ReplayGain normalization from embedded track or album gain tags, persisted across Windows and Android.
+- ReplayGain reads Vorbis comments as well as MP3 ID3 user-text and APEv2 gain fields.
 - Responsive layout for desktop and mobile.
 - Animated spectrum visualizer.
 - Desktop Visuals and Settings actions are available on Windows and Android.

@@ -426,6 +426,25 @@ void main() {
     );
   });
 
+  test('ReplayGain uses track or album gain from ID3 and APE tags', () {
+    final vorbis = VorbisMetadata()
+      ..replayGainTrackGain.add('-7.0 dB')
+      ..replayGainAlbumGain.add('-8.0 dB');
+    final id3 = Mp3Metadata()
+      ..customMetadata['replaygain_track_gain'] = '-6.25 dB'
+      ..customMetadata['REPLAYGAIN_ALBUM_GAIN'] = '-9.0 dB';
+    final ape = ApeMetadata()..unknowns['REPLAYGAIN_ALBUM_GAIN'] = '-4.5 dB';
+    final brokenTrackGain = Mp3Metadata()
+      ..customMetadata['REPLAYGAIN_TRACK_GAIN'] = 'invalid'
+      ..customMetadata['REPLAYGAIN_ALBUM_GAIN'] = '-3.0 dB';
+
+    expect(replayGainDbFromMetadata(vorbis), -7.0);
+    expect(replayGainDbFromMetadata(id3), -6.25);
+    expect(replayGainDbFromMetadata(ape), -4.5);
+    expect(replayGainDbFromMetadata(brokenTrackGain), -3.0);
+    expect(replayGainDbFromMetadata(ApeMetadata()), isNull);
+  });
+
   test('recognizes OGG and Opus as writable Vorbis containers', () {
     expect(isVorbisAudioPath('music/track.ogg'), isTrue);
     expect(isVorbisAudioPath('music/track.OPUS'), isTrue);
