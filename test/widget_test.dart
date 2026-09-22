@@ -172,6 +172,27 @@ List<Uint8List> _readOggPackets(Uint8List source) {
 }
 
 void main() {
+  test('shuffle advances to a different queued track', () {
+    for (var selected = 0; selected < 5; selected++) {
+      final results = <int>{
+        for (var offset = 0; offset < 4; offset++)
+          nextQueueIndex(
+            selected: selected,
+            length: 5,
+            shuffle: true,
+            shuffledOffset: offset,
+          ),
+      };
+      expect(results, hasLength(4));
+      expect(results, isNot(contains(selected)));
+    }
+  });
+
+  test('sequential and single-track advance wrap correctly', () {
+    expect(nextQueueIndex(selected: 2, length: 3, shuffle: false), 0);
+    expect(nextQueueIndex(selected: 0, length: 1, shuffle: true), 0);
+  });
+
   test('normalizes SHOUTcast station records for the shared radio UI', () {
     final station = normalizeShoutcastStation({
       'ID': 42,
