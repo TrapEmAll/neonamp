@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
 import 'package:neonamp/asf_metadata.dart';
+import 'package:neonamp/podcast_opml.dart';
 
 Future<void> _writeOggFixture(File file, {required bool opus}) async {
   final packets = <List<int>>[
@@ -413,6 +414,22 @@ List<Uint8List> _readOggPackets(Uint8List source) {
 }
 
 void main() {
+  test('OPML podcast subscriptions import and export round-trip', () {
+    const source = '''<?xml version="1.0"?>
+<opml version="2.0"><body>
+  <outline text="Tech &amp; Talk" xmlUrl="https://example.com/feed?a=1&amp;b=2" />
+  <outline text='Other' xmlUrl='http://example.org/rss' />
+  <outline text="Duplicate" xmlUrl="https://example.com/feed?a=1&amp;b=2" />
+  <outline text="Invalid" xmlUrl="file:///tmp/feed.xml" />
+</body></opml>''';
+    final feeds = podcastFeedsFromOpml(source);
+    expect(feeds, [
+      'https://example.com/feed?a=1&b=2',
+      'http://example.org/rss',
+    ]);
+    expect(podcastFeedsFromOpml(podcastFeedsToOpml(feeds)), feeds);
+  });
+
   test('shuffle advances to a different queued track', () {
     for (var selected = 0; selected < 5; selected++) {
       final results = <int>{

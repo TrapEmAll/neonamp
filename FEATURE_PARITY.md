@@ -29,6 +29,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Local video queue for Windows and Android with play/pause, seeking, volume, speed, and fullscreen controls; supported video codecs depend on the platform's native decoder
 - Internet-radio station discovery through Radio Browser and SHOUTcast with normalized metadata, duplicate-stream merging, listener sorting, saved station favorites, and lazy stream resolution
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
+- Podcast subscriptions import/export through interoperable OPML files on Windows and Android
 - Recursive folder scanning and M3U/M3U8 playlist import
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume
 - Adjustable 0.5×–2× playback speed with persisted settings on Windows and Android
