@@ -2059,6 +2059,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   double _playbackSpeed = 1.0;
   Duration _trackStart = Duration.zero;
   Duration? _trackEnd;
+  Duration _lastPosition = Duration.zero;
 
   void _bindPlayerStreams() {
     _positionSubscription = player.onPositionChanged.listen(
@@ -2160,6 +2161,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     Duration? duration,
     required PlayerState state,
   }) {
+    if (position != null) _lastPosition = position;
     final current = mediaItem.value;
     if (current != null && duration != null) {
       mediaItem.add(current.copyWith(duration: duration));
@@ -2191,6 +2193,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   void _broadcast({Duration? position, PlayerState? state}) {
+    if (position != null) _lastPosition = position;
     final currentState = state ?? player.state;
     playbackState.add(
       PlaybackState(
@@ -2212,7 +2215,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             ? AudioProcessingState.completed
             : AudioProcessingState.ready,
         playing: currentState == PlayerState.playing,
-        updatePosition: position ?? Duration.zero,
+        updatePosition: _lastPosition,
         speed: _playbackSpeed,
       ),
     );
