@@ -220,6 +220,57 @@ void main() {
     },
   );
 
+  test(
+    'WAV ID3 metadata and lyrics round-trip without changing audio chunks',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('neonamp-wav-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/roundtrip.wav');
+      final chunks = <int>[
+        ...ascii.encode('fmt '), 16, 0, 0, 0,
+        1, 0, 1, 0, // PCM, mono
+        0x44, 0xac, 0, 0, // 44100 Hz
+        0x88, 0x58, 1, 0, // byte rate
+        2, 0, 16, 0, // block align and bits/sample
+        ...ascii.encode('data'), 4, 0, 0, 0, 1, 2, 3, 4,
+      ];
+      await file.writeAsBytes([
+        ...ascii.encode('RIFF'),
+        0,
+        0,
+        0,
+        0,
+        ...ascii.encode('WAVE'),
+        ...chunks,
+      ]);
+      final values = [
+        'Title',
+        'Artist',
+        'Album',
+        'Rock',
+        '',
+        '2026',
+        '2',
+        '9',
+        '1',
+        '2',
+        'Lyrics',
+      ];
+      await writeWavTags(file, values);
+      final art = Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]);
+      await writeWavTags(file, values, artwork: art);
+      final renamed = [...values]..[0] = 'Renamed';
+      await writeTrackMetadata(file, renamed);
+
+      final updated = await file.readAsBytes();
+      expect(updated.sublist(12, 12 + chunks.length), chunks);
+      expect(readMetadata(file).title, 'Renamed');
+      expect(readMetadata(file).artist, 'Artist');
+      expect(readWavId3Lyrics(updated), 'Lyrics');
+      expect(readAiffId3Picture(updated)?.$1, art);
+    },
+  );
+
   test('folder scans recognize the metadata reader audio formats', () {
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
