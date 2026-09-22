@@ -10,7 +10,6 @@ import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:phonic/phonic.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dsp_local_player.dart';
@@ -475,55 +474,333 @@ double playbackVolume({
   return (volume * multiplier).clamp(0.0, 1.0).toDouble();
 }
 
-Future<void> writeVorbisTags(File file, List<String> values) async {
-  final audioFile = await Phonic.fromFileAsync(file.path);
-  try {
-    void setText(
-      TagKey key,
-      MetadataTag Function(String) create,
-      String value,
-    ) {
-      if (value.isEmpty) {
-        audioFile.removeTag(key);
-      } else {
-        audioFile.setTag(create(value));
+class _OggPage {
+  _OggPage(this.flags, this.granule, this.serial, this.sequence);
+
+  final int flags;
+  final int granule;
+  final int serial;
+  final int sequence;
+  final packets = <List<int>>[];
+}
+
+List<int> _vorbisPictureComment(Uint8List image, String mimeType) {
+  final mime = ascii.encode(mimeType);
+  final description = ascii.encode('Album cover');
+  final fields = <int>[
+    3, 0, 0, 0, // front cover picture type
+    ..._bigEndian32(mime.length), ...mime,
+    ..._bigEndian32(description.length), ...description,
+    ...List<int>.filled(16, 0), // dimensions, color depth, indexed colors
+    ..._bigEndian32(image.length), ...image,
+  ];
+  return ascii.encode(base64.encode(fields));
+}
+
+List<int> _oggPageBytes({
+  required int flags,
+  required int granule,
+  required int serial,
+  required int sequence,
+  required List<int> lacing,
+  required List<int> body,
+}) {
+  final header = <int>[
+    ...ascii.encode('OggS'),
+    0,
+    flags,
+    ...List<int>.generate(8, (i) => (granule >> (i * 8)) & 0xff),
+    ..._littleEndian32(serial),
+    ..._littleEndian32(sequence),
+    0,
+    0,
+    0,
+    0,
+    lacing.length,
+    ...lacing,
+  ];
+  final page = <int>[...header, ...body];
+  var checksum = 0;
+  for (final byte in page) {
+    checksum ^= byte << 24;
+    for (var bit = 0; bit < 8; bit++) {
+      checksum = (checksum & 0x80000000) != 0
+          ? ((checksum << 1) ^ 0x04c11db7) & 0xffffffff
+          : (checksum << 1) & 0xffffffff;
+    }
+  }
+  page.setRange(22, 26, _littleEndian32(checksum));
+  return page;
+}
+
+Uint8List _rewriteOggComments(
+  Uint8List source,
+  List<String> values, {
+  Uint8List? artwork,
+  String artworkMimeType = 'image/jpeg',
+}) {
+  final pages = <_OggPage>[];
+  final pending = <int>[];
+  var offset = 0;
+  while (offset < source.length) {
+    if (offset + 27 > source.length ||
+        ascii.decode(source.sublist(offset, offset + 4)) != 'OggS' ||
+        source[offset + 4] != 0) {
+      throw const FormatException('Malformed Ogg page header');
+    }
+    final segmentCount = source[offset + 26];
+    final headerEnd = offset + 27 + segmentCount;
+    if (headerEnd > source.length) {
+      throw const FormatException('Truncated Ogg lacing table');
+    }
+    final lacing = source.sublist(offset + 27, headerEnd);
+    final bodyLength = lacing.fold<int>(0, (sum, size) => sum + size);
+    final pageEnd = headerEnd + bodyLength;
+    if (pageEnd > source.length) {
+      throw const FormatException('Truncated Ogg page body');
+    }
+    final view = ByteData.sublistView(source, offset);
+    final page = _OggPage(
+      source[offset + 5],
+      view.getUint64(6, Endian.little),
+      view.getUint32(14, Endian.little),
+      view.getUint32(18, Endian.little),
+    );
+    if (pages.isNotEmpty && page.serial != pages.first.serial) {
+      throw const FormatException('Multiplexed Ogg streams are not supported');
+    }
+    var bodyOffset = headerEnd;
+    for (final size in lacing) {
+      pending.addAll(source.sublist(bodyOffset, bodyOffset + size));
+      bodyOffset += size;
+      if (size < 255) {
+        page.packets.add(List<int>.from(pending));
+        pending.clear();
       }
     }
+    pages.add(page);
+    offset = pageEnd;
+  }
+  if (pending.isNotEmpty || pages.isEmpty) {
+    throw const FormatException('Incomplete Ogg packet');
+  }
 
-    setText(TagKey.title, TitleTag.new, values[0]);
-    setText(TagKey.artist, ArtistTag.new, values[1]);
-    setText(TagKey.album, AlbumTag.new, values[2]);
-    if (values[3].isEmpty) {
-      audioFile.removeTag(TagKey.genre);
-    } else {
-      audioFile.setTag(GenreTag([values[3]]));
+  final allPackets = <(int, List<int>)>[];
+  for (var pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+    for (final packet in pages[pageIndex].packets) {
+      allPackets.add((pageIndex, packet));
     }
+  }
+  if (allPackets.length < 2) {
+    throw const FormatException('Ogg comment packet is missing');
+  }
+  final identification = allPackets.first.$2;
+  final oldComments = allPackets[1].$2;
+  final isOpus =
+      ascii.decode(oldComments.take(8).toList(), allowInvalid: true) ==
+      'OpusTags';
+  final prefixLength = isOpus ? 8 : 7;
+  final validIdentification = isOpus
+      ? ascii.decode(identification.take(8).toList(), allowInvalid: true) ==
+            'OpusHead'
+      : identification.length >= 7 &&
+            ascii.decode(identification.sublist(0, 7), allowInvalid: true) ==
+                '\x01vorbis';
+  if (!validIdentification ||
+      oldComments.length < prefixLength ||
+      (!isOpus &&
+          ascii.decode(oldComments.sublist(0, 7), allowInvalid: true) !=
+              '\x03vorbis')) {
+    throw const FormatException('Unsupported Ogg comment packet');
+  }
+  var cursor = prefixLength;
+  int takeUint32() {
+    if (cursor + 4 > oldComments.length) {
+      throw const FormatException('Malformed Ogg comments');
+    }
+    final value = ByteData.sublistView(
+      Uint8List.fromList(oldComments),
+      cursor,
+      cursor + 4,
+    ).getUint32(0, Endian.little);
+    cursor += 4;
+    return value;
+  }
 
-    final year = int.tryParse(values[5]);
-    if (year == null) {
-      audioFile.removeTag(TagKey.year);
-    } else {
-      audioFile.setTag(YearTag(year));
+  final vendorLength = takeUint32();
+  if (cursor + vendorLength > oldComments.length) {
+    throw const FormatException('Malformed Ogg vendor string');
+  }
+  final vendor = oldComments.sublist(cursor, cursor + vendorLength);
+  cursor += vendorLength;
+  final commentCount = takeUint32();
+  final comments = <String>[];
+  for (var i = 0; i < commentCount; i++) {
+    final length = takeUint32();
+    if (cursor + length > oldComments.length) {
+      throw const FormatException('Malformed Ogg comment');
     }
-    final trackNumber = int.tryParse(values[6]);
-    if (trackNumber == null) {
-      audioFile.removeTag(TagKey.trackNumber);
-    } else {
-      audioFile.setTag(TrackNumberTag(trackNumber));
-    }
-    final discNumber = int.tryParse(values[8]);
-    if (discNumber == null) {
-      audioFile.removeTag(TagKey.discNumber);
-    } else {
-      audioFile.setTag(DiscNumberTag(discNumber));
-    }
-    setText(TagKey.lyrics, LyricsTag.new, values[10].trim());
+    comments.add(
+      utf8.decode(
+        oldComments.sublist(cursor, cursor + length),
+        allowMalformed: true,
+      ),
+    );
+    cursor += length;
+  }
+  const managed = {
+    'TITLE',
+    'ARTIST',
+    'ALBUM',
+    'GENRE',
+    'DATE',
+    'YEAR',
+    'TRACKNUMBER',
+    'TRACKTOTAL',
+    'TOTALTRACKS',
+    'DISCNUMBER',
+    'DISCTOTAL',
+    'TOTALDISCS',
+    'LYRICS',
+  };
+  comments.removeWhere((comment) {
+    final separator = comment.indexOf('=');
+    return separator > 0 &&
+        managed.contains(comment.substring(0, separator).toUpperCase());
+  });
+  if (artwork != null) {
+    comments.removeWhere((comment) {
+      final separator = comment.indexOf('=');
+      return separator > 0 &&
+          const {
+            'METADATA_BLOCK_PICTURE',
+            'COVERART',
+            'COVERARTMIME',
+          }.contains(comment.substring(0, separator).toUpperCase());
+    });
+  }
+  void add(String key, String value) {
+    if (value.trim().isNotEmpty) comments.add('$key=$value');
+  }
 
-    if (audioFile.isDirty) {
-      await file.writeAsBytes(await audioFile.encode());
+  add('TITLE', values[0]);
+  add('ARTIST', values[1]);
+  add('ALBUM', values[2]);
+  add('GENRE', values[3]);
+  add('DATE', values[5]);
+  add('TRACKNUMBER', values[6]);
+  add('TRACKTOTAL', values[7]);
+  add('DISCNUMBER', values[8]);
+  add('DISCTOTAL', values[9]);
+  add('LYRICS', values[10]);
+  if (artwork != null) {
+    comments.add(
+      'METADATA_BLOCK_PICTURE=${ascii.decode(_vorbisPictureComment(artwork, artworkMimeType))}',
+    );
+  }
+  final replacement = <int>[
+    ...oldComments.sublist(0, prefixLength),
+    ..._littleEndian32(vendor.length),
+    ...vendor,
+    ..._littleEndian32(comments.length),
+  ];
+  for (final comment in comments) {
+    final bytes = utf8.encode(comment);
+    replacement.addAll([..._littleEndian32(bytes.length), ...bytes]);
+  }
+  if (!isOpus) replacement.add(1);
+  allPackets[1] = (allPackets[1].$1, replacement);
+
+  final groupedPackets = List.generate(pages.length, (_) => <List<int>>[]);
+  for (final (pageIndex, packet) in allPackets) {
+    groupedPackets[pageIndex].add(packet);
+  }
+  final output = <int>[];
+  var outputSequence = pages.first.sequence;
+  for (var pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+    final group = groupedPackets[pageIndex];
+    if (group.isEmpty) continue;
+    final segments = <(int, List<int>, bool)>[];
+    for (final packet in group) {
+      var position = 0;
+      while (packet.length - position >= 255) {
+        segments.add((
+          255,
+          packet.sublist(position, position + 255),
+          position > 0,
+        ));
+        position += 255;
+      }
+      segments.add((
+        packet.length - position,
+        packet.sublist(position),
+        position > 0,
+      ));
     }
+    var segmentIndex = 0;
+    var first = true;
+    while (segmentIndex < segments.length) {
+      final endSegment = math.min(segmentIndex + 255, segments.length);
+      final pageSegments = segments.sublist(segmentIndex, endSegment);
+      final lacing = pageSegments.map((segment) => segment.$1).toList();
+      final body = <int>[];
+      for (final segment in pageSegments) {
+        body.addAll(segment.$2);
+      }
+      final pageIsLast = endSegment == segments.length;
+      var flags = first && pageIndex == 0 ? 2 : 0;
+      if (pageSegments.first.$3) flags |= 1;
+      if (pageIsLast && pages[pageIndex].flags & 4 != 0) flags |= 4;
+      final granule = pageIsLast
+          ? pages[pageIndex].granule
+          : 0xffffffffffffffff;
+      output.addAll(
+        _oggPageBytes(
+          flags: flags,
+          granule: granule,
+          serial: pages[pageIndex].serial,
+          sequence: outputSequence++,
+          lacing: lacing,
+          body: body,
+        ),
+      );
+      segmentIndex = endSegment;
+      first = false;
+    }
+  }
+  return Uint8List.fromList(output);
+}
+
+Future<void> writeVorbisTags(
+  File file,
+  List<String> values, {
+  Uint8List? artwork,
+  String artworkMimeType = 'image/jpeg',
+}) async {
+  final source = await file.readAsBytes();
+  final output = _rewriteOggComments(
+    source,
+    values,
+    artwork: artwork,
+    artworkMimeType: artworkMimeType,
+  );
+  final suffix = '.neonamp-${DateTime.now().microsecondsSinceEpoch}';
+  final temporary = File('${file.path}$suffix.tmp');
+  final backup = File('${file.path}$suffix.bak');
+  var movedOriginal = false;
+  try {
+    await temporary.writeAsBytes(output, flush: true);
+    await file.rename(backup.path);
+    movedOriginal = true;
+    await temporary.rename(file.path);
+    await backup.delete();
+  } catch (_) {
+    if (movedOriginal && !await file.exists() && await backup.exists()) {
+      await backup.rename(file.path);
+    }
+    rethrow;
   } finally {
-    audioFile.dispose();
+    if (await temporary.exists()) await temporary.delete();
   }
 }
 
@@ -3423,6 +3700,25 @@ class _PlayerPageState extends State<PlayerPage>
             ? writeWavTags
             : writeAiffTags;
         await writer(
+          File(track.path),
+          [
+            track.name,
+            track.artist,
+            track.album,
+            track.genre,
+            '',
+            track.year?.toString() ?? '',
+            track.trackNumber?.toString() ?? '',
+            track.trackTotal?.toString() ?? '',
+            track.discNumber?.toString() ?? '',
+            track.discTotal?.toString() ?? '',
+            track.lyrics ?? '',
+          ],
+          artwork: bytes,
+          artworkMimeType: mimeType,
+        );
+      } else if (isVorbisAudioPath(track.path)) {
+        await writeVorbisTags(
           File(track.path),
           [
             track.name,
