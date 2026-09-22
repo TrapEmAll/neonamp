@@ -8,6 +8,126 @@ import 'package:flutter/material.dart';
 import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
 
+Future<void> _writeOggFixture(File file, {required bool opus}) async {
+  final packets = <List<int>>[
+    opus
+        ? [...ascii.encode('OpusHead'), 1, 1, 0, 0, 0x80, 0xbb, 0, 0, 0, 0, 0]
+        : [
+            1,
+            ...ascii.encode('vorbis'),
+            0,
+            0,
+            0,
+            0,
+            1,
+            0x80,
+            0xbb,
+            0,
+            0,
+            ...List<int>.filled(12, 0),
+            0xb8,
+            1,
+          ],
+    opus
+        ? [
+            ...ascii.encode('OpusTags'),
+            7,
+            0,
+            0,
+            0,
+            ...ascii.encode('NeonAmp'),
+            0,
+            0,
+            0,
+            0,
+          ]
+        : [
+            3,
+            ...ascii.encode('vorbis'),
+            7,
+            0,
+            0,
+            0,
+            ...ascii.encode('NeonAmp'),
+            0,
+            0,
+            0,
+            0,
+            1,
+          ],
+    if (!opus) [5, ...ascii.encode('vorbis'), 0],
+    opus ? [0xf8, 0xff, 0xfe] : [0],
+  ];
+  final pages = <int>[];
+  for (var i = 0; i < packets.length; i++) {
+    final packet = packets[i];
+    final page = <int>[
+      ...ascii.encode('OggS'),
+      0,
+      i == 0
+          ? 2
+          : i == packets.length - 1
+          ? 4
+          : 0,
+      ...List<int>.filled(8, 0),
+      1,
+      0,
+      0,
+      0,
+      i,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      packet.length,
+      ...packet,
+    ];
+    var crc = 0;
+    for (final byte in page) {
+      crc ^= byte << 24;
+      for (var bit = 0; bit < 8; bit++) {
+        crc = (crc & 0x80000000) != 0
+            ? ((crc << 1) ^ 0x04c11db7) & 0xffffffff
+            : (crc << 1) & 0xffffffff;
+      }
+    }
+    page.setRange(22, 26, [
+      crc & 0xff,
+      (crc >> 8) & 0xff,
+      (crc >> 16) & 0xff,
+      (crc >> 24) & 0xff,
+    ]);
+    pages.addAll(page);
+  }
+  await file.writeAsBytes(pages);
+}
+
+List<Uint8List> _readOggPackets(Uint8List source) {
+  final packets = <Uint8List>[];
+  final pending = <int>[];
+  var offset = 0;
+  while (offset + 27 <= source.length) {
+    final segments = source[offset + 26];
+    final headerEnd = offset + 27 + segments;
+    final lacing = source.sublist(offset + 27, headerEnd);
+    var bodyOffset = headerEnd;
+    for (final size in lacing) {
+      pending.addAll(source.sublist(bodyOffset, bodyOffset + size));
+      bodyOffset += size;
+      if (size < 255) {
+        packets.add(Uint8List.fromList(pending));
+        pending.clear();
+      }
+    }
+    offset = bodyOffset;
+  }
+  return packets;
+}
+
 void main() {
   test('normalizes SHOUTcast station records for the shared radio UI', () {
     final station = normalizeShoutcastStation({
@@ -139,7 +259,13 @@ void main() {
   });
 
   test('AIFF ID3 tags embed cover artwork in an APIC frame', () {
-    final artwork = Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]);
+    final artwork = Uint8List.fromList([
+      0xff,
+      0xd8,
+      ...List<int>.generate(512, (index) => index & 0xff),
+      0xff,
+      0xd9,
+    ]);
     final tag = buildAiffId3Tag(List.filled(11, ''), artwork: artwork);
     expect(String.fromCharCodes(tag), contains('APIC'));
     expect(tag, containsAll(artwork));
@@ -295,6 +421,91 @@ void main() {
     expect(isVorbisAudioPath('music/track.OPUS'), isTrue);
     expect(isVorbisAudioPath('music/track.flac'), isFalse);
   });
+
+  test('OGG artwork edits round-trip and survive later tag edits', () async {
+    final directory = await Directory.systemTemp.createTemp('neonamp-ogg-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/fixture.ogg');
+    await _writeOggFixture(file, opus: false);
+    const values = [
+      'Title',
+      'Artist',
+      'Album',
+      'Electronic',
+      '',
+      '2026',
+      '3',
+      '12',
+      '1',
+      '2',
+      'Lyrics',
+    ];
+    final artwork = Uint8List.fromList([
+      0xff,
+      0xd8,
+      ...List<int>.generate(70000, (index) => index & 0xff),
+      0xff,
+      0xd9,
+    ]);
+    await writeVorbisTags(file, values, artwork: artwork);
+    await writeTrackMetadata(file, [...values]..[0] = 'Renamed');
+
+    final metadata = readMetadata(file, getImage: true);
+    expect(metadata.title, 'Renamed');
+    expect(metadata.lyrics, 'Lyrics');
+    expect(metadata.trackNumber, 3);
+    expect(metadata.trackTotal, 12);
+    expect(metadata.discNumber, 1);
+    expect(metadata.totalDisc, 2);
+    expect(metadata.pictures.single.bytes, artwork);
+  });
+
+  test(
+    'Opus artwork edits round-trip and preserve lyrics and audio packets',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('neonamp-opus-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/fixture.opus');
+      await _writeOggFixture(file, opus: true);
+      final originalAudioPacket = _readOggPackets(await file.readAsBytes())
+          .last;
+      const values = [
+        'Title',
+        'Artist',
+        'Album',
+        'Electronic',
+        '',
+        '2026',
+        '3',
+        '12',
+        '1',
+        '2',
+        'Lyrics',
+      ];
+      final artwork = Uint8List.fromList([
+        0xff,
+        0xd8,
+        ...List<int>.generate(70000, (index) => index & 0xff),
+        0xff,
+        0xd9,
+      ]);
+      await writeVorbisTags(file, values, artwork: artwork);
+      await writeTrackMetadata(file, [...values]..[0] = 'Renamed');
+
+      final metadata = readMetadata(file, getImage: true);
+      expect(metadata.title, 'Renamed');
+      expect(metadata.lyrics, 'Lyrics');
+      expect(metadata.trackNumber, 3);
+      expect(metadata.trackTotal, 12);
+      expect(metadata.discNumber, 1);
+      expect(metadata.totalDisc, 2);
+      expect(metadata.pictures.single.bytes, artwork);
+      expect(
+        _readOggPackets(await file.readAsBytes()).last,
+        originalAudioPacket,
+      );
+    },
+  );
 
   test('smart playlist rules round-trip through JSON', () {
     const original = SmartPlaylist(
