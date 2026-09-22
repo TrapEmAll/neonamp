@@ -30,6 +30,12 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
+/.gradle-user-home/
+/.gradle-isolated/
+/.gradle-x64/
+/.android-user/
+/.avd/
+/.appdata/
 /build/
 /coverage/
 

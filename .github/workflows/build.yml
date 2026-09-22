@@ -3,6 +3,7 @@ name: NeonAmp build
 on:
   push:
     branches: [main, 'feat/**', 'fix/**']
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -40,6 +41,14 @@ jobs:
         run: flutter pub get
       - name: Build Windows release
         run: flutter build windows --release
+      - name: Package Windows release
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath NeonAmp-windows-x64.zip
+      - name: Upload Windows release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeonAmp-windows-x64
+          path: NeonAmp-windows-x64.zip
       - name: Configure native tracker tests
         run: cmake -S windows -B build/windows/x64 -DNEONAMP_BUILD_TRACKER_TESTS=ON
       - name: Build native tracker tests
@@ -76,3 +85,32 @@ jobs:
             fi
           done
           exit 1
+      - name: Upload Android release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeonAmp-android
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [analyze-and-test, build-windows, build-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: NeonAmp-windows-x64
+      - name: Download Android package
+        uses: actions/download-artifact@v4
+        with:
+          name: NeonAmp-android
+          path: android
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            NeonAmp-windows-x64.zip
+            android/app-release.apk

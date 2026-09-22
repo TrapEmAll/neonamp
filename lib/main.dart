@@ -33,6 +33,7 @@ import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
+import 'media_artwork_cache.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -2091,13 +2092,14 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     final duration = track.cueEnd == null
         ? null
         : track.cueEnd! - track.cueStart;
+    final artworkUri = await _artworkUri(track);
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
         title: track.name,
         artist: track.artist,
         album: track.album,
-        artUri: null,
+        artUri: artworkUri,
         duration: duration,
       ),
     );
@@ -2115,18 +2117,31 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _broadcast();
   }
 
-  void publishTrack(Track track) {
+  Future<void> publishTrack(Track track) async {
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
+    final artworkUri = await _artworkUri(track);
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
         title: track.name,
         artist: track.artist,
         album: track.album,
-        artUri: null,
+        artUri: artworkUri,
       ),
     );
+  }
+
+  Future<Uri?> _artworkUri(Track track) async {
+    try {
+      return await cacheMediaArtwork(
+        track.artwork,
+        directory: await getTemporaryDirectory(),
+      );
+    } on Object catch (error) {
+      debugPrint('Could not cache notification artwork: $error');
+      return null;
+    }
   }
 
   Duration _relativePosition(Duration source) {
@@ -2366,6 +2381,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _librarySortDescending = false;
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
+  final Map<String, List<double>> _customEqPresets = {};
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
   bool _cueTransitioning = false;
@@ -2381,6 +2397,7 @@ class _PlayerPageState extends State<PlayerPage>
   Timer? _resumeSaveTimer;
   Timer? _castPositionTimer;
   bool _castPositionPollInProgress = false;
+  String? _castRenderedMidiPath;
   DateTime? _sleepDeadline;
 
   bool get _casting => _dlnaCast.isConnected || _chromecastCast.isConnected;
@@ -2393,6 +2410,15 @@ class _PlayerPageState extends State<PlayerPage>
     } else {
       await _dlnaCast.stop();
     }
+    await _deleteCastMidiRender();
+  }
+
+  Future<void> _deleteCastMidiRender() async {
+    final renderedPath = _castRenderedMidiPath;
+    _castRenderedMidiPath = null;
+    if (renderedPath == null) return;
+    final renderedFile = File(renderedPath);
+    if (await renderedFile.exists()) await renderedFile.delete();
   }
 
   Future<void> _castTrack(
@@ -2400,32 +2426,63 @@ class _PlayerPageState extends State<PlayerPage>
     CastDevice? chromecastDevice,
     MediaRenderer? dlnaRenderer,
   }) async {
+    var mediaPath = track.path;
+    String? generatedMidiPath;
     if (isMidiFilePath(track.path)) {
-      throw UnsupportedError('MIDI/KAR casting is not supported yet.');
+      final soundFontPath = _midiSoundFontPath;
+      if (soundFontPath == null ||
+          !FileSystemEntity.isFileSync(soundFontPath)) {
+        throw StateError(
+          'Import a MIDI SoundFont from the menu before casting MIDI/KAR.',
+        );
+      }
+      generatedMidiPath =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'neonamp-cast-midi-${DateTime.now().microsecondsSinceEpoch}.wav';
+      try {
+        mediaPath = await renderMidiToWav(
+          midiPath: track.path,
+          soundFontPath: soundFontPath,
+          outputPath: generatedMidiPath,
+        );
+      } on Object {
+        final partialFile = File(generatedMidiPath);
+        if (await partialFile.exists()) await partialFile.delete();
+        rethrow;
+      }
     }
-    if (chromecastDevice != null) {
-      await _chromecastCast.play(
-        device: chromecastDevice,
-        path: track.path,
-        title: track.name,
-        duration: _duration,
-        segmentStart: track.cueStart,
-        startPosition: _position,
-      );
-    } else if (dlnaRenderer != null) {
-      await _dlnaCast.play(
-        renderer: dlnaRenderer,
-        path: track.path,
-        title: track.name,
-        artist: track.artist,
-        album: track.album,
-        duration: track.cueStart + _duration,
-        segmentStart: track.cueStart,
-        segmentEnd: track.cueEnd,
-      );
-    } else {
-      throw StateError('The network player is no longer available.');
+    try {
+      if (chromecastDevice != null) {
+        await _chromecastCast.play(
+          device: chromecastDevice,
+          path: mediaPath,
+          title: track.name,
+          duration: _duration,
+          segmentStart: track.cueStart,
+          startPosition: _position,
+        );
+      } else if (dlnaRenderer != null) {
+        await _dlnaCast.play(
+          renderer: dlnaRenderer,
+          path: mediaPath,
+          title: track.name,
+          artist: track.artist,
+          album: track.album,
+          duration: track.cueStart + _duration,
+          segmentStart: track.cueStart,
+          segmentEnd: track.cueEnd,
+        );
+      } else {
+        throw StateError('The network player is no longer available.');
+      }
+    } catch (_) {
+      if (generatedMidiPath != null) {
+        final generatedFile = File(generatedMidiPath);
+        if (await generatedFile.exists()) await generatedFile.delete();
+      }
+      rethrow;
     }
+    _castRenderedMidiPath = generatedMidiPath;
 
     if (_dspActive) {
       await _dspPlayer.pause();
@@ -3202,6 +3259,9 @@ class _PlayerPageState extends State<PlayerPage>
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _midiSoundFontPath = settings['midiSoundFontPath'] as String?;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+        _customEqPresets.addAll(
+          decodeCustomEqualizerPresets(settings['customEqPresets']),
+        );
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
@@ -3269,6 +3329,7 @@ class _PlayerPageState extends State<PlayerPage>
         'midiSoundFontPath': _midiSoundFontPath,
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
+        'customEqPresets': _customEqPresets,
         'playbackSpeed': _playbackSpeed,
         'replayGainEnabled': _replayGainEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
@@ -3913,7 +3974,7 @@ class _PlayerPageState extends State<PlayerPage>
         if (!_midiActive) await _player.stop();
         _midiActive = true;
         await _midiPlayer.play(track.path, playbackSpeed: _playbackSpeed);
-        _audioHandler?.publishTrack(track);
+        unawaited(_audioHandler?.publishTrack(track));
       } else if (shouldUseDsp) {
         if (_midiActive) {
           await _midiPlayer.stop();
@@ -3932,7 +3993,7 @@ class _PlayerPageState extends State<PlayerPage>
           balance: _balance,
           deleteSourceOnStop: renderedMidiPath != null,
         );
-        _audioHandler?.publishTrack(track);
+        unawaited(_audioHandler?.publishTrack(track));
       } else {
         if (_midiActive) {
           await _midiPlayer.stop();
@@ -4137,7 +4198,7 @@ class _PlayerPageState extends State<PlayerPage>
       _dspActive = true;
       _midiActive = false;
       _bindDspStreams();
-      _audioHandler?.publishTrack(track);
+      unawaited(_audioHandler?.publishTrack(track));
       await _saveQueue();
     } catch (_) {
       await previousPlayer.setVolume(_volumeFor(previousTrack));
@@ -4240,7 +4301,7 @@ class _PlayerPageState extends State<PlayerPage>
       _recordCrossfadeTrack(next, track, duration: incomingDuration);
       _dspPlayer = incomingPlayer;
       _bindDspStreams();
-      _audioHandler?.publishTrack(track);
+      unawaited(_audioHandler?.publishTrack(track));
       await _saveQueue();
     } catch (_) {
       await previousPlayer.setVolume(_volumeFor(previousTrack));
@@ -6648,13 +6709,88 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _saveEqualizerPreset(
+    StateSetter setDialogState,
+    Set<String> reservedNames,
+  ) async {
+    final controller = TextEditingController();
+    var validationError = '';
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setPromptState) => AlertDialog(
+          title: const Text('Save equalizer preset'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 40,
+            decoration: InputDecoration(
+              labelText: 'Preset name',
+              errorText: validationError.isEmpty ? null : validationError,
+            ),
+            onSubmitted: (_) {},
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final requestedName = controller.text.trim();
+                if (!canSaveEqualizerPresetName(
+                  requestedName,
+                  reservedNames: reservedNames,
+                )) {
+                  setPromptState(() {
+                    validationError = requestedName.isEmpty
+                        ? 'Enter a preset name.'
+                        : 'That name is already used by a built-in or plugin preset.';
+                  });
+                  return;
+                }
+                Navigator.pop(dialogContext, requestedName);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (name == null || !mounted) return;
+
+    var storedName = name;
+    for (final existingName in _customEqPresets.keys) {
+      if (existingName.toLowerCase() == name.toLowerCase()) {
+        storedName = existingName;
+        break;
+      }
+    }
+    setState(() {
+      _customEqPresets[storedName] = List<double>.from(_eqBands);
+      _eqPreset = storedName;
+    });
+    if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
+      unawaited(_setEqualizerEnabled(true));
+    } else if (_dspActive) {
+      _dspPlayer.applyEqualizer(enabled: _equalizerEnabled, bands: _eqBands);
+    }
+    setDialogState(() {});
+    await _saveQueue();
+  }
+
   Future<void> _showEqualizer() async {
-    final builtInPresets = builtInEqualizerPresets.keys.toList();
     final pluginPresets = <String, List<double>>{};
+    final reservedPluginNames = <String>{};
+    for (final plugin in _plugins.values) {
+      reservedPluginNames.addAll(plugin.equalizerPresets.keys);
+    }
     for (final plugin in _plugins.values.where((plugin) => plugin.enabled)) {
       pluginPresets.addAll(plugin.equalizerPresets);
     }
-    final presets = [...builtInPresets, ...pluginPresets.keys];
+    final customPresets = {...pluginPresets, ..._customEqPresets};
+    final presets = [...builtInEqualizerPresets.keys, ...customPresets.keys];
     final selectedPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
     if (_eqPreset != selectedPreset) _eqPreset = selectedPreset;
     await showDialog<void>(
@@ -6698,12 +6834,17 @@ class _PlayerPageState extends State<PlayerPage>
                     ),
                   DropdownButtonFormField<String>(
                     initialValue: selectedPreset,
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Preset'),
                     items: presets
                         .map(
                           (preset) => DropdownMenuItem(
                             value: preset,
-                            child: Text(preset),
+                            child: Text(
+                              preset,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         )
                         .toList(),
@@ -6717,12 +6858,14 @@ class _PlayerPageState extends State<PlayerPage>
                                 0,
                                 equalizerPresetBands(
                                   value,
-                                  pluginPresets: pluginPresets,
+                                  pluginPresets: customPresets,
                                   bandCount: _eqBands.length,
                                 ),
                               );
                             });
-                            if (_dspActive) {
+                            if (!_equalizerEnabled) {
+                              unawaited(_setEqualizerEnabled(true));
+                            } else if (_dspActive) {
                               _dspPlayer.applyEqualizer(
                                 enabled: _equalizerEnabled,
                                 bands: _eqBands,
@@ -6859,6 +7002,12 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           ),
           actions: [
+            TextButton.icon(
+              onPressed: () =>
+                  _saveEqualizerPreset(setDialogState, reservedPluginNames),
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save preset'),
+            ),
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Done'),
@@ -7170,8 +7319,11 @@ class _PlayerPageState extends State<PlayerPage>
 
   @override
   void dispose() {
-    unawaited(_dlnaCast.dispose());
-    unawaited(_chromecastCast.dispose());
+    unawaited(() async {
+      await _dlnaCast.dispose();
+      await _chromecastCast.dispose();
+      await _deleteCastMidiRender();
+    }());
     _castPositionTimer?.cancel();
     _sleepTimer?.cancel();
     _resumeSaveTimer?.cancel();
@@ -7652,7 +7804,7 @@ class _PlayerPageState extends State<PlayerPage>
   );
   Widget _compactLayout() => Column(
     children: [
-      SizedBox(height: 88, child: _heroPanel(compact: true)),
+      SizedBox(height: 72, child: _heroPanel(compact: true)),
       Expanded(child: _queuePanel()),
     ],
   );
@@ -8340,7 +8492,7 @@ class _PlayerPageState extends State<PlayerPage>
     animation: _pulse,
     builder: (_, __) => Padding(
       padding: compact
-          ? const EdgeInsets.fromLTRB(8, 4, 8, 4)
+          ? const EdgeInsets.fromLTRB(8, 0, 8, 0)
           : const EdgeInsets.fromLTRB(12, 8, 24, 12),
       child: Container(
         decoration: BoxDecoration(
@@ -8374,7 +8526,7 @@ class _PlayerPageState extends State<PlayerPage>
               ),
             ),
             Padding(
-              padding: EdgeInsets.all(compact ? 8 : 32),
+              padding: EdgeInsets.all(compact ? 4 : 32),
               child: compact
                   ? Row(
                       children: [
@@ -8383,8 +8535,8 @@ class _PlayerPageState extends State<PlayerPage>
                           child: _current?.artwork != null
                               ? Image.memory(
                                   _current!.artwork!,
-                                  width: 44,
-                                  height: 44,
+                                  width: 36,
+                                  height: 36,
                                   fit: BoxFit.cover,
                                   errorBuilder: (_, __, ___) => const Icon(
                                     Icons.graphic_eq,
@@ -8393,8 +8545,8 @@ class _PlayerPageState extends State<PlayerPage>
                                   ),
                                 )
                               : const SizedBox(
-                                  width: 44,
-                                  height: 44,
+                                    width: 36,
+                                    height: 36,
                                   child: Icon(
                                     Icons.graphic_eq,
                                     size: 34,

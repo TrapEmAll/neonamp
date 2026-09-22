@@ -8,6 +8,7 @@ void main() {
         .toSet();
 
     expect(curves, hasLength(builtInEqualizerPresets.length));
+    expect(builtInEqualizerPresets.length, greaterThanOrEqualTo(20));
     for (final bands in builtInEqualizerPresets.values) {
       expect(bands, hasLength(10));
       expect(bands, everyElement(inInclusiveRange(-12, 12)));
@@ -36,6 +37,30 @@ void main() {
         bandCount: 2,
       ),
       [12, -12],
+    );
+  });
+
+  test('custom preset names cannot shadow built-in or plugin presets', () {
+    expect(canSaveEqualizerPresetName('  My curve  '), isTrue);
+    expect(canSaveEqualizerPresetName(''), isFalse);
+    expect(canSaveEqualizerPresetName('rOcK'), isFalse);
+    expect(
+      canSaveEqualizerPresetName('Studio', reservedNames: const ['Studio']),
+      isFalse,
+    );
+  });
+
+  test('saved custom preset data is validated and clamped when loaded', () {
+    expect(
+      decodeCustomEqualizerPresets({
+        'My curve': [20, -20, 1, 2, 3, 4, 5, 6, 7, 8],
+        'Rock': List<double>.filled(10, 3),
+        'Short': [1, 2],
+        'Not numeric': [1, 2, 3, 4, 5, 6, 7, 8, 9, 'bad'],
+      }),
+      {
+        'My curve': [12, -12, 1, 2, 3, 4, 5, 6, 7, 8],
+      },
     );
   });
 }

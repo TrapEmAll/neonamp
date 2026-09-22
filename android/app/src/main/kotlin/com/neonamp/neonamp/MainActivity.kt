@@ -298,15 +298,16 @@ class MainActivity : AudioServiceActivity() {
                     val documentId = cursor.getString(idColumn)
                     val name = cursor.getString(nameColumn) ?: continue
                     val mimeType = cursor.getString(mimeColumn).orEmpty()
-                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        pending.add(documentId)
-                        continue
-                    }
                     val extension =
                         name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                         .takeIf { it in audioExtensions }
                         ?: audioExtensionForMimeType(mimeType)
-                        ?: continue
+                    if (extension == null) {
+                        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                            pending.add(documentId)
+                        }
+                        continue
+                    }
                     val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
                     val cacheName = sha256(documentUri.toString()) + "." + extension
                     val cachedFile = File(cacheDirectory, cacheName)

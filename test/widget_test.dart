@@ -1434,7 +1434,7 @@ FILE "disc image.flac" WAVE
       find.ancestor(
         of: find.text('NOW PLAYING'),
         matching: find.byWidgetPredicate(
-          (widget) => widget is SizedBox && widget.height == 88,
+          (widget) => widget is SizedBox && widget.height == 72,
         ),
       ),
       findsOneWidget,
@@ -1511,11 +1511,14 @@ FILE "disc image.flac" WAVE
     await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('Equalizer'));
     await tester.pump();
-    await tester.tap(find.byType(Switch).first);
-    await tester.pump();
     await tester.tap(find.byType(DropdownButtonFormField<String>));
     await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(find.text('Rock').last);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.text('Save preset'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).last, 'My Rock Curve');
+    await tester.tap(find.text('Save').last);
     await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(find.text('Done'));
     await tester.pump(const Duration(milliseconds: 300));
@@ -1525,8 +1528,43 @@ FILE "disc image.flac" WAVE
         jsonDecode(preferences.getString('settings')!) as Map<String, dynamic>;
     expect(settings['playbackSpeed'], 1.5);
     expect(settings['equalizerEnabled'], isTrue);
-    expect(settings['eqPreset'], 'Rock');
+    expect(settings['eqPreset'], 'My Rock Curve');
     expect(settings['eqBands'], builtInEqualizerPresets['Rock']);
+    expect(settings['customEqPresets'], {
+      'My Rock Curve': builtInEqualizerPresets['Rock'],
+    });
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('custom equalizer presets load into the preset selector', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({
+      'settings': jsonEncode({
+        'eqPreset': 'My saved curve',
+        'customEqPresets': {
+          'My saved curve': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        },
+      }),
+    });
+
+    await tester.pumpWidget(const NeonAmpApp());
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.ensureVisible(find.text('Equalizer'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Equalizer'));
+    await tester.pump();
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('My saved curve').last, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

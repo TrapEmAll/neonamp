@@ -1,8 +1,55 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neonamp/main.dart';
 import 'package:neonamp/tracker_modules.dart';
 
 void main() {
+  test(
+    'Android folder scan covers every supported library extension',
+    () async {
+      final nativeSource = await File(
+        'android/app/src/main/kotlin/com/neonamp/neonamp/MainActivity.kt',
+      ).readAsString();
+      final audioClassificationStart = nativeSource.indexOf('val extension =');
+      final directoryFallback = nativeSource.indexOf(
+        'if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR)',
+        audioClassificationStart,
+      );
+      expect(audioClassificationStart, greaterThanOrEqualTo(0));
+      expect(
+        directoryFallback,
+        greaterThan(audioClassificationStart),
+        reason: 'Recognize supported audio names before following provider MIME.',
+      );
+      final nativeSetBody = RegExp(
+        r'val audioExtensions = setOf\((.*?)\n\s*\)',
+        dotAll: true,
+      ).firstMatch(nativeSource)?.group(1);
+      expect(nativeSetBody, isNotNull);
+      final androidExtensions = RegExp(r'"([^"]+)"')
+          .allMatches(nativeSetBody!)
+          .map((match) => match.group(1)!)
+          .toSet();
+
+      final dartSource = await File('lib/main.dart').readAsString();
+      final dartSetBody = RegExp(
+        r'bool isSupportedLibraryAudioPath\(String path\) \{(.*?)\n\}',
+        dotAll: true,
+      ).firstMatch(dartSource)?.group(1);
+      expect(dartSetBody, isNotNull);
+      final fileExtensions = RegExp(r"'\.([a-z0-9]+)'")
+          .allMatches(dartSetBody!)
+          .map((match) => match.group(1)!);
+      final allExtensions = {
+        ...fileExtensions,
+        ...trackerModuleExtensions,
+        ...midiFileExtensions,
+      };
+      expect(androidExtensions, allExtensions);
+    },
+  );
+
   test('tracker module extensions are recognized for library scans', () {
     for (final extension in trackerModuleExtensions) {
       expect(isTrackerModulePath('music.$extension'), isTrue);

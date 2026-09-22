@@ -4,7 +4,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 
 ## Install
 
-Download the ready-to-install Windows setup program or Android APK from the [latest GitHub Release](https://github.com/TrapEmAll/neonamp/releases/latest). No source build is required. On Android, you may need to allow installation from the app used to open the downloaded APK.
+Download the ready-to-run Windows x64 package or Android APK from the [latest GitHub Release](https://github.com/TrapEmAll/neonamp/releases/latest). No source build is required. On Android, you may need to allow installation from the app used to open the downloaded APK.
 
 ## Current slice
 

@@ -104,18 +104,17 @@ class DspLocalPlayer {
       }
       rethrow;
     }
-    final equalizer = source.filters.parametricEqFilter;
-    equalizer.activate();
-    equalizer.numBands().value = bands.length.toDouble();
-    for (var index = 0; index < bands.length; index++) {
-      final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
-      equalizer.bandGain(index).value = gain;
-    }
+    final equalizer = source.filters.parametricEqFilter..activate();
     final handle = soloud.SoLoud.instance.play(
       source,
       volume: volume,
       pan: balance.clamp(-1.0, 1.0),
     );
+    equalizer.numBands(soundHandle: handle).value = bands.length.toDouble();
+    for (var index = 0; index < bands.length; index++) {
+      final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
+      equalizer.bandGain(index, soundHandle: handle).value = gain;
+    }
     soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
     _source = source;
     _temporaryAudioPath = isTrackerModule || transcodedAudioPath != null
@@ -258,12 +257,18 @@ class DspLocalPlayer {
 
   void applyEqualizer({required bool enabled, required List<double> bands}) {
     final source = _source;
-    if (source == null) return;
+    final handle = _handle;
+    if (source == null ||
+        handle == null ||
+        !soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      return;
+    }
     final equalizer = source.filters.parametricEqFilter;
-    equalizer.numBands().value = bands.length.toDouble();
+    equalizer.activate();
+    equalizer.numBands(soundHandle: handle).value = bands.length.toDouble();
     for (var index = 0; index < bands.length; index++) {
       final gain = enabled ? dspGainForDb(bands[index]) : 1.0;
-      equalizer.bandGain(index).value = gain;
+      equalizer.bandGain(index, soundHandle: handle).value = gain;
     }
   }
 

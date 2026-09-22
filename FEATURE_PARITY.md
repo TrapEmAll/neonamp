@@ -15,7 +15,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - AIFF/AIFC and WAV reload track/disc numbers and totals from their embedded ID3 frames, and save verification checks those values
 - OGG Vorbis and Opus tag editing rewrites Vorbis comments, including lyrics, totals, and embedded picture blocks, while retaining encoded audio packets
 - Batch metadata editing for selected library tracks with per-file failure reporting on Windows and Android
-- Embedded album-art reading and display when the source file contains cover art
+- Embedded album-art reading and display when the source file contains cover art, including Android notification and lock-screen media metadata
 - Embedded cover-art replacement for supported local containers
 - Embedded lyrics editing and in-app lyrics viewing
 - AIFF/AIFC metadata and embedded cover-art editing through ID3 chunks, including lyrics
@@ -32,7 +32,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - CUE sheet import with virtual per-track queue entries backed by the original continuous audio file and segment-aware seek/progress on Windows and Android
 - HTTP audio stream / internet radio URL playback
 - DLNA/UPnP renderer discovery and casting of HTTP(S) streams, local audio files, and segment-aware CUE virtual tracks on Windows and Android, with receiver transport controls, relative seek/progress, segment-boundary advancement, and byte-range file serving
-- Chromecast audio discovery and playback for MP3, AAC/M4A, WAV, OGG/Opus, and FLAC on Windows and Android, with remote play/pause/seek/volume/progress controls and CUE-segment-aware queue advancement; MIDI/KAR casting remains unsupported
+- Chromecast audio discovery and playback for MP3, AAC/M4A, WAV, OGG/Opus, and FLAC on Windows and Android, with remote play/pause/seek/volume/progress controls and CUE-segment-aware queue advancement; MIDI/KAR can be rendered through an imported SF2 SoundFont before casting
 - Local video queue for Windows and Android with play/pause, seeking, volume, speed, and fullscreen controls; supported video codecs depend on the platform's native decoder
 - Internet-radio station discovery through Radio Browser and SHOUTcast with normalized metadata, duplicate-stream merging, listener sorting, saved station favorites, and lazy stream resolution
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
@@ -47,7 +47,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Persistent recently played history shared by the Windows and Android UIs
 - Per-track playback-position resume shared by the Windows and Android UIs
 - Persistent queue reordering, per-track removal, and clear-queue controls
-- Native 10-band DSP equalizer for local files with presets and persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android; importing a user-owned SF2 SoundFont enables shared DSP processing for MIDI/KAR on both platforms
+- Native 10-band DSP equalizer for local files with built-in, plugin, and user-saved presets plus persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android; importing a user-owned SF2 SoundFont enables shared DSP processing for MIDI/KAR on both platforms
 - Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, Matroska/WebM, AMR/AMR-WB, Speex, M4B, 3GP, Ogg/OGA/OGX, and MPEG Layer I/II audio when native playback cannot open the original; decoded audio is temporary and uses the shared playback controls and DSP path
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android
 - ReplayGain reads Vorbis comments, MP3 ID3 user-text, and APEv2 fields, preferring valid track gain before album gain
@@ -69,7 +69,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
 - AirPlay and other non-DLNA/non-Chromecast casting protocols
-- Chromecast MIDI/KAR rendering
+- Built-in GM SoundFont for MIDI/KAR DSP and casting without requiring users to import an SF2 file
 - Equalizer processing for native system-synth MIDI/KAR playback when no SF2 SoundFont is configured; imported-SoundFont rendering routes MIDI/KAR through the shared DSP path on Windows and Android
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.
