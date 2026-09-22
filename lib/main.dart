@@ -16,6 +16,7 @@ import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 import 'dsp_local_player.dart';
 import 'video_player_page.dart';
 import 'asf_metadata.dart';
+import 'itunes_library.dart';
 import 'podcast_opml.dart';
 import 'cue_sheet.dart';
 
@@ -2952,6 +2953,69 @@ class _PlayerPageState extends State<PlayerPage>
       });
     }
     await _saveQueue();
+  }
+
+  Future<void> _importItunesLibrary() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xml'],
+      dialogTitle: 'Import an iTunes XML library',
+    );
+    final path = picked.firstOrNull?.path;
+    if (path == null) return;
+    try {
+      final imported = parseItunesLibrary(await File(path).readAsString());
+      var addedTracks = 0;
+      var addedPlaylists = 0;
+      setState(() {
+        for (final json in imported.tracks) {
+          final track = Track.fromJson(Map<String, dynamic>.from(json));
+          if (_library.any((item) => item.path == track.path)) continue;
+          _library.add(track);
+          addedTracks++;
+        }
+        for (final playlist in imported.playlists.entries) {
+          var name = playlist.key;
+          var suffix = 2;
+          while (_playlists.containsKey(name)) {
+            name = '${playlist.key} (iTunes $suffix)';
+            suffix++;
+          }
+          _playlists[name] = playlist.value;
+          addedPlaylists++;
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Imported $addedTracks tracks and $addedPlaylists playlists.',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import iTunes library: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportItunesLibrary() async {
+    final xml = buildItunesLibrary(
+      _library.map((track) => track.toJson()),
+      _playlists,
+    );
+    await FilePicker.saveFile(
+      fileName: 'neonamp-library.xml',
+      bytes: Uint8List.fromList(utf8.encode(xml)),
+      mimeType: 'application/xml',
+      type: FileType.custom,
+      allowedExtensions: ['xml'],
+    );
   }
 
   Future<void> _importCueSheet() async {
@@ -6114,6 +6178,19 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
           ),
           IconButton(
+            tooltip: 'Import iTunes XML library',
+            onPressed: _importItunesLibrary,
+            icon: const Icon(Icons.library_add_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export iTunes XML library',
+            onPressed: _exportItunesLibrary,
+            icon: const Icon(
+              Icons.library_books_outlined,
+              color: Colors.white60,
+            ),
+          ),
+          IconButton(
             tooltip: 'Import CUE sheet',
             onPressed: _importCueSheet,
             icon: const Icon(Icons.album_outlined, color: Colors.white60),
@@ -6135,6 +6212,8 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'settings') _showSettings();
               if (value == 'rescan') _rescanFolders();
               if (value == 'import') _importPlaylist();
+              if (value == 'importItunes') _importItunesLibrary();
+              if (value == 'exportItunes') _exportItunesLibrary();
               if (value == 'importCue') _importCueSheet();
               if (value == 'stream') _addStream();
               if (value == 'radio') _searchRadioDirectory();
@@ -6166,6 +6245,14 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'import',
                 child: Text('Import M3U or PLS playlist'),
+              ),
+              PopupMenuItem(
+                value: 'importItunes',
+                child: Text('Import iTunes XML library'),
+              ),
+              PopupMenuItem(
+                value: 'exportItunes',
+                child: Text('Export iTunes XML library'),
               ),
               PopupMenuItem(
                 value: 'importCue',
