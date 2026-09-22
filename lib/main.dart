@@ -1652,6 +1652,15 @@ Duration? restoreResumePosition(int? milliseconds) {
   return Duration(milliseconds: milliseconds);
 }
 
+List<Track> toggleTrackBookmark(List<Track> bookmarks, Track track) {
+  if (bookmarks.any((item) => item.identityKey == track.identityKey)) {
+    return bookmarks
+        .where((item) => item.identityKey != track.identityKey)
+        .toList();
+  }
+  return [...bookmarks, track];
+}
+
 class Track {
   Track({
     required this.path,
@@ -2243,6 +2252,7 @@ class _PlayerPageState extends State<PlayerPage>
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
   final List<Track> _library = [];
+  final List<Track> _bookmarks = [];
   final List<String> _playHistory = [];
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
@@ -2650,6 +2660,7 @@ class _PlayerPageState extends State<PlayerPage>
     final saved = prefs.getStringList('queue') ?? [];
     final savedQueueTracks = prefs.getString('queueTracks');
     final savedLibrary = prefs.getStringList('library') ?? [];
+    final savedBookmarks = prefs.getString('bookmarks');
     final savedPlayHistory = prefs.getStringList('playHistory') ?? [];
     final savedResumePositions = prefs.getString('resumePositions');
     final savedFolders = prefs.getStringList('libraryFolders') ?? [];
@@ -2665,6 +2676,12 @@ class _PlayerPageState extends State<PlayerPage>
           (value) => Track.fromJson(jsonDecode(value) as Map<String, dynamic>),
         ),
       );
+      if (savedBookmarks != null) {
+        final decoded = jsonDecode(savedBookmarks) as List;
+        _bookmarks.addAll(
+          decoded.map((value) => Track.fromJson(value as Map<String, dynamic>)),
+        );
+      }
       if (savedQueueTracks != null) {
         final decodedQueue = jsonDecode(savedQueueTracks) as List;
         _queue.addAll(
@@ -2766,6 +2783,10 @@ class _PlayerPageState extends State<PlayerPage>
     await prefs.setStringList(
       'library',
       _library.map((track) => jsonEncode(track.toJson())).toList(),
+    );
+    await prefs.setString(
+      'bookmarks',
+      jsonEncode(_bookmarks.map((track) => track.toJson()).toList()),
     );
     await prefs.setStringList('playHistory', _playHistory);
     await prefs.setString('resumePositions', jsonEncode(_resumePositions));
@@ -3362,6 +3383,32 @@ class _PlayerPageState extends State<PlayerPage>
       if (_selected >= _queue.length) _selected = _queue.length - 1;
     });
     await _saveQueue();
+  }
+
+  bool _isBookmarked(Track track) =>
+      _bookmarks.any((item) => item.identityKey == track.identityKey);
+
+  Future<void> _toggleBookmark(Track track) async {
+    setState(() {
+      final updated = toggleTrackBookmark(_bookmarks, track);
+      _bookmarks
+        ..clear()
+        ..addAll(updated);
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _playBookmark(Track track) async {
+    var index = _queue.indexWhere(
+      (item) => item.identityKey == track.identityKey,
+    );
+    if (index < 0) {
+      setState(() {
+        _queue.add(track);
+        index = _queue.length - 1;
+      });
+    }
+    await _select(index);
   }
 
   Future<void> _reorderQueue(int oldIndex, int newIndex) async {
@@ -6241,6 +6288,7 @@ class _PlayerPageState extends State<PlayerPage>
               children: [
                 _viewButton('queue', 'Queue', Icons.queue_music),
                 _viewButton('library', 'Library', Icons.library_music),
+                _viewButton('bookmarks', 'Bookmarks', Icons.bookmark_outline),
                 _viewButton('playlists', 'Playlists', Icons.playlist_play),
                 _viewButton('history', 'History', Icons.history),
               ],
@@ -6354,6 +6402,8 @@ class _PlayerPageState extends State<PlayerPage>
         Expanded(
           child: _activeView == 'library'
               ? _libraryView()
+              : _activeView == 'bookmarks'
+              ? _bookmarksView()
               : _activeView == 'playlists'
               ? _playlistView()
               : _activeView == 'history'
@@ -6418,6 +6468,19 @@ class _PlayerPageState extends State<PlayerPage>
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              IconButton(
+                tooltip: _isBookmarked(track)
+                    ? 'Remove bookmark'
+                    : 'Add bookmark',
+                icon: Icon(
+                  _isBookmarked(track) ? Icons.bookmark : Icons.bookmark_border,
+                  size: 17,
+                  color: _isBookmarked(track)
+                      ? const Color(0xffef4bff)
+                      : Colors.white30,
+                ),
+                onPressed: () => _toggleBookmark(track),
+              ),
               IconButton(
                 icon: Icon(
                   track.favorite ? Icons.favorite : Icons.favorite_border,
@@ -6492,6 +6555,35 @@ class _PlayerPageState extends State<PlayerPage>
             });
             _select(_selected);
           },
+        );
+      },
+    );
+  }
+
+  Widget _bookmarksView() {
+    if (_bookmarks.isEmpty) return _emptyQueue();
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 12),
+      itemCount: _bookmarks.length,
+      itemBuilder: (_, index) {
+        final track = _bookmarks[index];
+        return ListTile(
+          key: ValueKey(track.identityKey),
+          dense: true,
+          leading: const Icon(Icons.bookmark, color: Color(0xffef4bff)),
+          title: Text(track.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(
+            '${track.artist} · ${track.path}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 10, color: Colors.white38),
+          ),
+          trailing: IconButton(
+            tooltip: 'Remove bookmark',
+            icon: const Icon(Icons.bookmark_remove_outlined, size: 18),
+            onPressed: () => _toggleBookmark(track),
+          ),
+          onTap: () => _playBookmark(track),
         );
       },
     );
@@ -6745,7 +6837,7 @@ class _PlayerPageState extends State<PlayerPage>
     final track = _queue[index];
     final selected = index == _selected;
     return KeyedSubtree(
-      key: ValueKey(track.path),
+      key: ValueKey(track.identityKey),
       child: InkWell(
         onTap: () => _select(index),
         child: Container(
@@ -6798,6 +6890,19 @@ class _PlayerPageState extends State<PlayerPage>
                       ),
                     ),
                   ],
+                ),
+              ),
+              IconButton(
+                tooltip: _isBookmarked(track)
+                    ? 'Remove bookmark'
+                    : 'Add bookmark',
+                onPressed: () => _toggleBookmark(track),
+                icon: Icon(
+                  _isBookmarked(track) ? Icons.bookmark : Icons.bookmark_border,
+                  size: 16,
+                  color: _isBookmarked(track)
+                      ? const Color(0xffef4bff)
+                      : Colors.white38,
                 ),
               ),
               IconButton(

@@ -23,6 +23,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Persistent smart playlists with favorites, rating, play-count, genre, and artist rules, including two-rule all/any grouping, sorting, and result limits
 - Favorites, five-star ratings, and play counts
 - Named playlists and adding library tracks to playlists
+- Persistent bookmarks for local tracks, CUE tracks, and radio/stream URLs
 - Named playlist editing, renaming, deletion, and per-track removal
 - M3U/M3U8 and legacy PLS playlist import/export for local tracks and radio streams
 - CUE sheet import with virtual per-track queue entries backed by the original continuous audio file and segment-aware seek/progress on Windows and Android

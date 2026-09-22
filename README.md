@@ -28,6 +28,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Import and export podcast subscriptions as OPML files to move feeds between players and devices.
 - Manage podcast subscriptions and unsubscribe without removing episodes already added to the queue or library.
 - Persistent queue between launches.
+- Persistent Bookmarks view for quick access to local tracks, CUE tracks, and radio streams.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - View embedded lyrics directly from library tracks.
