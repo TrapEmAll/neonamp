@@ -32,6 +32,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - CUE sheet import with virtual per-track queue entries backed by the original continuous audio file and segment-aware seek/progress on Windows and Android
 - HTTP audio stream / internet radio URL playback
 - DLNA/UPnP renderer discovery and casting of HTTP(S) streams, local audio files, and segment-aware CUE virtual tracks on Windows and Android, with receiver transport controls, relative seek/progress, segment-boundary advancement, and byte-range file serving
+- Chromecast audio discovery and playback for MP3, AAC/M4A, WAV, OGG/Opus, and FLAC on Windows and Android, with remote play/pause/seek/volume/progress controls; Chromecast CUE segments and MIDI/KAR remain unsupported
 - Local video queue for Windows and Android with play/pause, seeking, volume, speed, and fullscreen controls; supported video codecs depend on the platform's native decoder
 - Internet-radio station discovery through Radio Browser and SHOUTcast with normalized metadata, duplicate-stream merging, listener sorting, saved station favorites, and lazy stream resolution
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
@@ -67,7 +68,8 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Broaden playable format coverage to the remaining Winamp-native codecs and legacy formats
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
-- Google Cast-only receivers and other non-DLNA casting protocols
+- AirPlay and other non-DLNA/non-Chromecast casting protocols
+- Chromecast CUE segment transcoding and MIDI/KAR rendering
 - Equalizer processing for native system-synth MIDI/KAR playback when no SF2 SoundFont is configured; imported-SoundFont rendering routes MIDI/KAR through the shared DSP path on Windows and Android
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.

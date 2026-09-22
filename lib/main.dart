@@ -23,6 +23,10 @@ import 'player_layout.dart';
 import 'podcast_opml.dart';
 import 'cue_sheet.dart';
 import 'dlna_cast.dart';
+import 'chromecast_cast.dart';
+
+import 'package:dart_cast/dart_cast.dart' show CastDevice;
+
 import 'playlist_formats.dart';
 import 'tracker_modules.dart';
 import 'windows_midi_player.dart';
@@ -2295,6 +2299,7 @@ class _PlayerPageState extends State<PlayerPage>
     with SingleTickerProviderStateMixin {
   AudioPlayer _activePlayer = AudioPlayer();
   final DlnaCast _dlnaCast = DlnaCast();
+  final ChromecastCast _chromecastCast = ChromecastCast();
   DspLocalPlayer _dspPlayer = DspLocalPlayer();
   final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
   NeonAudioHandler? _audioHandler;
@@ -2360,7 +2365,17 @@ class _PlayerPageState extends State<PlayerPage>
   bool _castPositionPollInProgress = false;
   DateTime? _sleepDeadline;
 
-  bool get _casting => _dlnaCast.isConnected;
+  bool get _casting => _dlnaCast.isConnected || _chromecastCast.isConnected;
+  String? get _castDeviceName =>
+      _chromecastCast.deviceName ?? _dlnaCast.rendererName;
+
+  Future<void> _stopCasting() async {
+    if (_chromecastCast.isConnected) {
+      await _chromecastCast.stop();
+    } else {
+      await _dlnaCast.stop();
+    }
+  }
 
   AudioPlayer get _player => _activePlayer;
 
@@ -2585,7 +2600,7 @@ class _PlayerPageState extends State<PlayerPage>
       final stop = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Casting to ${_dlnaCast.rendererName ?? 'device'}'),
+          title: Text('Casting to ${_castDeviceName ?? 'device'}'),
           content: const Text('Audio is playing on your network device.'),
           actions: [
             TextButton(
@@ -2601,12 +2616,13 @@ class _PlayerPageState extends State<PlayerPage>
       );
       if (stop == true) {
         _castPositionTimer?.cancel();
-        await _dlnaCast.stop();
+        await _stopCasting();
         if (mounted) setState(() => _playerState = PlayerState.paused);
       }
       return;
     }
     List<MediaRenderer> devices = [];
+    List<CastDevice> chromecastDevices = [];
     var scanning = true;
     var scanStarted = false;
     String? error;
@@ -2623,7 +2639,19 @@ class _PlayerPageState extends State<PlayerPage>
               error = null;
             });
             try {
-              devices = await _dlnaCast.discover();
+              // Both Android discovery paths share a non-reference-counted
+              // multicast lock. Scan serially so the first scan cannot release
+              // it while the second is still listening for mDNS/SSDP.
+              try {
+                devices = await _dlnaCast.discover();
+              } catch (_) {
+                devices = [];
+              }
+              try {
+                chromecastDevices = await _chromecastCast.discover();
+              } catch (_) {
+                chromecastDevices = [];
+              }
             } catch (e) {
               error = 'Could not scan the local network: $e';
             } finally {
@@ -2654,80 +2682,138 @@ class _PlayerPageState extends State<PlayerPage>
                     )
                   : error != null
                   ? Text(error!)
-                  : devices.isEmpty
+                  : devices.isEmpty && chromecastDevices.isEmpty
                   ? const Text(
-                      'No DLNA/UPnP players found. Make sure your device is on the same Wi-Fi network.',
+                      'No compatible network players found. Make sure your device is on the same Wi-Fi network.',
                     )
                   : ListView(
                       shrinkWrap: true,
-                      children: devices
-                          .map(
-                            (device) => ListTile(
-                              leading: const Icon(Icons.speaker_rounded),
-                              title: Text(
-                                device.description?.friendlyName ??
-                                    'Network player',
-                              ),
-                              subtitle: Text(
-                                device.avTransport == null
-                                    ? 'Playback not supported'
-                                    : 'DLNA / UPnP',
-                              ),
-                              enabled: device.avTransport != null,
-                              onTap: () async {
-                                final track = _current;
-                                if (track == null) return;
-                                if (isMidiFilePath(track.path)) {
+                      children: [
+                        ...chromecastDevices.map(
+                          (device) => ListTile(
+                            leading: const Icon(Icons.cast_rounded),
+                            title: Text(device.name),
+                            subtitle: const Text('Chromecast audio'),
+                            onTap: () async {
+                              final track = _current;
+                              if (track == null) return;
+                              if (isMidiFilePath(track.path)) {
+                                ScaffoldMessenger.of(this.context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'MIDI/KAR casting is not supported yet.',
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+                              Navigator.pop(dialogContext);
+                              try {
+                                await _chromecastCast.play(
+                                  device: device,
+                                  path: track.path,
+                                  title: track.name,
+                                  duration: _duration,
+                                  segmentStart: track.cueStart,
+                                  startPosition: _position,
+                                );
+                                if (_dspActive) {
+                                  await _dspPlayer.pause();
+                                } else if (_midiActive) {
+                                  await _midiPlayer.pause();
+                                } else {
+                                  await _player.pause();
+                                }
+                                if (mounted) {
+                                  setState(
+                                    () => _playerState = PlayerState.playing,
+                                  );
+                                  _startCastPositionPolling();
+                                }
+                              } catch (e) {
+                                if (mounted)
                                   ScaffoldMessenger.of(this.context)
                                       .showSnackBar(
-                                        const SnackBar(
+                                        SnackBar(
                                           content: Text(
-                                            'MIDI/KAR casting is not supported yet.',
+                                            'Could not start casting: $e',
                                           ),
                                         ),
                                       );
-                                  return;
-                                }
-                                Navigator.pop(dialogContext);
-                                try {
-                                  await _dlnaCast.play(
-                                    renderer: device,
-                                    path: track.path,
-                                    title: track.name,
-                                    artist: track.artist,
-                                    album: track.album,
-                                    duration: track.cueStart + _duration,
-                                    segmentStart: track.cueStart,
-                                    segmentEnd: track.cueEnd,
-                                  );
-                                  if (_dspActive) {
-                                    await _dspPlayer.pause();
-                                  } else if (_midiActive) {
-                                    await _midiPlayer.pause();
-                                  } else {
-                                    await _player.pause();
-                                  }
-                                  if (mounted) {
-                                    setState(
-                                      () => _playerState = PlayerState.playing,
-                                    );
-                                    _startCastPositionPolling();
-                                  }
-                                } catch (e) {
-                                  if (mounted)
+                              }
+                            },
+                          ),
+                        ),
+                        ...devices
+                            .map(
+                              (device) => ListTile(
+                                leading: const Icon(Icons.speaker_rounded),
+                                title: Text(
+                                  device.description?.friendlyName ??
+                                      'Network player',
+                                ),
+                                subtitle: Text(
+                                  device.avTransport == null
+                                      ? 'Playback not supported'
+                                      : 'DLNA / UPnP',
+                                ),
+                                enabled: device.avTransport != null,
+                                onTap: () async {
+                                  final track = _current;
+                                  if (track == null) return;
+                                  if (isMidiFilePath(track.path)) {
                                     ScaffoldMessenger.of(this.context)
                                         .showSnackBar(
-                                          SnackBar(
+                                          const SnackBar(
                                             content: Text(
-                                              'Could not start casting: $e',
+                                              'MIDI/KAR casting is not supported yet.',
                                             ),
                                           ),
                                         );
-                                }
-                              },
-                            ),
-                          )
-                          .toList(),
+                                    return;
+                                  }
+                                  Navigator.pop(dialogContext);
+                                  try {
+                                    await _dlnaCast.play(
+                                      renderer: device,
+                                      path: track.path,
+                                      title: track.name,
+                                      artist: track.artist,
+                                      album: track.album,
+                                      duration: track.cueStart + _duration,
+                                      segmentStart: track.cueStart,
+                                      segmentEnd: track.cueEnd,
+                                    );
+                                    if (_dspActive) {
+                                      await _dspPlayer.pause();
+                                    } else if (_midiActive) {
+                                      await _midiPlayer.pause();
+                                    } else {
+                                      await _player.pause();
+                                    }
+                                    if (mounted) {
+                                      setState(
+                                        () =>
+                                            _playerState = PlayerState.playing,
+                                      );
+                                      _startCastPositionPolling();
+                                    }
+                                  } catch (e) {
+                                    if (mounted)
+                                      ScaffoldMessenger.of(this.context)
+                                          .showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Could not start casting: $e',
+                                              ),
+                                            ),
+                                          );
+                                  }
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ],
                     ),
             ),
             actions: [
@@ -2746,7 +2832,11 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _playCurrent() async {
     if (_casting) {
-      await _dlnaCast.resume();
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.resume();
+      } else {
+        await _dlnaCast.resume();
+      }
       if (mounted) setState(() => _playerState = PlayerState.playing);
       return;
     }
@@ -2761,7 +2851,11 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _pauseCurrent() async {
     if (_casting) {
-      await _dlnaCast.pause();
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.pause();
+      } else {
+        await _dlnaCast.pause();
+      }
       if (mounted) setState(() => _playerState = PlayerState.paused);
       return;
     }
@@ -2777,7 +2871,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _stopCurrent() async {
     if (_casting) {
       _castPositionTimer?.cancel();
-      await _dlnaCast.stop();
+      await _stopCasting();
       if (mounted) setState(() => _playerState = PlayerState.stopped);
     }
     if (_midiActive) {
@@ -2791,7 +2885,11 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _seekCurrent(Duration position) async {
     if (_casting) {
-      await _dlnaCast.seek(position);
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.seek(position);
+      } else {
+        await _dlnaCast.seek(position);
+      }
       if (mounted) setState(() => _position = position);
       return;
     }
@@ -2899,7 +2997,9 @@ class _PlayerPageState extends State<PlayerPage>
     }
     _castPositionPollInProgress = true;
     try {
-      final position = await _dlnaCast.getPosition();
+      final position = _chromecastCast.isConnected
+          ? await _chromecastCast.getPosition()
+          : await _dlnaCast.getPosition();
       if (position == null || !mounted || !_casting) return;
       if (_duration > Duration.zero && position >= _duration) {
         _castPositionTimer?.cancel();
@@ -3727,7 +3827,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
     _castPositionTimer?.cancel();
-    if (_casting) await _dlnaCast.stop();
+    if (_casting) await _stopCasting();
     _selectionInProgress = true;
     try {
       setState(() {
@@ -7045,6 +7145,7 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void dispose() {
     unawaited(_dlnaCast.dispose());
+    unawaited(_chromecastCast.dispose());
     _castPositionTimer?.cancel();
     _sleepTimer?.cancel();
     _resumeSaveTimer?.cancel();
@@ -7115,7 +7216,11 @@ class _PlayerPageState extends State<PlayerPage>
             final nextVolume = muted ? 0.0 : 0.82;
             setState(() => _volume = nextVolume);
             if (_casting) {
-              unawaited(_dlnaCast.setVolume(_volumeFor(_current)));
+              unawaited(
+                _chromecastCast.isConnected
+                    ? _chromecastCast.setVolume(_volumeFor(_current))
+                    : _dlnaCast.setVolume(_volumeFor(_current)),
+              );
             } else if (_dspActive) {
               _dspPlayer.setVolume(_volumeFor(_current));
             } else {
@@ -8430,7 +8535,7 @@ class _PlayerPageState extends State<PlayerPage>
             ),
             IconButton(
               tooltip: _casting
-                  ? 'Casting to ${_dlnaCast.rendererName ?? 'device'}'
+                  ? 'Casting to ${_castDeviceName ?? 'device'}'
                   : 'Cast to a network player',
               onPressed: _showCastDevices,
               icon: Icon(
@@ -8475,7 +8580,11 @@ class _PlayerPageState extends State<PlayerPage>
                             setState(() => _volume = value);
                             if (_casting) {
                               unawaited(
-                                _dlnaCast.setVolume(_volumeFor(_current)),
+                                _chromecastCast.isConnected
+                                    ? _chromecastCast.setVolume(
+                                        _volumeFor(_current),
+                                      )
+                                    : _dlnaCast.setVolume(_volumeFor(_current)),
                               );
                             } else if (_dspActive) {
                               _dspPlayer.setVolume(_volumeFor(_current));
@@ -8570,7 +8679,11 @@ class _PlayerPageState extends State<PlayerPage>
                             setState(() => _volume = value);
                             if (_casting) {
                               unawaited(
-                                _dlnaCast.setVolume(_volumeFor(_current)),
+                                _chromecastCast.isConnected
+                                    ? _chromecastCast.setVolume(
+                                        _volumeFor(_current),
+                                      )
+                                    : _dlnaCast.setVolume(_volumeFor(_current)),
                               );
                             } else if (_dspActive) {
                               _dspPlayer.setVolume(_volumeFor(_current));

@@ -47,6 +47,8 @@ dependencies:
   xml: ^7.0.1
   upnp_client: ^1.5.0
   dart_melty_soundfont: 2.0.0
+  dart_cast:
+    path: third_party/dart_cast
 
 dev_dependencies:
   flutter_test:
