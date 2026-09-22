@@ -83,7 +83,9 @@ bool isMatroskaAudioPath(String path) {
 bool isCrossPlatformFallbackAudioPath(String path) {
   final extension = path.split('.').last.toLowerCase();
   return const {
+    'ac3',
     'ape',
+    'au',
     'wma',
     'aif',
     'aiff',
@@ -99,19 +101,29 @@ bool isCrossPlatformFallbackAudioPath(String path) {
     'mp2',
     'amr',
     'awb',
+    'caf',
+    'dts',
+    'snd',
+    'tak',
+    'tta',
+    'voc',
     'spx',
   }.contains(extension);
 }
 
 const supportedLibraryAudioExtensions = <String>{
   '3gp',
+  'ac3',
   'aac',
   'aif',
   'aiff',
   'aifc',
   'amr',
   'ape',
+  'au',
   'awb',
+  'caf',
+  'dts',
   'flac',
   'm4a',
   'm4b',
@@ -127,6 +139,10 @@ const supportedLibraryAudioExtensions = <String>{
   'ogx',
   'opus',
   'spx',
+  'snd',
+  'tak',
+  'tta',
+  'voc',
   'wav',
   'webm',
   'wma',

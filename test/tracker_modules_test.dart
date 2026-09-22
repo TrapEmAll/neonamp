@@ -105,7 +105,9 @@ void main() {
 
   test('legacy and container audio use the cross-platform decoder path', () {
     for (final extension in [
+      'ac3',
       'ape',
+      'au',
       'wma',
       'aif',
       'aiff',
@@ -113,6 +115,12 @@ void main() {
       'mka',
       'mkv',
       'webm',
+      'caf',
+      'dts',
+      'snd',
+      'tak',
+      'tta',
+      'voc',
     ]) {
       final path = 'C:/Music/track.$extension';
       expect(isCrossPlatformFallbackAudioPath(path), isTrue, reason: path);
