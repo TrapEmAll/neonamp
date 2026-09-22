@@ -10,7 +10,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Embedded album-art reading and display when the source file contains cover art
 - Embedded cover-art replacement for supported local containers
 - Embedded lyrics editing and in-app lyrics viewing
-- AIFF/AIFC metadata editing through embedded ID3 chunks, including lyrics
+- AIFF/AIFC metadata and embedded cover-art editing through ID3 chunks, including lyrics
 - Library search across title, artist, album, and genre
 - Smart library filters for favorites, top-rated tracks, and most-played tracks
 - Persistent library sorting by added order, title, artist, album, rating, or play count

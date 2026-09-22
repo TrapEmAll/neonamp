@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
@@ -87,7 +86,22 @@ List<int> _id3LyricsFrame(String value) {
   ];
 }
 
-Uint8List buildAiffId3Tag(List<String> values) {
+List<int> _id3PictureFrame(Uint8List bytes, String mimeType) {
+  final payload = <int>[0, ...ascii.encode(mimeType), 0, 3, 0, ...bytes];
+  return <int>[
+    ...ascii.encode('APIC'),
+    ..._bigEndian32(payload.length),
+    0,
+    0,
+    ...payload,
+  ];
+}
+
+Uint8List buildAiffId3Tag(
+  List<String> values, {
+  Uint8List? artwork,
+  String artworkMimeType = 'image/jpeg',
+}) {
   final frames = <int>[
     ..._id3TextFrame('TIT2', values[0]),
     ..._id3TextFrame('TPE1', values[1]),
@@ -103,6 +117,7 @@ Uint8List buildAiffId3Tag(List<String> values) {
       values[9].isEmpty ? values[8] : '${values[8]}/${values[9]}',
     ),
     ..._id3LyricsFrame(values[10]),
+    if (artwork != null) ..._id3PictureFrame(artwork, artworkMimeType),
   ];
   return Uint8List.fromList([
     ...ascii.encode('ID3'),
@@ -171,10 +186,79 @@ String? readAiffId3Lyrics(Uint8List source) {
   return null;
 }
 
-Future<void> writeAiffTags(File file, List<String> values) async {
+(Uint8List, String)? readAiffId3Picture(Uint8List source) {
+  if (source.length < 12 || ascii.decode(source.sublist(0, 4)) != 'FORM') {
+    return null;
+  }
+  var offset = 12;
+  while (offset + 8 <= source.length) {
+    final chunkId = ascii.decode(source.sublist(offset, offset + 4));
+    final chunkSize = ByteData.sublistView(
+      source,
+      offset + 4,
+      offset + 8,
+    ).getUint32(0);
+    final payloadStart = offset + 8;
+    final payloadEnd = payloadStart + chunkSize;
+    if (payloadEnd > source.length) return null;
+    if (chunkId == 'ID3 ' && chunkSize >= 10) {
+      final tag = source.sublist(payloadStart, payloadEnd);
+      if (ascii.decode(tag.sublist(0, 3)) != 'ID3') return null;
+      final tagSize =
+          (tag[9] & 0x7f) |
+          ((tag[8] & 0x7f) << 7) |
+          ((tag[7] & 0x7f) << 14) |
+          ((tag[6] & 0x7f) << 21);
+      final tagEnd = math.min(tag.length, 10 + tagSize);
+      var frameOffset = 10;
+      while (frameOffset + 10 <= tagEnd) {
+        final frameId = ascii.decode(tag.sublist(frameOffset, frameOffset + 4));
+        if (frameId.trim().isEmpty) break;
+        final frameSize = ByteData.sublistView(
+          tag,
+          frameOffset + 4,
+          frameOffset + 8,
+        ).getUint32(0);
+        final frameStart = frameOffset + 10;
+        final frameEnd = frameStart + frameSize;
+        if (frameEnd > tagEnd) return null;
+        if (frameId == 'APIC' && frameSize >= 5 && tag[frameStart] == 0) {
+          final mimeStart = frameStart + 1;
+          final mimeEnd = tag.indexOf(0, mimeStart);
+          if (mimeEnd < 0 || mimeEnd + 2 >= frameEnd) return null;
+          final descriptionStart = mimeEnd + 2;
+          final descriptionEnd = tag.indexOf(0, descriptionStart);
+          if (descriptionEnd < 0 || descriptionEnd + 1 > frameEnd) return null;
+          return (
+            Uint8List.fromList(tag.sublist(descriptionEnd + 1, frameEnd)),
+            ascii.decode(tag.sublist(mimeStart, mimeEnd)),
+          );
+        }
+        frameOffset = frameEnd;
+      }
+      return null;
+    }
+    offset = payloadEnd + (chunkSize.isOdd ? 1 : 0);
+  }
+  return null;
+}
+
+Future<void> writeAiffTags(
+  File file,
+  List<String> values, {
+  Uint8List? artwork,
+  String artworkMimeType = 'image/jpeg',
+}) async {
   final source = await file.readAsBytes();
   if (source.length < 12 || ascii.decode(source.sublist(0, 4)) != 'FORM') {
     throw const FormatException('Not an AIFF container');
+  }
+  if (artwork == null) {
+    final picture = readAiffId3Picture(source);
+    if (picture != null) {
+      artwork = picture.$1;
+      artworkMimeType = picture.$2;
+    }
   }
   final body = <int>[];
   var offset = 12;
@@ -196,7 +280,11 @@ Future<void> writeAiffTags(File file, List<String> values) async {
   if (offset != source.length) {
     throw const FormatException('Malformed AIFF chunk alignment');
   }
-  final tag = buildAiffId3Tag(values);
+  final tag = buildAiffId3Tag(
+    values,
+    artwork: artwork,
+    artworkMimeType: artworkMimeType,
+  );
   final tagChunk = <int>[
     ...ascii.encode('ID3 '),
     ..._bigEndian32(tag.length),
@@ -3175,11 +3263,32 @@ class _PlayerPageState extends State<PlayerPage>
       _ => 'image/jpeg',
     };
     try {
-      updateMetadata(File(track.path), (metadata) {
-        metadata.setPictures([
-          Picture(bytes, mimeType, PictureType.coverFront),
-        ]);
-      });
+      if (isAiffAudioPath(track.path)) {
+        await writeAiffTags(
+          File(track.path),
+          [
+            track.name,
+            track.artist,
+            track.album,
+            track.genre ?? '',
+            '',
+            track.year?.toString() ?? '',
+            track.trackNumber?.toString() ?? '',
+            track.trackTotal?.toString() ?? '',
+            track.discNumber?.toString() ?? '',
+            track.discTotal?.toString() ?? '',
+            track.lyrics ?? '',
+          ],
+          artwork: bytes,
+          artworkMimeType: mimeType,
+        );
+      } else {
+        updateMetadata(File(track.path), (metadata) {
+          metadata.setPictures([
+            Picture(bytes, mimeType, PictureType.coverFront),
+          ]);
+        });
+      }
       final updated = track.copyWith(artwork: bytes);
       setState(() {
         final libraryIndex = _library.indexWhere(
