@@ -11,6 +11,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 
 import 'dsp_local_player.dart';
 import 'video_player_page.dart';
@@ -5053,31 +5054,44 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _showVisualizer() async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Spectrum visualizer'),
-        content: SizedBox(
-          width: 560,
-          height: 220,
-          child: AnimatedBuilder(
-            animation: _pulse,
-            builder: (_, __) => CustomPaint(
-              painter: SpectrumPainter(
-                progress: _pulse.value,
-                active: _isPlaying,
-              ),
+    final canVisualize = _dspActive && soloud.SoLoud.instance.isInitialized;
+    if (canVisualize) _dspPlayer.setVisualizationEnabled(true);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Spectrum visualizer'),
+          content: SizedBox(
+            width: 560,
+            height: 220,
+            child: canVisualize
+                ? StreamBuilder<soloud.AudioVisualizationData>(
+                    stream: soloud.SoLoud.instance.audioVisualizationEvents,
+                    builder: (context, snapshot) => CustomPaint(
+                      painter: SpectrumPainter(
+                        fft: snapshot.data?.fftData,
+                        active: _isPlaying,
+                      ),
+                    ),
+                  )
+                : const Center(
+                    child: Text(
+                      'Audio-reactive visuals are available during local playback with the equalizer enabled.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
             ),
-          ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Done'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      if (canVisualize) _dspPlayer.setVisualizationEnabled(false);
+    }
   }
 
   Future<void> _showSettings() async {
@@ -6466,21 +6480,17 @@ class _PlayerPageState extends State<PlayerPage>
                               width: 180,
                               height: 180,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => CustomPaint(
-                                size: const Size(double.infinity, 160),
-                                painter: SpectrumPainter(
-                                  progress: _pulse.value,
-                                  active: _isPlaying,
-                                ),
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.graphic_eq,
+                                size: 80,
+                                color: Colors.white24,
                               ),
                             ),
                           )
-                        : CustomPaint(
-                            size: const Size(double.infinity, 160),
-                            painter: SpectrumPainter(
-                              progress: _pulse.value,
-                              active: _isPlaying,
-                            ),
+                        : const Icon(
+                            Icons.graphic_eq,
+                            size: 80,
+                            color: Colors.white24,
                           ),
                   ),
                   const Spacer(),
@@ -6630,22 +6640,20 @@ class _PlayerPageState extends State<PlayerPage>
 }
 
 class SpectrumPainter extends CustomPainter {
-  const SpectrumPainter({required this.progress, required this.active});
-  final double progress;
+  const SpectrumPainter({required this.fft, required this.active});
+  final Float32List? fft;
   final bool active;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final bins = fft;
+    if (!active || bins == null || bins.isEmpty) return;
     final paint = Paint()..strokeCap = StrokeCap.round;
     const count = 52;
     for (var i = 0; i < count; i++) {
       final x = (i + .5) * size.width / count;
-      final wave =
-          math.sin(i * .66 + progress * math.pi * 2) * .18 +
-          math.sin(i * .21 + progress * 4) * .12;
-      final normalized = active
-          ? (.38 + wave.abs() + (i % 7) * .025)
-          : (.12 + (i % 4) * .02);
+      final bin = ((i / count) * bins.length).floor().clamp(0, bins.length - 1);
+      final normalized = (bins[bin] * 3.5).clamp(.025, .82);
       final height = size.height * normalized.clamp(.08, .82);
       paint.color = Color.lerp(
         const Color(0xff5b4aff),
@@ -6663,5 +6671,5 @@ class SpectrumPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant SpectrumPainter oldDelegate) =>
-      oldDelegate.progress != progress || oldDelegate.active != active;
+      oldDelegate.fft != fft || oldDelegate.active != active;
 }

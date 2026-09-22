@@ -146,6 +146,15 @@ class DspLocalPlayer {
     }
   }
 
+  void setVisualizationEnabled(bool enabled) {
+    if (!soloud.SoLoud.instance.isInitialized) return;
+    soloud.SoLoud.instance.setVisualizationEnabled(
+      enabled,
+      windowSize: 512,
+      kind: soloud.VisualizationKind.waveAndFft,
+    );
+  }
+
   void applyEqualizer({required bool enabled, required List<double> bands}) {
     final source = _source;
     if (source == null) return;
