@@ -12,6 +12,7 @@ import 'package:neonamp/asf_metadata.dart';
 import 'package:neonamp/podcast_opml.dart';
 import 'package:neonamp/cue_sheet.dart';
 import 'package:neonamp/itunes_library.dart';
+import 'package:neonamp/player_layout.dart';
 
 Future<void> _writeOggFixture(File file, {required bool opus}) async {
   final packets = <List<int>>[
@@ -687,6 +688,23 @@ FILE "disc image.flac" WAVE
       );
     },
   );
+
+  test('player layout normalization preserves play and removes duplicates', () {
+    expect(normalizePlayerControls(null), defaultPlayerControls);
+    expect(
+      normalizePlayerControls([
+        'shuffle',
+        'shuffle',
+        'unknown-action',
+        'forward15',
+      ]),
+      ['shuffle', 'playPause', 'forward15'],
+    );
+    expect(normalizePlayerControls(['playPause', 'sleep', 'playPause']), [
+      'playPause',
+      'sleep',
+    ]);
+  });
 
   test('AIFF ID3 tags include editable common fields', () {
     final tag = buildAiffId3Tag([
@@ -1378,6 +1396,35 @@ FILE "disc image.flac" WAVE
     await tester.pump();
     expect(find.text('NEONAMP'), findsOneWidget);
     expect(find.text('Your library is quiet.'), findsOneWidget);
+  });
+
+  testWidgets('custom player controls restore and persist from the editor', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({
+      'settings': jsonEncode({
+        'playerControls': ['playPause', 'sleep', 'queue'],
+      }),
+    });
+    await tester.pumpWidget(const NeonAmpApp());
+    await tester.pump();
+    expect(find.byTooltip('Sleep timer'), findsOneWidget);
+    expect(find.byTooltip('Listening queue'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Customize player controls'));
+    await tester.pump();
+    expect(find.text('Customize player controls'), findsOneWidget);
+    await tester.tap(find.text('Save layout'));
+    await tester.pump();
+
+    final preferences = await SharedPreferences.getInstance();
+    final settings =
+        jsonDecode(preferences.getString('settings')!) as Map<String, dynamic>;
+    expect(settings['playerControls'], ['playPause', 'sleep', 'queue']);
   });
 
   test('bookmark toggling distinguishes virtual CUE tracks', () {

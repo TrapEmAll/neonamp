@@ -37,6 +37,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Recursive folder scanning and M3U/M3U8 playlist import
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume
 - One-tap 15-second rewind and forward seek on Windows and Android
+- Customizable, reorderable player controls with persisted layouts on Windows and Android
 - Adjustable 0.5×–2× playback speed with persisted settings on Windows and Android
 - Persistent sleep timer with 15/30/60/90-minute playback stop options on Windows and Android
 - Persistent recently played history shared by the Windows and Android UIs

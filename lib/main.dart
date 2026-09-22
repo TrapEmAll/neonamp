@@ -17,6 +17,7 @@ import 'dsp_local_player.dart';
 import 'video_player_page.dart';
 import 'asf_metadata.dart';
 import 'itunes_library.dart';
+import 'player_layout.dart';
 import 'podcast_opml.dart';
 import 'cue_sheet.dart';
 
@@ -2297,6 +2298,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _crossfade = false;
   int _crossfadeSeconds = 3;
   bool _equalizerEnabled = false;
+  List<String> _playerControls = List<String>.from(defaultPlayerControls);
+  bool _playerLayoutCustomized = false;
   String _activeView = 'queue';
   String _searchQuery = '';
   String _libraryFilter = 'All';
@@ -2775,6 +2778,11 @@ class _PlayerPageState extends State<PlayerPage>
         _librarySort = settings['librarySort'] as String? ?? 'Added';
         _librarySortDescending =
             settings['librarySortDescending'] as bool? ?? false;
+        final savedPlayerControls = settings['playerControls'];
+        if (savedPlayerControls is List) {
+          _playerControls = normalizePlayerControls(savedPlayerControls);
+          _playerLayoutCustomized = true;
+        }
         final savedBands = (settings['eqBands'] as List?)?.cast<num>();
         if (savedBands != null && savedBands.length == _eqBands.length) {
           for (var i = 0; i < _eqBands.length; i++) {
@@ -2832,6 +2840,7 @@ class _PlayerPageState extends State<PlayerPage>
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
+        if (_playerLayoutCustomized) 'playerControls': _playerControls,
       }),
     );
   }
@@ -5924,6 +5933,243 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _showPlayerLayout() async {
+    final draft = List<String>.from(_playerControls);
+    var resetToDefault = false;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Customize player controls'),
+          content: SizedBox(
+            width: 400,
+            height: 430,
+            child: Column(
+              children: [
+                const Text(
+                  'Drag to reorder. Keep Play / pause in the bar and add the actions you use.',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ReorderableListView(
+                    onReorder: (oldIndex, newIndex) {
+                      if (newIndex > oldIndex) newIndex--;
+                      final control = draft.removeAt(oldIndex);
+                      draft.insert(newIndex, control);
+                      resetToDefault = false;
+                      setDialogState(() {});
+                    },
+                    children: [
+                      for (var index = 0; index < draft.length; index++)
+                        ListTile(
+                          key: ValueKey('${draft[index]}-$index'),
+                          dense: true,
+                          leading: ReorderableDragStartListener(
+                            index: index,
+                            child: const Icon(
+                              Icons.drag_handle,
+                              color: Colors.white38,
+                            ),
+                          ),
+                          title: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              value: draft[index],
+                              items: [
+                                for (final entry in playerControlLabels.entries)
+                                  if (entry.key == draft[index] ||
+                                      !draft.contains(entry.key))
+                                    DropdownMenuItem(
+                                      value: entry.key,
+                                      child: Text(
+                                        entry.value,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                              ],
+                              onChanged: (value) {
+                                if (value == null) return;
+                                draft[index] = value;
+                                resetToDefault = false;
+                                setDialogState(() {});
+                              },
+                            ),
+                          ),
+                          trailing: IconButton(
+                            tooltip: 'Remove control',
+                            onPressed: draft[index] == 'playPause'
+                                ? null
+                                : () {
+                                    draft.removeAt(index);
+                                    resetToDefault = false;
+                                    setDialogState(() {});
+                                  },
+                            icon: const Icon(Icons.remove_circle_outline),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                DropdownButton<String>(
+                  value: null,
+                  hint: const Text('Add a control'),
+                  items: [
+                    for (final entry in playerControlLabels.entries)
+                      if (!draft.contains(entry.key))
+                        DropdownMenuItem(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    draft.add(value);
+                    resetToDefault = false;
+                    setDialogState(() {});
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                draft
+                  ..clear()
+                  ..addAll(defaultPlayerControls);
+                resetToDefault = true;
+                setDialogState(() {});
+              },
+              child: const Text('Reset'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save layout'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    setState(() {
+      _playerControls = normalizePlayerControls(draft);
+      _playerLayoutCustomized = !resetToDefault;
+    });
+    await _saveQueue();
+  }
+
+  Widget _playerControl(String control) {
+    final selectedColor = const Color(0xffef4bff);
+    switch (control) {
+      case 'previous':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _previous,
+          icon: const Icon(Icons.skip_previous_rounded),
+          color: Colors.white70,
+        );
+      case 'rewind15':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => _skipBy(const Duration(seconds: -15)),
+          icon: const Icon(Icons.fast_rewind_rounded),
+          color: Colors.white70,
+        );
+      case 'playPause':
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0xffef4bff),
+          ),
+          child: IconButton(
+            tooltip: _isPlaying ? 'Pause' : 'Play',
+            onPressed: _togglePlay,
+            icon: Icon(
+              _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            ),
+            iconSize: 28,
+            color: Colors.white,
+          ),
+        );
+      case 'forward15':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => _skipBy(const Duration(seconds: 15)),
+          icon: const Icon(Icons.fast_forward_rounded),
+          color: Colors.white70,
+        );
+      case 'next':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _next,
+          icon: const Icon(Icons.skip_next_rounded),
+          color: Colors.white70,
+        );
+      case 'shuffle':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() => _shuffle = !_shuffle),
+          icon: const Icon(Icons.shuffle_rounded),
+          color: _shuffle ? selectedColor : Colors.white38,
+        );
+      case 'repeat':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() {
+            if (!_repeat && !_repeatOne) {
+              _repeat = true;
+            } else if (_repeat) {
+              _repeat = false;
+              _repeatOne = true;
+            } else {
+              _repeatOne = false;
+            }
+          }),
+          icon: Icon(
+            _repeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+          ),
+          color: (_repeat || _repeatOne) ? selectedColor : Colors.white38,
+        );
+      case 'equalizer':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showEqualizer,
+          icon: const Icon(Icons.equalizer_rounded),
+          color: _equalizerEnabled ? selectedColor : Colors.white70,
+        );
+      case 'speed':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showPlaybackSpeed,
+          icon: const Icon(Icons.speed_rounded),
+          color: Colors.white70,
+        );
+      case 'sleep':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showSleepTimer,
+          icon: const Icon(Icons.bedtime_outlined),
+          color: _sleepDeadline == null ? Colors.white70 : selectedColor,
+        );
+      case 'queue':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() => _activeView = 'queue'),
+          icon: const Icon(Icons.queue_music_rounded),
+          color: Colors.white70,
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
   @override
   void dispose() {
     _sleepTimer?.cancel();
@@ -6239,6 +6485,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'managePodcasts') _managePodcastSubscriptions();
               if (value == 'eq') _showEqualizer();
               if (value == 'speed') _showPlaybackSpeed();
+              if (value == 'layout') _showPlayerLayout();
               if (value == 'theme') _showThemePicker();
               if (value == 'importSkin') _importSkin();
               if (value == 'plugins') _showPluginManager();
@@ -6297,6 +6544,10 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'speed', child: Text('Playback speed')),
+              PopupMenuItem(
+                value: 'layout',
+                child: Text('Customize player controls'),
+              ),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
               PopupMenuItem(
                 value: 'importSkin',
@@ -7162,95 +7413,138 @@ class _PlayerPageState extends State<PlayerPage>
               _time(_duration),
               style: const TextStyle(color: Colors.white38, fontSize: 11),
             ),
+            IconButton(
+              tooltip: 'Customize player controls',
+              onPressed: _showPlayerLayout,
+              icon: const Icon(Icons.tune_rounded, size: 18),
+              color: Colors.white54,
+            ),
           ],
         ),
         Row(
           children: [
-            IconButton(
-              tooltip: 'Rewind 15 seconds',
-              onPressed: () => _skipBy(const Duration(seconds: -15)),
-              icon: const Icon(Icons.fast_rewind_rounded),
-              color: Colors.white70,
-            ),
-            IconButton(
-              onPressed: _previous,
-              icon: const Icon(Icons.skip_previous_rounded),
-              color: Colors.white70,
-            ),
-            if (MediaQuery.sizeOf(context).width >= 600)
-              IconButton(
-                onPressed: () => setState(() => _shuffle = !_shuffle),
-                icon: const Icon(Icons.shuffle_rounded),
-                color: _shuffle ? const Color(0xffef4bff) : Colors.white38,
-              ),
-            const Spacer(),
-            Container(
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Color(0xffef4bff),
-              ),
-              child: IconButton(
-                onPressed: _togglePlay,
-                icon: Icon(
-                  _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            if (_playerLayoutCustomized) ...[
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: _playerControls.map(_playerControl).toList(),
+                  ),
                 ),
-                iconSize: 28,
-                color: Colors.white,
               ),
-            ),
-            const Spacer(),
-            IconButton(
-              tooltip: 'Skip forward 15 seconds',
-              onPressed: () => _skipBy(const Duration(seconds: 15)),
-              icon: const Icon(Icons.fast_forward_rounded),
-              color: Colors.white70,
-            ),
-            IconButton(
-              onPressed: _next,
-              icon: const Icon(Icons.skip_next_rounded),
-              color: Colors.white70,
-            ),
-            if (MediaQuery.sizeOf(context).width >= 600) ...[
-              IconButton(
-                onPressed: () => setState(() {
-                  if (!_repeat && !_repeatOne) {
-                    _repeat = true;
-                  } else if (_repeat) {
-                    _repeat = false;
-                    _repeatOne = true;
-                  } else {
-                    _repeatOne = false;
-                  }
-                }),
-                icon: Icon(
-                  _repeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+              if (MediaQuery.sizeOf(context).width >= 600) ...[
+                const Icon(
+                  Icons.volume_up_rounded,
+                  color: Colors.white38,
+                  size: 18,
                 ),
-                color: (_repeat || _repeatOne)
-                    ? const Color(0xffef4bff)
-                    : Colors.white38,
+                SizedBox(
+                  width: 110,
+                  child: Slider(
+                    value: _volume,
+                    onChanged: (value) {
+                      setState(() => _volume = value);
+                      if (_dspActive) {
+                        _dspPlayer.setVolume(_volumeFor(_current));
+                      } else {
+                        _player.setVolume(_volumeFor(_current));
+                      }
+                    },
+                    activeColor: Colors.white70,
+                    inactiveColor: Colors.white12,
+                  ),
+                ),
+              ],
+            ] else ...[
+              IconButton(
+                tooltip: 'Rewind 15 seconds',
+                onPressed: () => _skipBy(const Duration(seconds: -15)),
+                icon: const Icon(Icons.fast_rewind_rounded),
+                color: Colors.white70,
               ),
-              const SizedBox(width: 14),
-              const Icon(
-                Icons.volume_up_rounded,
-                color: Colors.white38,
-                size: 18,
+              IconButton(
+                onPressed: _previous,
+                icon: const Icon(Icons.skip_previous_rounded),
+                color: Colors.white70,
               ),
-              SizedBox(
-                width: 110,
-                child: Slider(
-                  value: _volume,
-                  onChanged: (value) {
-                    setState(() => _volume = value);
-                    if (_dspActive) {
-                      _dspPlayer.setVolume(_volumeFor(_current));
+              if (MediaQuery.sizeOf(context).width >= 600)
+                IconButton(
+                  onPressed: () => setState(() => _shuffle = !_shuffle),
+                  icon: const Icon(Icons.shuffle_rounded),
+                  color: _shuffle ? const Color(0xffef4bff) : Colors.white38,
+                ),
+              const Spacer(),
+              Container(
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xffef4bff),
+                ),
+                child: IconButton(
+                  onPressed: _togglePlay,
+                  icon: Icon(
+                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  ),
+                  iconSize: 28,
+                  color: Colors.white,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Skip forward 15 seconds',
+                onPressed: () => _skipBy(const Duration(seconds: 15)),
+                icon: const Icon(Icons.fast_forward_rounded),
+                color: Colors.white70,
+              ),
+              IconButton(
+                onPressed: _next,
+                icon: const Icon(Icons.skip_next_rounded),
+                color: Colors.white70,
+              ),
+              if (MediaQuery.sizeOf(context).width >= 600) ...[
+                IconButton(
+                  onPressed: () => setState(() {
+                    if (!_repeat && !_repeatOne) {
+                      _repeat = true;
+                    } else if (_repeat) {
+                      _repeat = false;
+                      _repeatOne = true;
                     } else {
-                      _player.setVolume(_volumeFor(_current));
+                      _repeatOne = false;
                     }
-                  },
-                  activeColor: Colors.white70,
-                  inactiveColor: Colors.white12,
+                  }),
+                  icon: Icon(
+                    _repeatOne
+                        ? Icons.repeat_one_rounded
+                        : Icons.repeat_rounded,
+                  ),
+                  color: (_repeat || _repeatOne)
+                      ? const Color(0xffef4bff)
+                      : Colors.white38,
                 ),
-              ),
+                const SizedBox(width: 14),
+                const Icon(
+                  Icons.volume_up_rounded,
+                  color: Colors.white38,
+                  size: 18,
+                ),
+                SizedBox(
+                  width: 110,
+                  child: Slider(
+                    value: _volume,
+                    onChanged: (value) {
+                      setState(() => _volume = value);
+                      if (_dspActive) {
+                        _dspPlayer.setVolume(_volumeFor(_current));
+                      } else {
+                        _player.setVolume(_volumeFor(_current));
+                      }
+                    },
+                    activeColor: Colors.white70,
+                    inactiveColor: Colors.white12,
+                  ),
+                ),
+              ],
             ],
           ],
         ),
