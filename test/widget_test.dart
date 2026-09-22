@@ -1,3 +1,7 @@
+import 'dart:io';
+import 'dart:convert';
+
+import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:neonamp/main.dart';
@@ -132,6 +136,52 @@ void main() {
     expect(String.fromCharCodes(tag), contains('TRCK'));
     expect(String.fromCharCodes(tag), contains('USLT'));
   });
+
+  test(
+    'AIFF metadata write round-trips while preserving the audio chunks',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('neonamp-aiff-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/roundtrip.aiff');
+      final chunks = <int>[
+        ...ascii.encode('COMM'),
+        0, 0, 0, 18,
+        0, 1, // mono
+        0, 0, 0, 0, // no sample frames
+        0, 16, // 16-bit PCM
+        0x40, 0x0e, 0xac, 0x44, 0, 0, 0, 0, 0, 0, // 44100 Hz
+        ...ascii.encode('SSND'),
+        0, 0, 0, 8,
+        0, 0, 0, 0, // offset
+        0, 0, 0, 0, // block size
+      ];
+      await file.writeAsBytes([
+        ...ascii.encode('FORM'),
+        ...[0, 0, 0, 4 + chunks.length],
+        ...ascii.encode('AIFF'),
+        ...chunks,
+      ]);
+      await writeAiffTags(file, [
+        'Title',
+        'Artist',
+        'Album',
+        'Genre',
+        '',
+        '2026',
+        '2',
+        '9',
+        '1',
+        '2',
+        'Lyrics',
+      ]);
+      final updated = await file.readAsBytes();
+      expect(String.fromCharCodes(updated.sublist(12, 16)), 'COMM');
+      expect(String.fromCharCodes(updated.sublist(38, 42)), 'SSND');
+      expect(updated.sublist(12, 12 + chunks.length), chunks);
+      expect(readMetadata(file, getImage: false).title, 'Title');
+      expect(readMetadata(file, getImage: false).artist, 'Artist');
+    },
+  );
 
   test('folder scans recognize the metadata reader audio formats', () {
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);

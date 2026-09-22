@@ -129,10 +129,15 @@ Future<void> writeAiffTags(File file, List<String> values) async {
         (source[offset + 6] << 8) |
         source[offset + 7];
     final end = offset + 8 + chunkSize;
-    if (chunkSize < 0 || end > source.length) break;
+    if (chunkSize < 0 || end > source.length) {
+      throw const FormatException('Truncated AIFF chunk');
+    }
     final next = end + (chunkSize.isOdd ? 1 : 0);
     if (chunkId != 'ID3 ') body.addAll(source.sublist(offset, next));
     offset = next;
+  }
+  if (offset != source.length) {
+    throw const FormatException('Malformed AIFF chunk alignment');
   }
   final tag = buildAiffId3Tag(values);
   final tagChunk = <int>[
@@ -144,7 +149,24 @@ Future<void> writeAiffTags(File file, List<String> values) async {
   final output = <int>[...source.sublist(0, 12), ...body, ...tagChunk];
   final formSize = output.length - 8;
   output.setRange(4, 8, _bigEndian32(formSize));
-  await file.writeAsBytes(output);
+  final suffix = '.neonamp-${DateTime.now().microsecondsSinceEpoch}';
+  final temporary = File('${file.path}$suffix.tmp');
+  final backup = File('${file.path}$suffix.bak');
+  var movedOriginal = false;
+  try {
+    await temporary.writeAsBytes(output, flush: true);
+    await file.rename(backup.path);
+    movedOriginal = true;
+    await temporary.rename(file.path);
+    await backup.delete();
+  } catch (_) {
+    if (movedOriginal && !await file.exists() && await backup.exists()) {
+      await backup.rename(file.path);
+    }
+    rethrow;
+  } finally {
+    if (await temporary.exists()) await temporary.delete();
+  }
 }
 
 double? parseReplayGainDb(String? value) {
