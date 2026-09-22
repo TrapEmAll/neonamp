@@ -28,6 +28,7 @@ import 'tracker_modules.dart';
 import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
 import 'playlist_library_resolution.dart';
+import 'midi_dsp_renderer.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -2329,6 +2330,7 @@ class _PlayerPageState extends State<PlayerPage>
   DspLocalPlayer? _crossfadeDspPlayer;
   bool _dspActive = false;
   bool _midiActive = false;
+  String? _midiSoundFontPath;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
   Timer? _sleepTimer;
@@ -2350,6 +2352,12 @@ class _PlayerPageState extends State<PlayerPage>
     replayGainDb: track?.replayGainDb,
     replayGainEnabled: _replayGainEnabled,
   );
+
+  bool get _midiEqualizerUnavailable =>
+      _current != null &&
+      isMidiFilePath(_current!.path) &&
+      (_midiSoundFontPath == null ||
+          !FileSystemEntity.isFileSync(_midiSoundFontPath!));
 
   void _applyBalance(double value) {
     final balance = normalizeStereoBalance(value);
@@ -2809,6 +2817,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _setEqualizerEnabled(bool enabled) async {
+    if (_midiEqualizerUnavailable) return;
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
     setState(() => _equalizerEnabled = enabled);
@@ -3063,6 +3072,7 @@ class _PlayerPageState extends State<PlayerPage>
         _crossfadeSeconds =
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
+        _midiSoundFontPath = settings['midiSoundFontPath'] as String?;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
@@ -3128,6 +3138,7 @@ class _PlayerPageState extends State<PlayerPage>
         'crossfade': _crossfade,
         'crossfadeSeconds': _crossfadeSeconds,
         'equalizerEnabled': _equalizerEnabled,
+        'midiSoundFontPath': _midiSoundFontPath,
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
         'playbackSpeed': _playbackSpeed,
@@ -3695,11 +3706,51 @@ class _PlayerPageState extends State<PlayerPage>
         _resumePositions[track.identityKey],
       );
       final trackVolume = _volumeFor(track);
+      String? renderedMidiPath;
+      final soundFontPath = _midiSoundFontPath;
+      if (isMidiFilePath(track.path) &&
+          soundFontPath != null &&
+          FileSystemEntity.isFileSync(soundFontPath)) {
+        if (_midiActive) {
+          await _midiPlayer.stop();
+          _midiActive = false;
+        }
+        if (_dspActive) {
+          await _dspPlayer.stop();
+          _dspActive = false;
+        }
+        await _player.stop();
+        final renderedPath =
+            '${Directory.systemTemp.path}${Platform.pathSeparator}'
+            'neonamp-midi-${DateTime.now().microsecondsSinceEpoch}.wav';
+        try {
+          renderedMidiPath = await renderMidiToWav(
+            midiPath: track.path,
+            soundFontPath: soundFontPath,
+            outputPath: renderedPath,
+          );
+        } on Object catch (error) {
+          final output = File(renderedPath);
+          if (await output.exists()) await output.delete();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'SoundFont render failed; using system MIDI: $error',
+                ),
+              ),
+            );
+          }
+        }
+      }
       final shouldUseDsp =
-          !track.path.startsWith('http') &&
-          !isMidiFilePath(track.path) &&
-          (_equalizerEnabled || isTrackerModulePath(track.path));
-      if (Platform.isWindows && isMidiFilePath(track.path)) {
+          renderedMidiPath != null ||
+          (!track.path.startsWith('http') &&
+              !isMidiFilePath(track.path) &&
+              (_equalizerEnabled || isTrackerModulePath(track.path)));
+      if (Platform.isWindows &&
+          isMidiFilePath(track.path) &&
+          renderedMidiPath == null) {
         if (_dspActive) {
           await _dspPlayer.stop();
           _dspActive = false;
@@ -3718,12 +3769,13 @@ class _PlayerPageState extends State<PlayerPage>
           _dspActive = true;
         }
         await _dspPlayer.play(
-          track.path,
+          renderedMidiPath ?? track.path,
           volume: trackVolume,
           playbackSpeed: _playbackSpeed,
           equalizerEnabled: _equalizerEnabled,
           bands: _eqBands,
           balance: _balance,
+          deleteSourceOnStop: renderedMidiPath != null,
         );
         _audioHandler?.publishTrack(track);
       } else {
@@ -5927,6 +5979,70 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _importMidiSoundFont() async {
+    final selected = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['sf2'],
+    );
+    if (selected == null) return;
+    File? candidate;
+    var activated = false;
+    try {
+      final support = await getApplicationSupportDirectory();
+      final directory = Directory(
+        '${support.path}${Platform.pathSeparator}soundfonts',
+      );
+      await directory.create(recursive: true);
+      candidate = File(
+        '${directory.path}${Platform.pathSeparator}'
+        'neonamp-midi-${DateTime.now().microsecondsSinceEpoch}.sf2',
+      );
+      final sink = candidate.openWrite();
+      try {
+        await sink.addStream(selected.readAsByteStream());
+      } finally {
+        await sink.close();
+      }
+      await validateMidiSoundFont(candidate.path);
+      if (!mounted) {
+        await candidate.delete();
+        return;
+      }
+      final oldPath = _midiSoundFontPath;
+      final importedFont = candidate;
+      setState(() => _midiSoundFontPath = importedFont.path);
+      activated = true;
+      await _saveQueue();
+      if (oldPath != null && oldPath != importedFont.path) {
+        final oldFont = File(oldPath);
+        if (await oldFont.exists()) await oldFont.delete();
+      }
+      final wasPlaying = _isPlaying;
+      final wasActive = wasPlaying || _playerState == PlayerState.paused;
+      final previousPosition = _position;
+      if (_current != null && isMidiFilePath(_current!.path) && wasActive) {
+        await _select(_selected);
+        if (previousPosition > Duration.zero) {
+          await _seekCurrent(previousPosition);
+        }
+        if (!wasPlaying) await _pauseCurrent();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('MIDI SoundFont imported.')),
+        );
+      }
+    } on Object catch (error) {
+      if (!activated && candidate != null && await candidate.exists()) {
+        await candidate.delete();
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import SoundFont: $error')),
+      );
+    }
+  }
+
   Future<void> _importPlugin() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -6252,7 +6368,7 @@ class _PlayerPageState extends State<PlayerPage>
               const Spacer(),
               Switch(
                 value: _equalizerEnabled,
-                onChanged: _midiActive
+                onChanged: _midiEqualizerUnavailable
                     ? null
                     : (value) {
                         unawaited(_setEqualizerEnabled(value));
@@ -6267,6 +6383,14 @@ class _PlayerPageState extends State<PlayerPage>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_midiEqualizerUnavailable)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'System MIDI playback bypasses DSP. Import a SoundFont from the menu to enable equalizer processing for MIDI/KAR.',
+                        style: TextStyle(color: Colors.white60),
+                      ),
+                    ),
                   DropdownButtonFormField<String>(
                     initialValue: selectedPreset,
                     decoration: const InputDecoration(labelText: 'Preset'),
@@ -6278,7 +6402,7 @@ class _PlayerPageState extends State<PlayerPage>
                           ),
                         )
                         .toList(),
-                    onChanged: _midiActive
+                    onChanged: _midiEqualizerUnavailable
                         ? null
                         : (value) {
                             if (value == null) return;
@@ -6312,7 +6436,7 @@ class _PlayerPageState extends State<PlayerPage>
                           max: 1,
                           divisions: 40,
                           label: stereoBalanceLabel(_balance),
-                          onChanged: _midiActive
+                          onChanged: _midiEqualizerUnavailable
                               ? null
                               : (value) {
                                   setState(() => _balance = value);
@@ -7094,6 +7218,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'layout') _showPlayerLayout();
               if (value == 'theme') _showThemePicker();
               if (value == 'importSkin') _importSkin();
+              if (value == 'midiSoundFont') _importMidiSoundFont();
               if (value == 'plugins') _showPluginManager();
               if (value == 'export') _exportPlaylist();
               if (value == 'sync') _syncToDeviceFolder();
@@ -7161,6 +7286,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'importSkin',
                 child: Text('Import skin package'),
+              ),
+              PopupMenuItem(
+                value: 'midiSoundFont',
+                child: Text('Import MIDI SoundFont for EQ'),
               ),
               PopupMenuItem(value: 'plugins', child: Text('Manage plugins')),
               PopupMenuItem(

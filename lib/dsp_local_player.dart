@@ -56,6 +56,7 @@ class DspLocalPlayer {
     required bool equalizerEnabled,
     required List<double> bands,
     double balance = 0,
+    bool deleteSourceOnStop = false,
   }) async {
     await _ensureInitialized();
     await stop();
@@ -77,7 +78,9 @@ class DspLocalPlayer {
     try {
       source = await soloud.SoLoud.instance.loadFile(
         sourcePath,
-        mode: isTrackerModule ? soloud.LoadMode.disk : soloud.LoadMode.memory,
+        mode: isTrackerModule || deleteSourceOnStop
+            ? soloud.LoadMode.disk
+            : soloud.LoadMode.memory,
       );
     } on Object {
       if (isTrackerModule) {
@@ -100,7 +103,11 @@ class DspLocalPlayer {
     );
     soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
     _source = source;
-    _renderedModulePath = isTrackerModule ? sourcePath : null;
+    _renderedModulePath = isTrackerModule
+        ? sourcePath
+        : deleteSourceOnStop
+        ? sourcePath
+        : null;
     _handle = handle;
     _completionSent = false;
     _durationController.add(soloud.SoLoud.instance.getLength(source));
