@@ -11,17 +11,16 @@ void main() {
       final nativeSource = await File(
         'android/app/src/main/kotlin/com/neonamp/neonamp/MainActivity.kt',
       ).readAsString();
-      final audioClassificationStart = nativeSource.indexOf('val extension =');
-      final directoryFallback = nativeSource.indexOf(
-        'if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR)',
-        audioClassificationStart,
+      final directoryClassificationStart = nativeSource.indexOf(
+        'val isDirectory =',
       );
-      expect(audioClassificationStart, greaterThanOrEqualTo(0));
+      final audioClassificationStart = nativeSource.indexOf('val extension =');
+      expect(directoryClassificationStart, greaterThanOrEqualTo(0));
+      expect(audioClassificationStart, greaterThan(directoryClassificationStart));
       expect(
-        directoryFallback,
-        greaterThan(audioClassificationStart),
-        reason:
-            'Recognize supported audio names before following provider MIME.',
+        nativeSource.indexOf('pending.add(documentId)', directoryClassificationStart),
+        greaterThan(directoryClassificationStart),
+        reason: 'Recurse through provider directories before classifying files.',
       );
       final nativeSetBody = RegExp(
         r'val audioExtensions = setOf\((.*?)\n\s*\)',

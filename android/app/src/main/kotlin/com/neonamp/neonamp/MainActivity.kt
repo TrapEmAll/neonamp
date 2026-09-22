@@ -313,14 +313,18 @@ class MainActivity : AudioServiceActivity() {
                     val documentId = cursor.getString(idColumn)
                     val name = cursor.getString(nameColumn) ?: continue
                     val mimeType = cursor.getString(mimeColumn).orEmpty()
+                    val isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
+                        mimeType.equals("inode/directory", ignoreCase = true) ||
+                        mimeType.endsWith("/directory", ignoreCase = true)
+                    if (isDirectory) {
+                        pending.add(documentId)
+                        continue
+                    }
                     val extension =
                         name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                         .takeIf { it in audioExtensions }
                         ?: audioExtensionForMimeType(mimeType)
                     if (extension == null) {
-                        if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
-                            pending.add(documentId)
-                        }
                         continue
                     }
                     val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
