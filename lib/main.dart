@@ -915,6 +915,18 @@ Future<void> writeAacTags(File file, List<String> values) async {
   await _replaceFileAtomically(file, [...buildAiffId3Tag(values), ...source]);
 }
 
+Future<void> writeAacArtwork(
+  File file,
+  Uint8List artwork,
+  String mimeType, {
+  String lyrics = '',
+}) async {
+  updateMetadata(file, (metadata) {
+    metadata.setPictures([Picture(artwork, mimeType, PictureType.coverFront)]);
+  });
+  await _writeAacLyricsFrame(file, lyrics);
+}
+
 Future<void> _writeAacLyricsFrame(File file, String lyrics) async {
   final source = await file.readAsBytes();
   if (source.length < 10 ||
@@ -959,6 +971,7 @@ Future<void> _writeAacLyricsFrame(File file, String lyrics) async {
       ...payload,
     ]);
   }
+
   final tag = <int>[
     ...source.sublist(0, 6),
     ..._syncSafe32(frames.length),
@@ -3976,6 +3989,13 @@ class _PlayerPageState extends State<PlayerPage>
           ],
           artwork: bytes,
           artworkMimeType: mimeType,
+        );
+      } else if (isAacAudioPath(track.path)) {
+        await writeAacArtwork(
+          File(track.path),
+          bytes,
+          mimeType,
+          lyrics: track.lyrics ?? '',
         );
       } else {
         updateMetadata(File(track.path), (metadata) {
