@@ -3270,7 +3270,7 @@ class _PlayerPageState extends State<PlayerPage>
             track.name,
             track.artist,
             track.album,
-            track.genre ?? '',
+            track.genre,
             '',
             track.year?.toString() ?? '',
             track.trackNumber?.toString() ?? '',
