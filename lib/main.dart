@@ -917,14 +917,27 @@ Future<void> writeAacTags(File file, List<String> values) async {
 
 Future<void> writeAacArtwork(
   File file,
+  List<String> values,
   Uint8List artwork,
-  String mimeType, {
-  String lyrics = '',
-}) async {
+  String mimeType,
+) async {
+  final source = await file.readAsBytes();
+  final hasLeadingId3 =
+      source.length >= 3 &&
+      source[0] == 0x49 &&
+      source[1] == 0x44 &&
+      source[2] == 0x33;
+  if (!hasLeadingId3) {
+    await _replaceFileAtomically(file, [
+      ...buildAiffId3Tag(values, artwork: artwork, artworkMimeType: mimeType),
+      ...source,
+    ]);
+    return;
+  }
   updateMetadata(file, (metadata) {
     metadata.setPictures([Picture(artwork, mimeType, PictureType.coverFront)]);
   });
-  await _writeAacLyricsFrame(file, lyrics);
+  await _writeAacLyricsFrame(file, values[10]);
 }
 
 Future<void> _writeAacLyricsFrame(File file, String lyrics) async {
@@ -3993,9 +4006,21 @@ class _PlayerPageState extends State<PlayerPage>
       } else if (isAacAudioPath(track.path)) {
         await writeAacArtwork(
           File(track.path),
+          [
+            track.name,
+            track.artist,
+            track.album,
+            track.genre,
+            '',
+            track.year?.toString() ?? '',
+            track.trackNumber?.toString() ?? '',
+            track.trackTotal?.toString() ?? '',
+            track.discNumber?.toString() ?? '',
+            track.discTotal?.toString() ?? '',
+            track.lyrics ?? '',
+          ],
           bytes,
           mimeType,
-          lyrics: track.lyrics ?? '',
         );
       } else {
         updateMetadata(File(track.path), (metadata) {
