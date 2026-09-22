@@ -25,4 +25,78 @@ void main() {
       expect(DlnaCast.parseDlnaByteRange(null, 0), isNull);
     });
   });
+
+  group('CUE segment position mapping', () {
+    const start = Duration(minutes: 1, seconds: 30);
+    const end = Duration(minutes: 2, seconds: 15);
+
+    test('converts renderer source time to a zero-based segment position', () {
+      expect(
+        DlnaCast.sourceToSegmentPosition(
+          const Duration(minutes: 1, seconds: 45),
+          start,
+          end,
+        ),
+        const Duration(seconds: 15),
+      );
+      expect(
+        DlnaCast.sourceToSegmentPosition(
+          const Duration(minutes: 1),
+          start,
+          end,
+        ),
+        Duration.zero,
+      );
+      expect(
+        DlnaCast.sourceToSegmentPosition(
+          const Duration(minutes: 3),
+          start,
+          end,
+        ),
+        const Duration(seconds: 45),
+      );
+    });
+
+    test('converts segment seeks to source time and clamps boundaries', () {
+      expect(
+        DlnaCast.segmentToSourcePosition(
+          const Duration(seconds: 12),
+          start,
+          end,
+        ),
+        const Duration(minutes: 1, seconds: 42),
+      );
+      expect(
+        DlnaCast.segmentToSourcePosition(
+          const Duration(minutes: 1),
+          start,
+          end,
+        ),
+        end,
+      );
+      expect(
+        DlnaCast.segmentToSourcePosition(
+          const Duration(seconds: -5),
+          start,
+          end,
+        ),
+        start,
+      );
+    });
+  });
+
+  group('DLNA time parsing', () {
+    test('parses hours and fractional seconds', () {
+      expect(
+        DlnaCast.parseDlnaPosition('01:02:03.45'),
+        const Duration(hours: 1, minutes: 2, seconds: 3, milliseconds: 450),
+      );
+    });
+
+    test('rejects malformed and out-of-range clock components', () {
+      expect(DlnaCast.parseDlnaPosition('00:60:00'), isNull);
+      expect(DlnaCast.parseDlnaPosition('00:00:60'), isNull);
+      expect(DlnaCast.parseDlnaPosition('not a time'), isNull);
+    });
+  });
 }

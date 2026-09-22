@@ -11,6 +11,8 @@ class DlnaCast {
   HttpServer? _server;
   MediaRenderer? _renderer;
   DeviceDiscoverer? _discoverer;
+  Duration _segmentStart = Duration.zero;
+  Duration? _segmentEnd;
 
   bool get isConnected => _renderer != null;
   String? get rendererName => _renderer?.description?.friendlyName;
@@ -47,9 +49,15 @@ class DlnaCast {
     required String artist,
     required String album,
     required Duration duration,
+    Duration segmentStart = Duration.zero,
+    Duration? segmentEnd,
   }) async {
     final transport = renderer.avTransport;
     if (transport == null) throw StateError('This device cannot play media.');
+    if (segmentStart.isNegative ||
+        (segmentEnd != null && segmentEnd <= segmentStart)) {
+      throw ArgumentError('The media segment boundaries are invalid.');
+    }
     final isUrl = path.startsWith('http://') || path.startsWith('https://');
     final uri = isUrl ? path : await _serveFile(path, renderer);
     final mime = _mimeType(path);
@@ -66,8 +74,19 @@ class DlnaCast {
     try {
       await transport.setAVTransportURI(uri, metadata: track.toXml());
       await transport.play();
+      if (segmentStart > Duration.zero) {
+        await transport.seek(SeekMode.relTime, _formatDlnaTime(segmentStart));
+      }
       _renderer = renderer;
+      _segmentStart = segmentStart;
+      _segmentEnd = segmentEnd;
     } catch (_) {
+      try {
+        await transport.stop();
+      } catch (_) {
+        // Preserve the original playback error; some renderers reject Stop
+        // while they are still preparing the new media resource.
+      }
       if (!isUrl) {
         await _server?.close(force: true);
         _server = null;
@@ -224,8 +243,12 @@ class DlnaCast {
 
   Future<void> pause() async => _renderer?.avTransport?.pause();
   Future<void> resume() async => _renderer?.avTransport?.play();
-  Future<void> seek(Duration position) async =>
-      _renderer?.avTransport?.seek(SeekMode.relTime, _formatDlnaTime(position));
+  Future<void> seek(Duration position) async => _renderer?.avTransport?.seek(
+    SeekMode.relTime,
+    _formatDlnaTime(
+      segmentToSourcePosition(position, _segmentStart, _segmentEnd),
+    ),
+  );
   Future<void> setVolume(double value) async {
     final control = _renderer?.renderingControl;
     if (control == null) return;
@@ -234,14 +257,66 @@ class DlnaCast {
 
   Future<Duration?> getPosition() async {
     final value = await _renderer?.avTransport?.getPositionInfo();
-    final match = RegExp(r'^(\d+):(\d+):(\d+)(?:\.(\d+))?$')
-        .firstMatch(value?.relTime ?? '');
+    final sourcePosition = parseDlnaPosition(value?.relTime);
+    if (sourcePosition == null) return null;
+    return sourceToSegmentPosition(sourcePosition, _segmentStart, _segmentEnd);
+  }
+
+  static Duration? parseDlnaPosition(String? value) {
+    final match = RegExp(r'^(\d+):(\d{2}):(\d{2})(?:\.(\d+))?$')
+        .firstMatch(value?.trim() ?? '');
     if (match == null) return null;
+    final hours = int.tryParse(match.group(1)!);
+    final minutes = int.tryParse(match.group(2)!);
+    final seconds = int.tryParse(match.group(3)!);
+    if (hours == null ||
+        minutes == null ||
+        seconds == null ||
+        minutes >= 60 ||
+        seconds >= 60) {
+      return null;
+    }
+    final fraction = match.group(4);
+    final milliseconds = fraction == null
+        ? 0
+        : int.parse('${fraction}000'.substring(0, 3));
     return Duration(
-      hours: int.parse(match.group(1)!),
-      minutes: int.parse(match.group(2)!),
-      seconds: int.parse(match.group(3)!),
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+      milliseconds: milliseconds,
     );
+  }
+
+  static Duration sourceToSegmentPosition(
+    Duration sourcePosition,
+    Duration segmentStart,
+    Duration? segmentEnd,
+  ) {
+    var relative = sourcePosition - segmentStart;
+    if (relative.isNegative) relative = Duration.zero;
+    final segmentDuration = segmentEnd == null
+        ? null
+        : segmentEnd - segmentStart;
+    if (segmentDuration != null && relative > segmentDuration) {
+      relative = segmentDuration;
+    }
+    return relative;
+  }
+
+  static Duration segmentToSourcePosition(
+    Duration segmentPosition,
+    Duration segmentStart,
+    Duration? segmentEnd,
+  ) {
+    var relative = segmentPosition.isNegative ? Duration.zero : segmentPosition;
+    final segmentDuration = segmentEnd == null
+        ? null
+        : segmentEnd - segmentStart;
+    if (segmentDuration != null && relative > segmentDuration) {
+      relative = segmentDuration;
+    }
+    return segmentStart + relative;
   }
 
   static String _formatDlnaTime(Duration value) =>
@@ -251,6 +326,8 @@ class DlnaCast {
       await _renderer?.avTransport?.stop();
     } finally {
       _renderer = null;
+      _segmentStart = Duration.zero;
+      _segmentEnd = null;
       await _server?.close(force: true);
       _server = null;
     }
