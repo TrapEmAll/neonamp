@@ -41,7 +41,7 @@ target_compile_features(${BINARY_NAME} PRIVATE cxx_std_17)
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "runtimeobject.lib" "mfplat.lib"
-  "mfreadwrite.lib" "mfuuid.lib")
+  "mfreadwrite.lib" "mfuuid.lib" "winmm.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE neonamp_tracker_codec)
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 

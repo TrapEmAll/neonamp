@@ -24,6 +24,7 @@ import 'cue_sheet.dart';
 import 'dlna_cast.dart';
 import 'playlist_formats.dart';
 import 'tracker_modules.dart';
+import 'windows_midi_player.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -94,7 +95,8 @@ bool isSupportedLibraryAudioPath(String path) {
   final dot = lowerPath.lastIndexOf('.');
   return dot >= 0 &&
       (extensions.contains(lowerPath.substring(dot)) ||
-          trackerModuleExtensions.contains(lowerPath.substring(dot + 1)));
+          trackerModuleExtensions.contains(lowerPath.substring(dot + 1)) ||
+          midiFileExtensions.contains(lowerPath.substring(dot + 1)));
 }
 
 int nextQueueIndex({
@@ -2269,6 +2271,7 @@ class _PlayerPageState extends State<PlayerPage>
   AudioPlayer _activePlayer = AudioPlayer();
   final DlnaCast _dlnaCast = DlnaCast();
   DspLocalPlayer _dspPlayer = DspLocalPlayer();
+  final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
   final List<Track> _library = [];
@@ -2321,6 +2324,7 @@ class _PlayerPageState extends State<PlayerPage>
   AudioPlayer? _crossfadeAudioPlayer;
   DspLocalPlayer? _crossfadeDspPlayer;
   bool _dspActive = false;
+  bool _midiActive = false;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
   Timer? _sleepTimer;
@@ -2359,6 +2363,7 @@ class _PlayerPageState extends State<PlayerPage>
     super.initState();
     _bindPlayerStreams();
     _bindDspStreams();
+    _bindMidiStreams();
     _initializeWindowsMediaKeys();
     _initializeAudioService();
     _loadQueue();
@@ -2386,7 +2391,7 @@ class _PlayerPageState extends State<PlayerPage>
           await _previous();
           break;
         case 'stop':
-          await _player.stop();
+          await _stopCurrent();
           break;
       }
       return null;
@@ -2497,6 +2502,27 @@ class _PlayerPageState extends State<PlayerPage>
     });
     _dspCompleteSub = _dspPlayer.onPlayerComplete.listen((_) {
       if (_dspActive) unawaited(_handleComplete());
+    });
+  }
+
+  void _bindMidiStreams() {
+    _midiPlayer.onPositionChanged.listen((value) {
+      if (!mounted || !_midiActive || _selectionInProgress) return;
+      setState(() => _position = value);
+      _rememberResumePosition(value);
+    });
+    _midiPlayer.onDurationChanged.listen((value) {
+      if (!mounted || !_midiActive) return;
+      setState(() => _duration = value);
+      unawaited(_syncWindowsMediaSession());
+    });
+    _midiPlayer.onPlayerStateChanged.listen((value) {
+      if (!mounted || !_midiActive) return;
+      setState(() => _playerState = value);
+      unawaited(_syncWindowsMediaSession());
+    });
+    _midiPlayer.onPlayerComplete.listen((_) {
+      if (_midiActive) unawaited(_handleComplete());
     });
   }
 
@@ -2615,6 +2641,17 @@ class _PlayerPageState extends State<PlayerPage>
                               onTap: () async {
                                 final track = _current;
                                 if (track == null) return;
+                                if (isMidiFilePath(track.path)) {
+                                  ScaffoldMessenger.of(this.context)
+                                      .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'MIDI/KAR casting is not supported yet.',
+                                          ),
+                                        ),
+                                      );
+                                  return;
+                                }
                                 if (track.cueStartMs != null) {
                                   ScaffoldMessenger.of(this.context)
                                       .showSnackBar(
@@ -2638,6 +2675,8 @@ class _PlayerPageState extends State<PlayerPage>
                                   );
                                   if (_dspActive) {
                                     await _dspPlayer.pause();
+                                  } else if (_midiActive) {
+                                    await _midiPlayer.pause();
                                   } else {
                                     await _player.pause();
                                   }
@@ -2683,7 +2722,9 @@ class _PlayerPageState extends State<PlayerPage>
       if (mounted) setState(() => _playerState = PlayerState.playing);
       return;
     }
-    if (_dspActive) {
+    if (_midiActive) {
+      await _midiPlayer.resume();
+    } else if (_dspActive) {
       await _dspPlayer.resume();
     } else {
       await _player.resume();
@@ -2696,7 +2737,9 @@ class _PlayerPageState extends State<PlayerPage>
       if (mounted) setState(() => _playerState = PlayerState.paused);
       return;
     }
-    if (_dspActive) {
+    if (_midiActive) {
+      await _midiPlayer.pause();
+    } else if (_dspActive) {
       await _dspPlayer.pause();
     } else {
       await _player.pause();
@@ -2708,7 +2751,9 @@ class _PlayerPageState extends State<PlayerPage>
       await _dlnaCast.stop();
       if (mounted) setState(() => _playerState = PlayerState.stopped);
     }
-    if (_dspActive) {
+    if (_midiActive) {
+      await _midiPlayer.stop();
+    } else if (_dspActive) {
       await _dspPlayer.stop();
     } else {
       await _player.stop();
@@ -2724,7 +2769,9 @@ class _PlayerPageState extends State<PlayerPage>
     final sourcePosition = _current == null
         ? position
         : position + _current!.cueStart;
-    if (_dspActive) {
+    if (_midiActive) {
+      await _midiPlayer.seek(position);
+    } else if (_dspActive) {
       await _dspPlayer.seek(sourcePosition);
     } else {
       await _player.seek(sourcePosition);
@@ -2741,6 +2788,8 @@ class _PlayerPageState extends State<PlayerPage>
     if (_current != null) {
       if (_dspActive) {
         await _dspPlayer.setPlaybackSpeed(value);
+      } else if (_midiActive) {
+        await _midiPlayer.setPlaybackSpeed(value);
       } else {
         await _player.setPlaybackRate(value);
       }
@@ -3052,6 +3101,7 @@ class _PlayerPageState extends State<PlayerPage>
         'webm',
         'mkv',
         'mka',
+        ...midiFileExtensions,
         ...trackerModuleExtensions,
       ],
     );
@@ -3350,6 +3400,9 @@ class _PlayerPageState extends State<PlayerPage>
   Future<Track> _readTrack(String path, String fileName) async {
     final fallback = fileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
     try {
+      if (isMidiFilePath(path)) {
+        return Track(path: path, name: fallback, artist: 'MIDI');
+      }
       if (isTrackerModulePath(path)) {
         final module = await TrackerModuleDecoder.readInfo(path);
         return Track(
@@ -3435,8 +3488,22 @@ class _PlayerPageState extends State<PlayerPage>
       final trackVolume = _volumeFor(track);
       final shouldUseDsp =
           !track.path.startsWith('http') &&
+          !isMidiFilePath(track.path) &&
           (_equalizerEnabled || isTrackerModulePath(track.path));
-      if (shouldUseDsp) {
+      if (Platform.isWindows && isMidiFilePath(track.path)) {
+        if (_dspActive) {
+          await _dspPlayer.stop();
+          _dspActive = false;
+        }
+        if (!_midiActive) await _player.stop();
+        _midiActive = true;
+        await _midiPlayer.play(track.path, playbackSpeed: _playbackSpeed);
+        _audioHandler?.publishTrack(track);
+      } else if (shouldUseDsp) {
+        if (_midiActive) {
+          await _midiPlayer.stop();
+          _midiActive = false;
+        }
         if (!_dspActive) {
           await _player.stop();
           _dspActive = true;
@@ -3451,6 +3518,10 @@ class _PlayerPageState extends State<PlayerPage>
         );
         _audioHandler?.publishTrack(track);
       } else {
+        if (_midiActive) {
+          await _midiPlayer.stop();
+          _midiActive = false;
+        }
         if (_dspActive) {
           await _dspPlayer.stop();
           _dspActive = false;
@@ -3507,6 +3578,9 @@ class _PlayerPageState extends State<PlayerPage>
     final next = _targetNextIndex();
     final cueTransition =
         _current?.cueStartMs != null || _queue[next].cueStartMs != null;
+    if (_midiActive || isMidiFilePath(_queue[next].path)) {
+      useCrossfade = false;
+    }
     if (useCrossfade &&
         !cueTransition &&
         _crossfade &&
@@ -3719,9 +3793,11 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _clearQueue() async {
-    await _player.stop();
+    await _stopCurrent();
     if (_dspActive) await _dspPlayer.stop();
     setState(() {
+      _midiActive = false;
+      _dspActive = false;
       _queue.clear();
       _selected = 0;
       _position = Duration.zero;
@@ -5945,10 +6021,12 @@ class _PlayerPageState extends State<PlayerPage>
               const Spacer(),
               Switch(
                 value: _equalizerEnabled,
-                onChanged: (value) {
-                  unawaited(_setEqualizerEnabled(value));
-                  setDialogState(() {});
-                },
+                onChanged: _midiActive
+                    ? null
+                    : (value) {
+                        unawaited(_setEqualizerEnabled(value));
+                        setDialogState(() {});
+                      },
               ),
             ],
           ),
@@ -5969,25 +6047,27 @@ class _PlayerPageState extends State<PlayerPage>
                           ),
                         )
                         .toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() {
-                        _eqPreset = value;
-                        final pluginBands = pluginPresets[value];
-                        for (var i = 0; i < _eqBands.length; i++) {
-                          _eqBands[i] =
-                              pluginBands?[i] ??
-                              (value == 'Bass boost' && i < 3 ? 6 : 0);
-                        }
-                      });
-                      if (_dspActive) {
-                        _dspPlayer.applyEqualizer(
-                          enabled: _equalizerEnabled,
-                          bands: _eqBands,
-                        );
-                      }
-                      setDialogState(() {});
-                    },
+                    onChanged: _midiActive
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _eqPreset = value;
+                              final pluginBands = pluginPresets[value];
+                              for (var i = 0; i < _eqBands.length; i++) {
+                                _eqBands[i] =
+                                    pluginBands?[i] ??
+                                    (value == 'Bass boost' && i < 3 ? 6 : 0);
+                              }
+                            });
+                            if (_dspActive) {
+                              _dspPlayer.applyEqualizer(
+                                enabled: _equalizerEnabled,
+                                bands: _eqBands,
+                              );
+                            }
+                            setDialogState(() {});
+                          },
                   ),
                   Row(
                     children: [
@@ -5999,11 +6079,13 @@ class _PlayerPageState extends State<PlayerPage>
                           max: 1,
                           divisions: 40,
                           label: stereoBalanceLabel(_balance),
-                          onChanged: (value) {
-                            setState(() => _balance = value);
-                            _applyBalance(value);
-                            setDialogState(() {});
-                          },
+                          onChanged: _midiActive
+                              ? null
+                              : (value) {
+                                  setState(() => _balance = value);
+                                  _applyBalance(value);
+                                  setDialogState(() {});
+                                },
                           onChangeEnd: (_) => unawaited(_saveQueue()),
                         ),
                       ),
@@ -6425,6 +6507,7 @@ class _PlayerPageState extends State<PlayerPage>
     _searchController.dispose();
     _pulse.dispose();
     _player.dispose();
+    unawaited(_midiPlayer.dispose());
     unawaited(_dspPlayer.dispose());
     super.dispose();
   }
@@ -7730,16 +7813,20 @@ class _PlayerPageState extends State<PlayerPage>
                   width: 110,
                   child: Slider(
                     value: _volume,
-                    onChanged: (value) {
-                      setState(() => _volume = value);
-                      if (_casting) {
-                        unawaited(_dlnaCast.setVolume(_volumeFor(_current)));
-                      } else if (_dspActive) {
-                        _dspPlayer.setVolume(_volumeFor(_current));
-                      } else {
-                        _player.setVolume(_volumeFor(_current));
-                      }
-                    },
+                    onChanged: _midiActive
+                        ? null
+                        : (value) {
+                            setState(() => _volume = value);
+                            if (_casting) {
+                              unawaited(
+                                _dlnaCast.setVolume(_volumeFor(_current)),
+                              );
+                            } else if (_dspActive) {
+                              _dspPlayer.setVolume(_volumeFor(_current));
+                            } else {
+                              _player.setVolume(_volumeFor(_current));
+                            }
+                          },
                     activeColor: Colors.white70,
                     inactiveColor: Colors.white12,
                   ),
@@ -7821,16 +7908,20 @@ class _PlayerPageState extends State<PlayerPage>
                   width: 110,
                   child: Slider(
                     value: _volume,
-                    onChanged: (value) {
-                      setState(() => _volume = value);
-                      if (_casting) {
-                        unawaited(_dlnaCast.setVolume(_volumeFor(_current)));
-                      } else if (_dspActive) {
-                        _dspPlayer.setVolume(_volumeFor(_current));
-                      } else {
-                        _player.setVolume(_volumeFor(_current));
-                      }
-                    },
+                    onChanged: _midiActive
+                        ? null
+                        : (value) {
+                            setState(() => _volume = value);
+                            if (_casting) {
+                              unawaited(
+                                _dlnaCast.setVolume(_volumeFor(_current)),
+                              );
+                            } else if (_dspActive) {
+                              _dspPlayer.setVolume(_volumeFor(_current));
+                            } else {
+                              _player.setVolume(_volumeFor(_current));
+                            }
+                          },
                     activeColor: Colors.white70,
                     inactiveColor: Colors.white12,
                   ),

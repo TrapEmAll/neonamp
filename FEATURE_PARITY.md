@@ -6,6 +6,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 - Local audio queue and persistent library
 - Native tracker-module playback on Windows and Android for MOD, IT, XM, S3M, MTM, STM, 669, FAR, ULT, and additional libxmp-supported module formats
+- Standard MIDI and karaoke MIDI (MID, MIDI, KAR) playback on Windows and Android through each platform's native MIDI-capable player
 - Embedded metadata reading and tag editing for supported MP3/FLAC/M4A/WAV/APE containers plus core Vorbis tags in OGG/Opus, including year, track/disc numbers, lyrics, and write verification
 - AAC/ADTS metadata editing through leading ID3v2 tags, preserving encoded AAC frames during initial tagging and subsequent edits
 - WebM/Matroska audio metadata editing for common fields and lyrics; encoded clusters and unrecognized tags are retained
@@ -67,5 +68,6 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
 - Google Cast-only receivers and other non-DLNA casting protocols
 - Casting CUE virtual segments (local tracks and regular stream URLs are supported)
+- Per-track volume and equalizer processing for Windows MIDI/KAR playback (the built-in Windows MIDI sequencer does not expose per-stream audio gain)
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.
