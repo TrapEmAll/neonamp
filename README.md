@@ -13,6 +13,7 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
+- Decode legacy and container audio formats through the bundled cross-platform fallback decoder when the native playback path cannot read them; conversion is temporary and does not modify the music file.
 - Play local videos in a separate Windows/Android queue with seeking, speed and volume controls; codec support depends on the device's native decoders.
 - Add HTTP audio streams and online radio URLs.
 - Discover DLNA/UPnP network players and cast local audio or HTTP(S) streams from Windows or Android; local files are served temporarily over the LAN, so both devices must be able to communicate on the same network.

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/return_code.dart';
 import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 
 import 'tracker_modules.dart';
@@ -23,7 +25,7 @@ class DspLocalPlayer {
 
   soloud.AudioSource? _source;
   soloud.SoundHandle? _handle;
-  String? _renderedModulePath;
+  String? _temporaryAudioPath;
   Timer? _pollTimer;
   bool _completionSent = false;
   bool _disposed = false;
@@ -76,17 +78,28 @@ class DspLocalPlayer {
         rethrow;
       }
     }
+    String? transcodedAudioPath;
     late final soloud.AudioSource source;
     try {
-      source = await soloud.SoLoud.instance.loadFile(
-        sourcePath,
-        mode: isTrackerModule || deleteSourceOnStop
-            ? soloud.LoadMode.disk
-            : soloud.LoadMode.memory,
-      );
+      try {
+        source = await soloud.SoLoud.instance.loadFile(
+          sourcePath,
+          mode: isTrackerModule || deleteSourceOnStop
+              ? soloud.LoadMode.disk
+              : soloud.LoadMode.memory,
+        );
+      } on Object {
+        if (isTrackerModule || deleteSourceOnStop) rethrow;
+        transcodedAudioPath = await _transcodeToWav(path);
+        source = await soloud.SoLoud.instance.loadFile(
+          transcodedAudioPath,
+          mode: soloud.LoadMode.disk,
+        );
+        sourcePath = transcodedAudioPath;
+      }
     } on Object {
-      if (isTrackerModule) {
-        final output = File(sourcePath);
+      if (isTrackerModule || transcodedAudioPath != null) {
+        final output = File(transcodedAudioPath ?? sourcePath);
         if (await output.exists()) await output.delete();
       }
       rethrow;
@@ -105,7 +118,7 @@ class DspLocalPlayer {
     );
     soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
     _source = source;
-    _renderedModulePath = isTrackerModule
+    _temporaryAudioPath = isTrackerModule || transcodedAudioPath != null
         ? sourcePath
         : deleteSourceOnStop
         ? sourcePath
@@ -116,6 +129,56 @@ class DspLocalPlayer {
     _durationController.add(_duration);
     _stateController.add(PlayerState.playing);
     _startPolling();
+  }
+
+  Future<String> _transcodeToWav(String inputPath) async {
+    final outputPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'neonamp-decoded-${DateTime.now().microsecondsSinceEpoch}.wav';
+    try {
+      final session = await FFmpegKit.executeWithArguments([
+        '-nostdin',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        inputPath,
+        '-map',
+        '0:a:0',
+        '-vn',
+        '-c:a',
+        'pcm_s16le',
+        '-ar',
+        '44100',
+        '-ac',
+        '2',
+        '-f',
+        'wav',
+        outputPath,
+      ]);
+      final returnCode = await session.getReturnCode();
+      final output = File(outputPath);
+      if (!ReturnCode.isSuccess(returnCode) ||
+          !await output.exists() ||
+          await output.length() <= 44) {
+        final outputText = (await session.getOutput())?.trim();
+        final logs = outputText == null
+            ? null
+            : outputText.length > 500
+            ? outputText.substring(outputText.length - 500)
+            : outputText;
+        throw StateError(
+          'Could not decode this audio file with the bundled fallback decoder'
+          '${logs == null || logs.isEmpty ? '.' : ': $logs'}',
+        );
+      }
+      return outputPath;
+    } on Object {
+      final output = File(outputPath);
+      if (await output.exists()) await output.delete();
+      rethrow;
+    }
   }
 
   void _startPolling() {
@@ -216,11 +279,11 @@ class DspLocalPlayer {
     if (source != null && soloud.SoLoud.instance.isInitialized) {
       await soloud.SoLoud.instance.disposeSource(source);
     }
-    final renderedModulePath = _renderedModulePath;
-    _renderedModulePath = null;
-    if (renderedModulePath != null) {
-      final renderedModule = File(renderedModulePath);
-      if (await renderedModule.exists()) await renderedModule.delete();
+    final temporaryAudioPath = _temporaryAudioPath;
+    _temporaryAudioPath = null;
+    if (temporaryAudioPath != null) {
+      final temporaryAudio = File(temporaryAudioPath);
+      if (await temporaryAudio.exists()) await temporaryAudio.delete();
     }
     if (!_disposed) _stateController.add(PlayerState.stopped);
   }

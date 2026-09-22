@@ -75,6 +75,20 @@ bool isMatroskaAudioPath(String path) {
   return extension == 'webm' || extension == 'mkv' || extension == 'mka';
 }
 
+bool isCrossPlatformFallbackAudioPath(String path) {
+  final extension = path.split('.').last.toLowerCase();
+  return const {
+    'ape',
+    'wma',
+    'aif',
+    'aiff',
+    'aifc',
+    'mka',
+    'mkv',
+    'webm',
+  }.contains(extension);
+}
+
 bool isSupportedLibraryAudioPath(String path) {
   const extensions = <String>{
     '.mp3',
@@ -106,7 +120,9 @@ bool isSupportedLibraryAudioPath(String path) {
 bool trackRequiresDspPlayback(String path, {required bool equalizerEnabled}) =>
     !path.startsWith('http') &&
     !isMidiFilePath(path) &&
-    (equalizerEnabled || isTrackerModulePath(path));
+    (equalizerEnabled ||
+        isTrackerModulePath(path) ||
+        isCrossPlatformFallbackAudioPath(path));
 
 int nextQueueIndex({
   required int selected,

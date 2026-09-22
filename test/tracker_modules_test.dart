@@ -49,6 +49,32 @@ void main() {
     );
   });
 
+  test('legacy and container audio use the cross-platform decoder path', () {
+    for (final extension in [
+      'ape',
+      'wma',
+      'aif',
+      'aiff',
+      'aifc',
+      'mka',
+      'mkv',
+      'webm',
+    ]) {
+      final path = 'C:/Music/track.$extension';
+      expect(isCrossPlatformFallbackAudioPath(path), isTrue, reason: path);
+      expect(
+        trackRequiresDspPlayback(path, equalizerEnabled: false),
+        isTrue,
+        reason: path,
+      );
+    }
+    expect(
+      isCrossPlatformFallbackAudioPath('https://radio.example/live'),
+      isFalse,
+    );
+    expect(isCrossPlatformFallbackAudioPath('track.mp3'), isFalse);
+  });
+
   test('module metadata remains distinct from ordinary file tags', () {
     final info = TrackerModuleInfo.fromMap({
       'title': 'Space Journey',

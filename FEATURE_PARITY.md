@@ -47,6 +47,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Per-track playback-position resume shared by the Windows and Android UIs
 - Persistent queue reordering, per-track removal, and clear-queue controls
 - Native 10-band DSP equalizer for local files with presets and persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android; importing a user-owned SF2 SoundFont enables shared DSP processing for MIDI/KAR on both platforms
+- Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, and Matroska/WebM audio when the platform and primary DSP decoders cannot open the original file; decoded audio is temporary and uses the shared playback controls and DSP path
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android
 - ReplayGain reads Vorbis comments, MP3 ID3 user-text, and APEv2 fields, preferring valid track gain before album gain
 - Spectrum visualization
