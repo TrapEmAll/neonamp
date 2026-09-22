@@ -10,6 +10,7 @@ import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
 import 'package:neonamp/asf_metadata.dart';
 import 'package:neonamp/podcast_opml.dart';
+import 'package:neonamp/cue_sheet.dart';
 
 Future<void> _writeOggFixture(File file, {required bool opus}) async {
   final packets = <List<int>>[
@@ -429,6 +430,76 @@ void main() {
       'http://example.org/rss',
     ]);
     expect(podcastFeedsFromOpml(podcastFeedsToOpml(feeds)), feeds);
+  });
+
+  test('CUE parser resolves shared audio segments and track metadata', () {
+    const cue = '''PERFORMER "Album Artist"
+TITLE "Cue Album"
+FILE "disc image.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Opening"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    PERFORMER "Guest Artist"
+    TITLE "Second Track"
+    INDEX 01 03:15:37
+  TRACK 03 AUDIO
+    INDEX 01 07:02:00
+  TRACK 04 MODE1/2352
+    INDEX 01 10:00:00
+''';
+    final cuePath = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}album.cue',
+    ).absolute.path;
+    final tracks = parseCueSheet(cue, cuePath);
+    expect(tracks, hasLength(3));
+    expect(
+      tracks[0].filePath,
+      File(
+        '${File(cuePath).parent.path}${Platform.pathSeparator}disc image.flac',
+      ).absolute.path,
+    );
+    expect(tracks[0].sourceFileName, 'disc image.flac');
+    expect(tracks[0].start, Duration.zero);
+    expect(
+      tracks[0].end,
+      const Duration(minutes: 3, seconds: 15, milliseconds: 493),
+    );
+    expect(tracks[0].title, 'Opening');
+    expect(tracks[0].performer, 'Album Artist');
+    expect(tracks[1].performer, 'Guest Artist');
+    expect(tracks[1].album, 'Cue Album');
+    expect(tracks[1].end, const Duration(minutes: 7, seconds: 2));
+    expect(tracks[2].end, const Duration(minutes: 10));
+  });
+
+  test('CUE playback timing is relative to each source segment', () {
+    expect(
+      cueRelativePosition(
+        const Duration(minutes: 3, seconds: 16),
+        const Duration(minutes: 3, seconds: 15),
+      ),
+      const Duration(seconds: 1),
+    );
+    expect(
+      cueRelativePosition(Duration.zero, const Duration(seconds: 30)),
+      Duration.zero,
+    );
+    expect(
+      cueSegmentDuration(
+        const Duration(minutes: 12),
+        start: const Duration(minutes: 3),
+        end: const Duration(minutes: 7),
+      ),
+      const Duration(minutes: 4),
+    );
+    expect(
+      cueSegmentDuration(
+        const Duration(minutes: 12),
+        start: const Duration(minutes: 8),
+      ),
+      const Duration(minutes: 4),
+    );
   });
 
   test('shuffle advances to a different queued track', () {
@@ -1216,6 +1287,8 @@ void main() {
       discNumber: 1,
       discTotal: 2,
       lyrics: 'Words',
+      cueStartMs: 195493,
+      cueEndMs: 422000,
     );
     final restored = Track.fromJson(original.toJson());
     expect(restored.year, 2026);
@@ -1224,6 +1297,8 @@ void main() {
     expect(restored.discNumber, 1);
     expect(restored.discTotal, 2);
     expect(restored.lyrics, 'Words');
+    expect(restored.cueStartMs, 195493);
+    expect(restored.cueEndMs, 422000);
   });
 
   test('skin packages round-trip through JSON', () {
