@@ -28,6 +28,11 @@ bool isWavAudioPath(String path) => path.split('.').last.toLowerCase() == 'wav';
 
 bool isAacAudioPath(String path) => path.split('.').last.toLowerCase() == 'aac';
 
+bool isMatroskaAudioPath(String path) {
+  final extension = path.split('.').last.toLowerCase();
+  return extension == 'webm' || extension == 'mkv' || extension == 'mka';
+}
+
 bool isSupportedLibraryAudioPath(String path) {
   const extensions = {
     '.mp3',
@@ -46,6 +51,7 @@ bool isSupportedLibraryAudioPath(String path) {
     '.mov',
     '.webm',
     '.mkv',
+    '.mka',
   };
   final lowerPath = path.toLowerCase();
   final dot = lowerPath.lastIndexOf('.');
@@ -1033,7 +1039,282 @@ void _updateCommonTrackMetadata(File file, List<String> values) {
   });
 }
 
+({int id, int dataStart, int end, bool unknown}) _readEbmlElement(
+  Uint8List data,
+  int offset,
+  int parentEnd,
+) {
+  int readVint(bool isId) {
+    if (offset >= parentEnd) throw const FormatException('Truncated EBML');
+    final first = data[offset];
+    var marker = 0x80;
+    var width = 1;
+    while (width <= 8 && first & marker == 0) {
+      marker >>= 1;
+      width++;
+    }
+    if (width > 8 || (isId && width > 4) || offset + width > parentEnd) {
+      throw const FormatException('Invalid EBML variable integer');
+    }
+    var value = isId ? first : first & (marker - 1);
+    for (var index = 1; index < width; index++) {
+      value = (value << 8) | data[offset + index];
+    }
+    offset += width;
+    if (isId && value == 0) throw const FormatException('Invalid EBML ID');
+    if (!isId && value == (1 << (7 * width)) - 1) return -1;
+    return value;
+  }
+
+  final id = readVint(true);
+  final encodedSize = readVint(false);
+  final unknown = encodedSize == -1;
+  final end = unknown ? parentEnd : offset + encodedSize;
+  if (end < offset || end > parentEnd) {
+    throw const FormatException('EBML element exceeds its parent');
+  }
+  return (id: id, dataStart: offset, end: end, unknown: unknown);
+}
+
+List<int> _encodeEbmlSize(int size) {
+  if (size < 0) throw const FormatException('Negative EBML element size');
+  var width = 1;
+  while (width <= 8 && size >= (1 << (7 * width)) - 1) {
+    width++;
+  }
+  if (width > 8) throw const FormatException('EBML element is too large');
+  final bytes = List<int>.filled(width, 0);
+  var remainder = size;
+  for (var index = width - 1; index >= 0; index--) {
+    bytes[index] = remainder & 0xff;
+    remainder >>= 8;
+  }
+  bytes[0] |= 1 << (8 - width);
+  return bytes;
+}
+
+List<int> _encodeEbmlElement(int id, List<int> payload) {
+  var idWidth = 1;
+  while (idWidth < 4 && id >= (1 << (idWidth * 8))) {
+    idWidth++;
+  }
+  final idBytes = List<int>.generate(
+    idWidth,
+    (index) => (id >> ((idWidth - index - 1) * 8)) & 0xff,
+  );
+  return [...idBytes, ..._encodeEbmlSize(payload.length), ...payload];
+}
+
+const _managedMatroskaTagNames = {
+  'TITLE',
+  'ARTIST',
+  'ALBUM',
+  'GENRE',
+  'DATE',
+  'DATE_RELEASED',
+  'RELEASE_DATE',
+  'TRACKNUMBER',
+  'TRACK',
+  'PART_NUMBER',
+  'TRACKTOTAL',
+  'TOTAL_TRACKS',
+  'DISCNUMBER',
+  'DISC',
+  'DISCTOTAL',
+  'TOTAL_DISCS',
+  'LYRICS',
+};
+
+String? _matroskaSimpleTagName(Uint8List data, int start, int end) {
+  var offset = start;
+  while (offset < end) {
+    final child = _readEbmlElement(data, offset, end);
+    if (child.id == 0x45a3) {
+      return utf8.decode(
+        data.sublist(child.dataStart, child.end),
+        allowMalformed: true,
+      );
+    }
+    offset = child.end;
+  }
+  return null;
+}
+
+List<int> _matroskaSimpleTag(String name, String value) =>
+    _encodeEbmlElement(0x67c8, [
+      ..._encodeEbmlElement(0x45a3, utf8.encode(name)),
+      ..._encodeEbmlElement(0x4487, utf8.encode(value)),
+    ]);
+
+List<int> _matroskaManagedTags(List<String> values) {
+  final tags = <int>[];
+  void add(String name, String value) {
+    if (value.trim().isNotEmpty) tags.addAll(_matroskaSimpleTag(name, value));
+  }
+
+  add('TITLE', values[0]);
+  add('ARTIST', values[1]);
+  add('ALBUM', values[2]);
+  add('GENRE', values[3]);
+  add('DATE_RELEASED', values[5]);
+  add('TRACKNUMBER', values[6]);
+  add('TRACKTOTAL', values[7]);
+  add('DISCNUMBER', values[8]);
+  add('DISCTOTAL', values[9]);
+  add('LYRICS', values[10]);
+  return tags;
+}
+
+({List<int> bytes, bool changed, bool hadManaged}) _rewriteMatroskaTag(
+  Uint8List data,
+  int start,
+  int end,
+  List<int> replacementTags,
+  bool insertReplacement,
+) {
+  final element = _readEbmlElement(data, start, end);
+  final children = <int>[];
+  var offset = element.dataStart;
+  var hadManaged = false;
+  var changed = false;
+  while (offset < element.end) {
+    final child = _readEbmlElement(data, offset, element.end);
+    final isManaged =
+        child.id == 0x67c8 &&
+        _managedMatroskaTagNames.contains(
+          _matroskaSimpleTagName(
+            data,
+            child.dataStart,
+            child.end,
+          )?.toUpperCase(),
+        );
+    if (isManaged) {
+      hadManaged = true;
+      changed = true;
+    } else {
+      children.addAll(data.sublist(offset, child.end));
+    }
+    offset = child.end;
+  }
+  if (hadManaged && insertReplacement) children.addAll(replacementTags);
+  if (!changed) {
+    return (
+      bytes: data.sublist(start, element.end),
+      changed: false,
+      hadManaged: false,
+    );
+  }
+  return (
+    bytes: _encodeEbmlElement(element.id, children),
+    changed: true,
+    hadManaged: hadManaged,
+  );
+}
+
+Future<void> writeMatroskaTags(File file, List<String> values) async {
+  final source = Uint8List.fromList(await file.readAsBytes());
+  final ebml = _readEbmlElement(source, 0, source.length);
+  if (ebml.id != 0x1a45dfa3) {
+    throw const FormatException('Not an EBML WebM/Matroska file');
+  }
+  final segmentOffset = ebml.end;
+  final segment = _readEbmlElement(source, segmentOffset, source.length);
+  if (segment.id != 0x18538067) {
+    throw const FormatException('Missing Matroska Segment');
+  }
+
+  final replacementTags = _matroskaManagedTags(values);
+  final retainedTags = <int>[];
+  final beforeTags = <int>[];
+  final afterTags = <int>[];
+  var hasTagsElement = false;
+  var hasManagedTag = false;
+  var replacementInserted = false;
+  var offset = segment.dataStart;
+  var stoppedAtOpaqueTail = false;
+  while (offset < segment.end) {
+    final child = _readEbmlElement(source, offset, segment.end);
+    if (child.id == 0x1f43b675 || child.unknown) {
+      afterTags.addAll(source.sublist(offset, segment.end));
+      stoppedAtOpaqueTail = true;
+      break;
+    }
+    if (child.id == 0x1254c367) {
+      hasTagsElement = true;
+      final tags = _readEbmlElement(source, offset, segment.end);
+      var tagOffset = tags.dataStart;
+      while (tagOffset < tags.end) {
+        final tag = _readEbmlElement(source, tagOffset, tags.end);
+        if (tag.id == 0x7373) {
+          final rewritten = _rewriteMatroskaTag(
+            source,
+            tagOffset,
+            tags.end,
+            replacementTags,
+            !replacementInserted,
+          );
+          retainedTags.addAll(rewritten.bytes);
+          if (rewritten.hadManaged) {
+            hasManagedTag = true;
+            replacementInserted = true;
+          }
+        } else {
+          retainedTags.addAll(source.sublist(tagOffset, tag.end));
+        }
+        tagOffset = tag.end;
+      }
+      if (!replacementInserted && replacementTags.isNotEmpty) {
+        retainedTags.addAll(_encodeEbmlElement(0x7373, replacementTags));
+        replacementInserted = true;
+      }
+      offset = child.end;
+      continue;
+    }
+    (hasTagsElement ? afterTags : beforeTags).addAll(
+      source.sublist(offset, child.end),
+    );
+    offset = child.end;
+  }
+  if (!stoppedAtOpaqueTail && offset < segment.end) {
+    afterTags.addAll(source.sublist(offset, segment.end));
+  }
+  if (!hasTagsElement && replacementTags.isNotEmpty) {
+    retainedTags.addAll(_encodeEbmlElement(0x7373, replacementTags));
+  } else if (hasTagsElement && !hasManagedTag && replacementTags.isNotEmpty) {
+    retainedTags.addAll(_encodeEbmlElement(0x7373, replacementTags));
+  }
+
+  final tagsElement = hasTagsElement || replacementTags.isNotEmpty
+      ? _encodeEbmlElement(0x1254c367, retainedTags)
+      : <int>[];
+  final segmentPayload = [...beforeTags, ...tagsElement, ...afterTags];
+  final segmentIdWidth = segment.id <= 0xff
+      ? 1
+      : segment.id <= 0xffff
+      ? 2
+      : segment.id <= 0xffffff
+      ? 3
+      : 4;
+  final segmentId = source.sublist(
+    segmentOffset,
+    segmentOffset + segmentIdWidth,
+  );
+  final segmentHeader = segment.unknown
+      ? source.sublist(segmentOffset, segment.dataStart)
+      : [...segmentId, ..._encodeEbmlSize(segmentPayload.length)];
+  await _replaceFileAtomically(file, [
+    ...source.sublist(0, segmentOffset),
+    ...segmentHeader,
+    ...segmentPayload,
+    ...source.sublist(segment.end),
+  ]);
+}
+
 Future<void> writeTrackMetadata(File file, List<String> values) async {
+  if (isMatroskaAudioPath(file.path)) {
+    await writeMatroskaTags(file, values);
+    return;
+  }
   if (isAacAudioPath(file.path)) {
     await writeAacTags(file, values);
     return;
