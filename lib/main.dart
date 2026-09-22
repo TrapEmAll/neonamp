@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
@@ -23,6 +24,8 @@ bool isAiffAudioPath(String path) {
   final extension = path.split('.').last.toLowerCase();
   return extension == 'aif' || extension == 'aiff' || extension == 'aifc';
 }
+
+bool isWavAudioPath(String path) => path.split('.').last.toLowerCase() == 'wav';
 
 bool isSupportedLibraryAudioPath(String path) {
   const extensions = {
@@ -53,6 +56,13 @@ List<int> _bigEndian32(int value) => [
   (value >> 16) & 0xff,
   (value >> 8) & 0xff,
   value & 0xff,
+];
+
+List<int> _littleEndian32(int value) => [
+  value & 0xff,
+  (value >> 8) & 0xff,
+  (value >> 16) & 0xff,
+  (value >> 24) & 0xff,
 ];
 
 List<int> _syncSafe32(int value) => [
@@ -186,8 +196,10 @@ String? readAiffId3Lyrics(Uint8List source) {
   return null;
 }
 
-(Uint8List, String)? readAiffId3Picture(Uint8List source) {
-  if (source.length < 12 || ascii.decode(source.sublist(0, 4)) != 'FORM') {
+String? readWavId3Lyrics(Uint8List source) {
+  if (source.length < 12 ||
+      ascii.decode(source.sublist(0, 4)) != 'RIFF' ||
+      ascii.decode(source.sublist(8, 12)) != 'WAVE') {
     return null;
   }
   var offset = 12;
@@ -197,7 +209,65 @@ String? readAiffId3Lyrics(Uint8List source) {
       source,
       offset + 4,
       offset + 8,
-    ).getUint32(0);
+    ).getUint32(0, Endian.little);
+    final payloadStart = offset + 8;
+    final payloadEnd = payloadStart + chunkSize;
+    if (payloadEnd > source.length) return null;
+    if ((chunkId == 'ID3 ' || chunkId == 'id3 ') && chunkSize >= 10) {
+      final tag = source.sublist(payloadStart, payloadEnd);
+      if (ascii.decode(tag.sublist(0, 3)) != 'ID3') return null;
+      final tagSize =
+          (tag[9] & 0x7f) |
+          ((tag[8] & 0x7f) << 7) |
+          ((tag[7] & 0x7f) << 14) |
+          ((tag[6] & 0x7f) << 21);
+      final tagEnd = math.min(tag.length, 10 + tagSize);
+      var frameOffset = 10;
+      while (frameOffset + 10 <= tagEnd) {
+        final frameId = ascii.decode(tag.sublist(frameOffset, frameOffset + 4));
+        if (frameId.trim().isEmpty) break;
+        final frameSize = ByteData.sublistView(
+          tag,
+          frameOffset + 4,
+          frameOffset + 8,
+        ).getUint32(0);
+        final frameStart = frameOffset + 10;
+        final frameEnd = frameStart + frameSize;
+        if (frameEnd > tagEnd) return null;
+        if (frameId == 'USLT' && frameSize >= 5 && tag[frameStart] == 3) {
+          final descriptionEnd = tag.indexOf(0, frameStart + 4);
+          if (descriptionEnd < 0 || descriptionEnd >= frameEnd) return null;
+          return utf8.decode(
+            tag.sublist(descriptionEnd + 1, frameEnd),
+            allowMalformed: true,
+          );
+        }
+        frameOffset = frameEnd;
+      }
+      return null;
+    }
+    offset = payloadEnd + (chunkSize.isOdd ? 1 : 0);
+  }
+  return null;
+}
+
+(Uint8List, String)? readAiffId3Picture(Uint8List source) {
+  if (source.length < 12 ||
+      (ascii.decode(source.sublist(0, 4)) != 'FORM' &&
+          (ascii.decode(source.sublist(0, 4)) != 'RIFF' ||
+              ascii.decode(source.sublist(8, 12)) != 'WAVE'))) {
+    return null;
+  }
+  var offset = 12;
+  while (offset + 8 <= source.length) {
+    final chunkId = ascii.decode(source.sublist(offset, offset + 4));
+    final chunkSize = ByteData.sublistView(source, offset + 4, offset + 8)
+        .getUint32(
+          0,
+          ascii.decode(source.sublist(0, 4)) == 'RIFF'
+              ? Endian.little
+              : Endian.big,
+        );
     final payloadStart = offset + 8;
     final payloadEnd = payloadStart + chunkSize;
     if (payloadEnd > source.length) return null;
@@ -314,6 +384,81 @@ Future<void> writeAiffTags(
   }
 }
 
+Future<void> writeWavTags(
+  File file,
+  List<String> values, {
+  Uint8List? artwork,
+  String artworkMimeType = 'image/jpeg',
+}) async {
+  final source = await file.readAsBytes();
+  if (source.length < 12 ||
+      ascii.decode(source.sublist(0, 4)) != 'RIFF' ||
+      ascii.decode(source.sublist(8, 12)) != 'WAVE') {
+    throw const FormatException('Not a RIFF/WAVE container');
+  }
+  if (artwork == null) {
+    final existing = readAiffId3Picture(source);
+    if (existing != null) {
+      artwork = existing.$1;
+      artworkMimeType = existing.$2;
+    }
+  }
+  final body = <int>[];
+  var offset = 12;
+  while (offset + 8 <= source.length) {
+    final chunkId = ascii.decode(source.sublist(offset, offset + 4));
+    final chunkSize = ByteData.sublistView(
+      source,
+      offset + 4,
+      offset + 8,
+    ).getUint32(0, Endian.little);
+    final end = offset + 8 + chunkSize;
+    if (end > source.length) throw const FormatException('Truncated WAV chunk');
+    final next = end + (chunkSize.isOdd ? 1 : 0);
+    if (next > source.length) {
+      throw const FormatException('Malformed WAV chunk padding');
+    }
+    if (chunkId != 'ID3 ' && chunkId != 'id3 ') {
+      body.addAll(source.sublist(offset, next));
+    }
+    offset = next;
+  }
+  if (offset != source.length) {
+    throw const FormatException('Malformed WAV chunk alignment');
+  }
+  final tag = buildAiffId3Tag(
+    values,
+    artwork: artwork,
+    artworkMimeType: artworkMimeType,
+  );
+  final tagChunk = <int>[
+    ...ascii.encode('ID3 '),
+    ..._littleEndian32(tag.length),
+    ...tag,
+    if (tag.length.isOdd) 0,
+  ];
+  final output = <int>[...source.sublist(0, 12), ...body, ...tagChunk];
+  output.setRange(4, 8, _littleEndian32(output.length - 8));
+  final suffix = '.neonamp-${DateTime.now().microsecondsSinceEpoch}';
+  final temporary = File('${file.path}$suffix.tmp');
+  final backup = File('${file.path}$suffix.bak');
+  var movedOriginal = false;
+  try {
+    await temporary.writeAsBytes(output, flush: true);
+    await file.rename(backup.path);
+    movedOriginal = true;
+    await temporary.rename(file.path);
+    await backup.delete();
+  } catch (_) {
+    if (movedOriginal && !await file.exists() && await backup.exists()) {
+      await backup.rename(file.path);
+    }
+    rethrow;
+  } finally {
+    if (await temporary.exists()) await temporary.delete();
+  }
+}
+
 double? parseReplayGainDb(String? value) {
   if (value == null) return null;
   final match = RegExp(r'[-+]?\d+(?:\.\d+)?').firstMatch(value);
@@ -383,6 +528,10 @@ Future<void> writeVorbisTags(File file, List<String> values) async {
 }
 
 Future<void> writeTrackMetadata(File file, List<String> values) async {
+  if (isWavAudioPath(file.path)) {
+    await writeWavTags(file, values);
+    return;
+  }
   if (isAiffAudioPath(file.path)) {
     await writeAiffTags(file, values);
     return;
@@ -1796,9 +1945,13 @@ class _PlayerPageState extends State<PlayerPage>
             metadata.lyrics ??
             (isAiffAudioPath(path)
                 ? readAiffId3Lyrics(await File(path).readAsBytes())
+                : isWavAudioPath(path)
+                ? readWavId3Lyrics(await File(path).readAsBytes())
                 : null),
         artwork: metadata.pictures.isNotEmpty
             ? metadata.pictures.first.bytes
+            : (isAiffAudioPath(path) || isWavAudioPath(path))
+            ? readAiffId3Picture(await File(path).readAsBytes())?.$1
             : null,
         replayGainDb: replayGainDb,
       );
@@ -3056,6 +3209,8 @@ class _PlayerPageState extends State<PlayerPage>
       final discTotal = int.tryParse(values[9]);
       final writtenLyrics = isAiffAudioPath(track.path)
           ? readAiffId3Lyrics(await File(track.path).readAsBytes())
+          : isWavAudioPath(track.path)
+          ? readWavId3Lyrics(await File(track.path).readAsBytes())
           : written.lyrics;
       final metadataMatches =
           (year == null || written.year?.year == year) &&
@@ -3263,8 +3418,11 @@ class _PlayerPageState extends State<PlayerPage>
       _ => 'image/jpeg',
     };
     try {
-      if (isAiffAudioPath(track.path)) {
-        await writeAiffTags(
+      if (isAiffAudioPath(track.path) || isWavAudioPath(track.path)) {
+        final writer = isWavAudioPath(track.path)
+            ? writeWavTags
+            : writeAiffTags;
+        await writer(
           File(track.path),
           [
             track.name,
