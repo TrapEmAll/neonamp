@@ -1340,6 +1340,29 @@ FILE "disc image.flac" WAVE
     expect(find.text('Your library is quiet.'), findsOneWidget);
   });
 
+  test('bookmark toggling distinguishes virtual CUE tracks', () {
+    final first = Track(
+      path: 'album.flac',
+      name: 'First',
+      cueStartMs: 0,
+      cueEndMs: 60000,
+      trackNumber: 1,
+    );
+    final second = Track(
+      path: 'album.flac',
+      name: 'Second',
+      cueStartMs: 60000,
+      cueEndMs: 120000,
+      trackNumber: 2,
+    );
+    final oneBookmark = toggleTrackBookmark([], first);
+    final twoBookmarks = toggleTrackBookmark(oneBookmark, second);
+
+    expect(twoBookmarks, hasLength(2));
+    expect(toggleTrackBookmark(twoBookmarks, first), [second]);
+    expect(toggleTrackBookmark([], first), [first]);
+  });
+
   testWidgets(
     'podcast manager persists unsubscribe without feed network access',
     (tester) async {
