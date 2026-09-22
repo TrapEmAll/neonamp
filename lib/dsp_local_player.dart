@@ -51,6 +51,7 @@ class DspLocalPlayer {
     required double playbackSpeed,
     required bool equalizerEnabled,
     required List<double> bands,
+    double balance = 0,
   }) async {
     await _ensureInitialized();
     await stop();
@@ -65,7 +66,11 @@ class DspLocalPlayer {
       final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
       equalizer.bandGain(index).value = gain;
     }
-    final handle = soloud.SoLoud.instance.play(source, volume: volume);
+    final handle = soloud.SoLoud.instance.play(
+      source,
+      volume: volume,
+      pan: balance.clamp(-1.0, 1.0),
+    );
     soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
     _source = source;
     _handle = handle;
@@ -121,6 +126,15 @@ class DspLocalPlayer {
     if (handle != null &&
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
       soloud.SoLoud.instance.setVolume(handle, volume);
+    }
+  }
+
+  void setBalance(double balance) {
+    final handle = _handle;
+    if (handle != null &&
+        soloud.SoLoud.instance.isInitialized &&
+        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      soloud.SoLoud.instance.setPan(handle, balance.clamp(-1.0, 1.0));
     }
   }
 

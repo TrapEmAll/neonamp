@@ -34,7 +34,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Persistent recently played history shared by the Windows and Android UIs
 - Per-track playback-position resume shared by the Windows and Android UIs
 - Persistent queue reordering, per-track removal, and clear-queue controls
-- Native 10-band DSP equalizer for local files with presets and persisted settings
+- Native 10-band DSP equalizer for local files with presets and persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android
 - ReplayGain reads Vorbis comments, MP3 ID3 user-text, and APEv2 fields, preferring valid track gain before album gain
 - Spectrum visualization

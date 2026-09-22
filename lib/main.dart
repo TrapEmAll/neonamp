@@ -77,6 +77,15 @@ int nextQueueIndex({
   return offset >= selected ? offset + 1 : offset;
 }
 
+double normalizeStereoBalance(double balance) => balance.clamp(-1.0, 1.0);
+
+String stereoBalanceLabel(double balance) {
+  final normalized = normalizeStereoBalance(balance);
+  if (normalized == 0) return 'Center';
+  final percentage = (normalized.abs() * 100).round();
+  return '${normalized < 0 ? 'Left' : 'Right'} $percentage%';
+}
+
 List<int> _bigEndian32(int value) => [
   (value >> 24) & 0xff,
   (value >> 16) & 0xff,
@@ -2160,6 +2169,7 @@ class _PlayerPageState extends State<PlayerPage>
   PlayerState _playerState = PlayerState.stopped;
   int _selected = 0;
   double _volume = .82;
+  double _balance = 0;
   bool _shuffle = false;
   bool _repeat = false;
   bool _repeatOne = false;
@@ -2175,6 +2185,8 @@ class _PlayerPageState extends State<PlayerPage>
   final List<double> _eqBands = List<double>.filled(10, 0);
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
+  AudioPlayer? _crossfadeAudioPlayer;
+  DspLocalPlayer? _crossfadeDspPlayer;
   bool _dspActive = false;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
@@ -2193,6 +2205,19 @@ class _PlayerPageState extends State<PlayerPage>
     replayGainDb: track?.replayGainDb,
     replayGainEnabled: _replayGainEnabled,
   );
+
+  void _applyBalance(double value) {
+    final balance = normalizeStereoBalance(value);
+    if (_current == null) return;
+    if (_dspActive) {
+      _dspPlayer.setBalance(balance);
+      _crossfadeDspPlayer?.setBalance(balance);
+    } else {
+      unawaited(_player.setBalance(balance));
+      final incoming = _crossfadeAudioPlayer;
+      if (incoming != null) unawaited(incoming.setBalance(balance));
+    }
+  }
 
   @override
   void initState() {
@@ -2543,6 +2568,9 @@ class _PlayerPageState extends State<PlayerPage>
       if (savedSettings != null) {
         final settings = jsonDecode(savedSettings) as Map<String, dynamic>;
         _volume = (settings['volume'] as num?)?.toDouble() ?? _volume;
+        _balance = normalizeStereoBalance(
+          (settings['balance'] as num?)?.toDouble() ?? _balance,
+        );
         _crossfade = settings['crossfade'] as bool? ?? false;
         _crossfadeSeconds =
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
@@ -2595,6 +2623,7 @@ class _PlayerPageState extends State<PlayerPage>
       'settings',
       jsonEncode({
         'volume': _volume,
+        'balance': _balance,
         'crossfade': _crossfade,
         'crossfadeSeconds': _crossfadeSeconds,
         'equalizerEnabled': _equalizerEnabled,
@@ -2823,6 +2852,7 @@ class _PlayerPageState extends State<PlayerPage>
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: true,
         bands: _eqBands,
+        balance: _balance,
       );
       _audioHandler?.publishTrack(track);
     } else {
@@ -2830,6 +2860,7 @@ class _PlayerPageState extends State<PlayerPage>
         await _dspPlayer.stop();
         _dspActive = false;
       }
+      await _player.setBalance(_balance);
       await _player.setVolume(trackVolume);
       if (_audioHandler != null) {
         await _audioHandler!.playTrack(track);
@@ -2907,7 +2938,9 @@ class _PlayerPageState extends State<PlayerPage>
     final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = AudioPlayer();
+    _crossfadeAudioPlayer = incomingPlayer;
     try {
+      await incomingPlayer.setBalance(_balance);
       setState(() {
         _selected = next;
         _position = Duration.zero;
@@ -2954,6 +2987,9 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     } finally {
+      if (identical(_crossfadeAudioPlayer, incomingPlayer)) {
+        _crossfadeAudioPlayer = null;
+      }
       _crossfadeInProgress = false;
     }
   }
@@ -2973,6 +3009,7 @@ class _PlayerPageState extends State<PlayerPage>
     final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = DspLocalPlayer();
+    _crossfadeDspPlayer = incomingPlayer;
     try {
       setState(() {
         _selected = next;
@@ -2995,6 +3032,7 @@ class _PlayerPageState extends State<PlayerPage>
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: true,
         bands: _eqBands,
+        balance: _balance,
       );
       final steps = math.max(1, _crossfadeSeconds * 10);
       for (var step = 1; step <= steps; step++) {
@@ -3021,6 +3059,9 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     } finally {
+      if (identical(_crossfadeDspPlayer, incomingPlayer)) {
+        _crossfadeDspPlayer = null;
+      }
       _crossfadeInProgress = false;
     }
   }
@@ -5102,133 +5143,164 @@ class _PlayerPageState extends State<PlayerPage>
           ),
           content: SizedBox(
             width: 560,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: selectedPreset,
-                  decoration: const InputDecoration(labelText: 'Preset'),
-                  items: presets
-                      .map(
-                        (preset) => DropdownMenuItem(
-                          value: preset,
-                          child: Text(preset),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setState(() {
-                      _eqPreset = value;
-                      final pluginBands = pluginPresets[value];
-                      for (var i = 0; i < _eqBands.length; i++) {
-                        _eqBands[i] =
-                            pluginBands?[i] ??
-                            (value == 'Bass boost' && i < 3 ? 6 : 0);
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedPreset,
+                    decoration: const InputDecoration(labelText: 'Preset'),
+                    items: presets
+                        .map(
+                          (preset) => DropdownMenuItem(
+                            value: preset,
+                            child: Text(preset),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _eqPreset = value;
+                        final pluginBands = pluginPresets[value];
+                        for (var i = 0; i < _eqBands.length; i++) {
+                          _eqBands[i] =
+                              pluginBands?[i] ??
+                              (value == 'Bass boost' && i < 3 ? 6 : 0);
+                        }
+                      });
+                      if (_dspActive) {
+                        _dspPlayer.applyEqualizer(
+                          enabled: _equalizerEnabled,
+                          bands: _eqBands,
+                        );
                       }
-                    });
-                    if (_dspActive) {
-                      _dspPlayer.applyEqualizer(
-                        enabled: _equalizerEnabled,
-                        bands: _eqBands,
-                      );
-                    }
-                    setDialogState(() {});
-                  },
-                ),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Crossfade between tracks'),
-                  subtitle: Text('Overlap for $_crossfadeSeconds seconds'),
-                  value: _crossfade,
-                  onChanged: (value) {
-                    setState(() => _crossfade = value);
-                    setDialogState(() {});
-                  },
-                ),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('ReplayGain normalization'),
-                  subtitle: const Text(
-                    'Use embedded track or album gain tags when available',
+                      setDialogState(() {});
+                    },
                   ),
-                  value: _replayGainEnabled,
-                  onChanged: (value) {
-                    unawaited(_setReplayGainEnabled(value));
-                    setDialogState(() {});
-                  },
-                ),
-                if (_crossfade)
                   Row(
                     children: [
-                      const Text('1s', style: TextStyle(color: Colors.white38)),
+                      const Text('L', style: TextStyle(color: Colors.white54)),
                       Expanded(
                         child: Slider(
-                          value: _crossfadeSeconds.toDouble(),
-                          min: 1,
-                          max: 12,
-                          divisions: 11,
-                          label: '${_crossfadeSeconds}s',
+                          value: _balance,
+                          min: -1,
+                          max: 1,
+                          divisions: 40,
+                          label: stereoBalanceLabel(_balance),
                           onChanged: (value) {
-                            setState(() => _crossfadeSeconds = value.round());
+                            setState(() => _balance = value);
+                            _applyBalance(value);
                             setDialogState(() {});
                           },
+                          onChangeEnd: (_) => unawaited(_saveQueue()),
                         ),
                       ),
-                      const Text(
-                        '12s',
-                        style: TextStyle(color: Colors.white38),
-                      ),
+                      const Text('R', style: TextStyle(color: Colors.white54)),
                     ],
                   ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 180,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: List.generate(
-                      _eqBands.length,
-                      (index) => Expanded(
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: RotatedBox(
-                                quarterTurns: 3,
-                                child: Slider(
-                                  value: _eqBands[index],
-                                  min: -12,
-                                  max: 12,
-                                  onChanged: _equalizerEnabled
-                                      ? (value) {
-                                          setState(
-                                            () => _eqBands[index] = value,
-                                          );
-                                          if (_dspActive) {
-                                            _dspPlayer.applyEqualizer(
-                                              enabled: true,
-                                              bands: _eqBands,
+                  Text(
+                    'Stereo balance · ${stereoBalanceLabel(_balance)}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Crossfade between tracks'),
+                    subtitle: Text('Overlap for $_crossfadeSeconds seconds'),
+                    value: _crossfade,
+                    onChanged: (value) {
+                      setState(() => _crossfade = value);
+                      setDialogState(() {});
+                    },
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('ReplayGain normalization'),
+                    subtitle: const Text(
+                      'Use embedded track or album gain tags when available',
+                    ),
+                    value: _replayGainEnabled,
+                    onChanged: (value) {
+                      unawaited(_setReplayGainEnabled(value));
+                      setDialogState(() {});
+                    },
+                  ),
+                  if (_crossfade)
+                    Row(
+                      children: [
+                        const Text(
+                          '1s',
+                          style: TextStyle(color: Colors.white38),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: _crossfadeSeconds.toDouble(),
+                            min: 1,
+                            max: 12,
+                            divisions: 11,
+                            label: '${_crossfadeSeconds}s',
+                            onChanged: (value) {
+                              setState(() => _crossfadeSeconds = value.round());
+                              setDialogState(() {});
+                            },
+                          ),
+                        ),
+                        const Text(
+                          '12s',
+                          style: TextStyle(color: Colors.white38),
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 180,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: List.generate(
+                        _eqBands.length,
+                        (index) => Expanded(
+                          child: Column(
+                            children: [
+                              Expanded(
+                                child: RotatedBox(
+                                  quarterTurns: 3,
+                                  child: Slider(
+                                    value: _eqBands[index],
+                                    min: -12,
+                                    max: 12,
+                                    onChanged: _equalizerEnabled
+                                        ? (value) {
+                                            setState(
+                                              () => _eqBands[index] = value,
                                             );
+                                            if (_dspActive) {
+                                              _dspPlayer.applyEqualizer(
+                                                enabled: true,
+                                                bands: _eqBands,
+                                              );
+                                            }
+                                            setDialogState(() {});
                                           }
-                                          setDialogState(() {});
-                                        }
-                                      : null,
+                                        : null,
+                                  ),
                                 ),
                               ),
-                            ),
-                            Text(
-                              '${index + 1}',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white38,
+                              Text(
+                                '${index + 1}',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white38,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           actions: [
@@ -5417,7 +5489,7 @@ class _PlayerPageState extends State<PlayerPage>
           ),
         ),
         const Spacer(),
-        if (MediaQuery.sizeOf(context).width >= 1000) ...[
+        if (MediaQuery.sizeOf(context).width >= 1600) ...[
           _topAction(Icons.equalizer, 'Visuals'),
           const SizedBox(width: 8),
           _topAction(Icons.settings_outlined, 'Settings'),
@@ -5432,7 +5504,7 @@ class _PlayerPageState extends State<PlayerPage>
             foregroundColor: Colors.white,
           ),
         ),
-        if (MediaQuery.sizeOf(context).width >= 1000)
+        if (MediaQuery.sizeOf(context).width >= 1600)
           IconButton(
             tooltip: 'Add folder',
             onPressed: _addFolder,
@@ -5441,13 +5513,13 @@ class _PlayerPageState extends State<PlayerPage>
               color: Colors.white60,
             ),
           ),
-        if (MediaQuery.sizeOf(context).width >= 1000)
+        if (MediaQuery.sizeOf(context).width >= 1600)
           IconButton(
             tooltip: 'Import audio CD',
             onPressed: _importAudioCd,
             icon: const Icon(Icons.album_outlined, color: Colors.white60),
           ),
-        if (MediaQuery.sizeOf(context).width >= 1000)
+        if (MediaQuery.sizeOf(context).width >= 1600)
           IconButton(
             tooltip: 'Sleep timer',
             onPressed: _showSleepTimer,
@@ -5463,7 +5535,7 @@ class _PlayerPageState extends State<PlayerPage>
           onPressed: _rescanFolders,
           icon: const Icon(Icons.refresh, color: Colors.white60),
         ),
-        if (MediaQuery.sizeOf(context).width >= 1000) ...[
+        if (MediaQuery.sizeOf(context).width >= 1600) ...[
           const SizedBox(width: 8),
           IconButton(
             tooltip: 'Add stream URL',
