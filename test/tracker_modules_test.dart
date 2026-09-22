@@ -20,7 +20,8 @@ void main() {
       expect(
         directoryFallback,
         greaterThan(audioClassificationStart),
-        reason: 'Recognize supported audio names before following provider MIME.',
+        reason:
+            'Recognize supported audio names before following provider MIME.',
       );
       final nativeSetBody = RegExp(
         r'val audioExtensions = setOf\((.*?)\n\s*\)',
@@ -32,17 +33,8 @@ void main() {
           .map((match) => match.group(1)!)
           .toSet();
 
-      final dartSource = await File('lib/main.dart').readAsString();
-      final dartSetBody = RegExp(
-        r'bool isSupportedLibraryAudioPath\(String path\) \{(.*?)\n\}',
-        dotAll: true,
-      ).firstMatch(dartSource)?.group(1);
-      expect(dartSetBody, isNotNull);
-      final fileExtensions = RegExp(r"'\.([a-z0-9]+)'")
-          .allMatches(dartSetBody!)
-          .map((match) => match.group(1)!);
       final allExtensions = {
-        ...fileExtensions,
+        ...supportedLibraryAudioExtensions,
         ...trackerModuleExtensions,
         ...midiFileExtensions,
       };

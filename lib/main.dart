@@ -103,39 +103,40 @@ bool isCrossPlatformFallbackAudioPath(String path) {
   }.contains(extension);
 }
 
+const supportedLibraryAudioExtensions = <String>{
+  '3gp',
+  'aac',
+  'aif',
+  'aiff',
+  'aifc',
+  'amr',
+  'ape',
+  'awb',
+  'flac',
+  'm4a',
+  'm4b',
+  'mka',
+  'mkv',
+  'mov',
+  'mp1',
+  'mp2',
+  'mp3',
+  'mp4',
+  'oga',
+  'ogg',
+  'ogx',
+  'opus',
+  'spx',
+  'wav',
+  'webm',
+  'wma',
+};
+
 bool isSupportedLibraryAudioPath(String path) {
-  const extensions = <String>{
-    '.mp3',
-    '.flac',
-    '.wav',
-    '.ogg',
-    '.m4a',
-    '.mp4',
-    '.aac',
-    '.wma',
-    '.opus',
-    '.ape',
-    '.aif',
-    '.aiff',
-    '.aifc',
-    '.mov',
-    '.webm',
-    '.mkv',
-    '.mka',
-    '.amr',
-    '.awb',
-    '.spx',
-    '.m4b',
-    '.3gp',
-    '.oga',
-    '.ogx',
-    '.mp1',
-    '.mp2',
-  };
   final lowerPath = path.toLowerCase();
   final dot = lowerPath.lastIndexOf('.');
   return dot >= 0 &&
-      (extensions.contains(lowerPath.substring(dot)) ||
+      (supportedLibraryAudioExtensions.contains(lowerPath.substring(dot + 1)) ||
           trackerModuleExtensions.contains(lowerPath.substring(dot + 1)) ||
           midiFileExtensions.contains(lowerPath.substring(dot + 1)));
 }
@@ -3345,26 +3346,10 @@ class _PlayerPageState extends State<PlayerPage>
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: [
-        'mp3',
-        'flac',
-        'wav',
-        'ogg',
-        'm4a',
-        'mp4',
-        'aac',
-        'wma',
-        'opus',
-        'ape',
-        'aif',
-        'aiff',
-        'aifc',
-        'mov',
-        'webm',
-        'mkv',
-        'mka',
+        ...supportedLibraryAudioExtensions,
         ...midiFileExtensions,
         ...trackerModuleExtensions,
-      ],
+      ]..sort(),
     );
     if (result.isEmpty) return;
     for (final file in result) {
@@ -8545,8 +8530,8 @@ class _PlayerPageState extends State<PlayerPage>
                                   ),
                                 )
                               : const SizedBox(
-                                    width: 36,
-                                    height: 36,
+                                  width: 36,
+                                  height: 36,
                                   child: Icon(
                                     Icons.graphic_eq,
                                     size: 34,
