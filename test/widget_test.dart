@@ -343,6 +343,11 @@ void main() {
       expect(readMetadata(file, getImage: false).artist, 'Artist');
       expect(readAiffId3Picture(updated)?.$1, artwork);
       expect(readAiffId3Lyrics(updated), 'Lyrics');
+      final numbers = readContainerId3TrackDiscNumbers(updated);
+      expect(numbers?.track, 2);
+      expect(numbers?.trackTotal, 9);
+      expect(numbers?.disc, 1);
+      expect(numbers?.discTotal, 2);
     },
   );
 
@@ -394,6 +399,11 @@ void main() {
       expect(readMetadata(file).artist, 'Artist');
       expect(readWavId3Lyrics(updated), 'Lyrics');
       expect(readAiffId3Picture(updated)?.$1, art);
+      final numbers = readContainerId3TrackDiscNumbers(updated);
+      expect(numbers?.track, 2);
+      expect(numbers?.trackTotal, 9);
+      expect(numbers?.disc, 1);
+      expect(numbers?.discTotal, 2);
     },
   );
 
