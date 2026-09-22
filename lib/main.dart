@@ -90,6 +90,9 @@ bool isCrossPlatformFallbackAudioPath(String path) {
     'mka',
     'mkv',
     'webm',
+    'amr',
+    'awb',
+    'spx',
   }.contains(extension);
 }
 
@@ -112,6 +115,9 @@ bool isSupportedLibraryAudioPath(String path) {
     '.webm',
     '.mkv',
     '.mka',
+    '.amr',
+    '.awb',
+    '.spx',
   };
   final lowerPath = path.toLowerCase();
   final dot = lowerPath.lastIndexOf('.');

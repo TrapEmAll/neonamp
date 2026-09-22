@@ -261,7 +261,7 @@ class MainActivity : AudioServiceActivity() {
         val audioExtensions = setOf(
             "mp3", "flac", "wav", "ogg", "m4a", "mp4", "aac", "wma",
             "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
-            "mka", "mid", "midi", "kar", "669", "amf", "ams", "dbm",
+            "mka", "amr", "awb", "spx", "mid", "midi", "kar", "669", "amf", "ams", "dbm",
             "dmf", "dsm", "far", "gdm", "gtk", "it", "j2b", "m15",
             "med", "mod", "mtm", "okt", "psm", "pt36", "ptm", "s3m",
             "stm", "stp", "stx", "ult", "umx", "xm", "xmz", "itz", "s3z",
@@ -353,6 +353,9 @@ class MainActivity : AudioServiceActivity() {
             "audio/aac", "audio/x-aac" -> "aac"
             "audio/midi", "audio/x-midi" -> "mid"
             "audio/x-ms-wma", "audio/wma" -> "wma"
+            "audio/amr", "audio/x-amr" -> "amr"
+            "audio/amr-wb", "audio/x-amr-wb" -> "awb"
+            "audio/speex", "audio/x-speex" -> "spx"
             else -> null
         }
 

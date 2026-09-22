@@ -1048,6 +1048,12 @@ FILE "disc image.flac" WAVE
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
     expect(isSupportedLibraryAudioPath('track.wma'), isTrue);
+    for (final extension in ['amr', 'awb', 'spx']) {
+      final path = 'recording.$extension';
+      expect(isSupportedLibraryAudioPath(path), isTrue);
+      expect(isCrossPlatformFallbackAudioPath(path), isTrue);
+      expect(trackRequiresDspPlayback(path, equalizerEnabled: false), isTrue);
+    }
     expect(isAsfAudioPath('track.WMA'), isTrue);
     expect(isSupportedLibraryAudioPath('cover.jpg'), isFalse);
   });
