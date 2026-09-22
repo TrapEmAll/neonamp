@@ -48,7 +48,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Per-track playback-position resume shared by the Windows and Android UIs
 - Persistent queue reordering, per-track removal, and clear-queue controls
 - Native 10-band DSP equalizer for local files with built-in, plugin, and user-saved presets plus persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android; importing a user-owned SF2 SoundFont enables shared DSP processing for MIDI/KAR on both platforms
-- Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, Matroska/WebM, AMR/AMR-WB, Speex, M4B, 3GP, Ogg/OGA/OGX, and MPEG Layer I/II audio when native playback cannot open the original; decoded audio is temporary and uses the shared playback controls and DSP path
+- Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, Matroska/WebM, AMR/AMR-WB, Speex, M4B, 3GP, Ogg/OGA/OGX, MPEG Layer I/II, AC3, AU, CAF, DTS, SND, TAK, TTA, and VOC audio when native playback cannot open the original; decoded audio is temporary and uses the shared playback controls and DSP path
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android
 - ReplayGain reads Vorbis comments, MP3 ID3 user-text, and APEv2 fields, preferring valid track gain before album gain
 - Spectrum visualization
@@ -65,7 +65,6 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 ## Next parity milestones
 
-- Broaden playable format coverage to the remaining Winamp-native codecs and legacy formats
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
 - AirPlay and other non-DLNA/non-Chromecast casting protocols
