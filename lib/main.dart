@@ -931,18 +931,49 @@ Future<void> main() async {
   runApp(const NeonAmpApp());
 }
 
+String? _replayGainField(Map<String, String> fields, String name) {
+  for (final entry in fields.entries) {
+    if (entry.key.toUpperCase() == name) return entry.value;
+  }
+  return null;
+}
+
+double? replayGainDbFromMetadata(Object metadata) {
+  String? trackGain;
+  String? albumGain;
+  switch (metadata) {
+    case VorbisMetadata value:
+      trackGain = value.replayGainTrackGain.firstOrNull;
+      albumGain = value.replayGainAlbumGain.firstOrNull;
+      break;
+    case Mp3Metadata value:
+      trackGain = _replayGainField(
+        value.customMetadata,
+        'REPLAYGAIN_TRACK_GAIN',
+      );
+      albumGain = _replayGainField(
+        value.customMetadata,
+        'REPLAYGAIN_ALBUM_GAIN',
+      );
+      break;
+    case ApeMetadata value:
+      trackGain = _replayGainField(value.unknowns, 'REPLAYGAIN_TRACK_GAIN');
+      albumGain = _replayGainField(value.unknowns, 'REPLAYGAIN_ALBUM_GAIN');
+      break;
+    case RiffMetadata value:
+      trackGain = _replayGainField(value.unknowns, 'REPLAYGAIN_TRACK_GAIN');
+      albumGain = _replayGainField(value.unknowns, 'REPLAYGAIN_ALBUM_GAIN');
+      break;
+    default:
+      return null;
+  }
+  return parseReplayGainDb(trackGain) ?? parseReplayGainDb(albumGain);
+}
+
 double? readReplayGainDb(File file) {
   try {
-    final metadata = readAllMetadata(file, getImage: false);
-    if (metadata is! VorbisMetadata) return null;
-    final trackGain = metadata.replayGainTrackGain.isEmpty
-        ? null
-        : metadata.replayGainTrackGain.first;
-    final albumGain = metadata.replayGainAlbumGain.isEmpty
-        ? null
-        : metadata.replayGainAlbumGain.first;
-    return parseReplayGainDb(trackGain ?? albumGain);
-  } catch (_) {
+    return replayGainDbFromMetadata(readAllMetadata(file, getImage: false));
+  } on Object {
     return null;
   }
 }
