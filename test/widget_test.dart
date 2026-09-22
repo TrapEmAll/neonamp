@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
+import 'package:neonamp/asf_metadata.dart';
 
 Future<void> _writeOggFixture(File file, {required bool opus}) async {
   final packets = <List<int>>[
@@ -147,6 +148,246 @@ bool _containsBytes(List<int> source, List<int> target) {
     if (matches) return true;
   }
   return false;
+}
+
+List<int> _asfLe16(int value) => [value & 0xff, (value >> 8) & 0xff];
+
+List<int> _asfLe32(int value) => [
+  value & 0xff,
+  (value >> 8) & 0xff,
+  (value >> 16) & 0xff,
+  (value >> 24) & 0xff,
+];
+
+List<int> _asfLe64(int value) => [
+  ..._asfLe32(value & 0xffffffff),
+  ..._asfLe32(value >> 32),
+];
+
+List<int> _asfText(String value) => [
+  for (final unit in value.codeUnits) ..._asfLe16(unit),
+  0,
+  0,
+];
+
+List<int> _asfObjectForTest(List<int> guid, List<int> data) => [
+  ...guid,
+  ..._asfLe64(24 + data.length),
+  ...data,
+];
+
+List<int> _asfDescriptorForTest(String name, String value) => [
+  ..._asfLe16(_asfText(name).length),
+  ..._asfText(name),
+  ..._asfLe16(0),
+  ..._asfLe16(_asfText(value).length),
+  ..._asfText(value),
+];
+
+List<int> _asfBinaryDescriptorForTest(String name, List<int> value) => [
+  ..._asfLe16(_asfText(name).length),
+  ..._asfText(name),
+  ..._asfLe16(1),
+  ..._asfLe16(value.length),
+  ...value,
+];
+
+List<int> _asfFixture() {
+  const headerGuid = [
+    0x30,
+    0x26,
+    0xb2,
+    0x75,
+    0x8e,
+    0x66,
+    0xcf,
+    0x11,
+    0xa6,
+    0xd9,
+    0x00,
+    0xaa,
+    0x00,
+    0x62,
+    0xce,
+    0x6c,
+  ];
+  const contentGuid = [
+    0x33,
+    0x26,
+    0xb2,
+    0x75,
+    0x8e,
+    0x66,
+    0xcf,
+    0x11,
+    0xa6,
+    0xd9,
+    0x00,
+    0xaa,
+    0x00,
+    0x62,
+    0xce,
+    0x6c,
+  ];
+  const extendedGuid = [
+    0x40,
+    0xa4,
+    0xd0,
+    0xd2,
+    0x07,
+    0xe3,
+    0xd2,
+    0x11,
+    0x97,
+    0xf0,
+    0x00,
+    0xa0,
+    0xc9,
+    0x5e,
+    0xa8,
+    0x50,
+  ];
+  const filePropertiesGuid = [
+    0xa1,
+    0xdc,
+    0xab,
+    0x8c,
+    0x47,
+    0xa9,
+    0xcf,
+    0x11,
+    0x8e,
+    0xe4,
+    0x00,
+    0xc0,
+    0x0c,
+    0x20,
+    0x53,
+    0x65,
+  ];
+  const headerExtensionGuid = [
+    0xb5,
+    0x03,
+    0xbf,
+    0x5f,
+    0x2e,
+    0xa9,
+    0xcf,
+    0x11,
+    0x8e,
+    0xe3,
+    0x00,
+    0xc0,
+    0x0c,
+    0x20,
+    0x53,
+    0x65,
+  ];
+  const metadataObjectGuid = [
+    0xea,
+    0xcb,
+    0xf8,
+    0xc5,
+    0xaf,
+    0x5b,
+    0x77,
+    0x48,
+    0x84,
+    0x67,
+    0xaa,
+    0x8c,
+    0x44,
+    0xfa,
+    0x4c,
+    0xca,
+  ];
+  const reservedGuid = [
+    0x11,
+    0xd2,
+    0xd3,
+    0xab,
+    0xba,
+    0xa9,
+    0xcf,
+    0x11,
+    0x8e,
+    0xe6,
+    0x00,
+    0xc0,
+    0x0c,
+    0x20,
+    0x53,
+    0x65,
+  ];
+  const description = ['Old title', 'Old artist', '', 'Keep description', ''];
+  final contentPayload = <int>[
+    for (final field in description) ..._asfLe16(_asfText(field).length),
+    for (final field in description) ..._asfText(field),
+  ];
+  final content = _asfObjectForTest(contentGuid, contentPayload);
+  final descriptors = [
+    _asfDescriptorForTest('WM/Genre', 'Old genre'),
+    _asfDescriptorForTest('CUSTOM', 'Preserve me'),
+    _asfDescriptorForTest('REPLAYGAIN_TRACK_GAIN', '-5.5 dB'),
+    _asfDescriptorForTest('REPLAYGAIN_ALBUM_GAIN', '-8.5 dB'),
+    _asfBinaryDescriptorForTest('WM/Picture', [
+      3,
+      ..._asfLe32(3),
+      ..._asfText('image/jpeg'),
+      ..._asfText(''),
+      1,
+      2,
+      3,
+    ]),
+  ];
+  final extended = _asfObjectForTest(extendedGuid, [
+    ..._asfLe16(descriptors.length),
+    ...descriptors.expand((item) => item),
+  ]);
+  final fileProperties = _asfObjectForTest(filePropertiesGuid, [
+    ...List<int>.filled(16, 0x42),
+    ..._asfLe64(0),
+    ...List<int>.filled(60, 0),
+  ]);
+  final opaque = _asfObjectForTest(List<int>.filled(16, 0x5a), [1, 2, 3, 4]);
+  final customRecord = [
+    ..._asfLe16(0),
+    ..._asfLe16(0),
+    ..._asfLe16(_asfText('CUSTOM_BINARY').length),
+    ..._asfLe16(1),
+    ..._asfLe32(2),
+    ..._asfText('CUSTOM_BINARY'),
+    0x11,
+    0x22,
+  ];
+  final metadataObject = _asfObjectForTest(metadataObjectGuid, [
+    ..._asfLe16(1),
+    ...customRecord,
+  ]);
+  final headerExtension = _asfObjectForTest(headerExtensionGuid, [
+    ...reservedGuid,
+    ..._asfLe16(6),
+    ..._asfLe32(metadataObject.length),
+    ...metadataObject,
+  ]);
+  final children = [
+    ...fileProperties,
+    ...content,
+    ...extended,
+    ...headerExtension,
+    ...opaque,
+  ];
+  final header = _asfObjectForTest(headerGuid, [
+    ..._asfLe32(5),
+    1,
+    2,
+    ...children,
+  ]);
+  final dataObject = [
+    ...List<int>.filled(16, 0x75),
+    ...List<int>.filled(256, 0xa5),
+  ];
+  return [...header, ...dataObject];
 }
 
 List<Uint8List> _readOggPackets(Uint8List source) {
@@ -658,6 +899,8 @@ void main() {
     expect(isSupportedLibraryAudioPath('recording.mka'), isTrue);
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
+    expect(isSupportedLibraryAudioPath('track.wma'), isTrue);
+    expect(isAsfAudioPath('track.WMA'), isTrue);
     expect(isSupportedLibraryAudioPath('cover.jpg'), isFalse);
   });
 
@@ -698,6 +941,135 @@ void main() {
     expect(isVorbisAudioPath('music/track.OPUS'), isTrue);
     expect(isVorbisAudioPath('music/track.flac'), isFalse);
   });
+
+  test(
+    'WMA ASF metadata round-trips without changing media or unknown tags',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('neonamp-asf-');
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/fixture.wma');
+      await file.writeAsBytes(_asfFixture());
+      final original = await file.readAsBytes();
+      final originalHeaderSize = ByteData.sublistView(original)
+          .getUint64(16, Endian.little);
+      final before = readTrackMetadata(file);
+      expect(before.title, 'Old title');
+      expect(before.artist, 'Old artist');
+      expect(before.genres, ['Old genre']);
+      expect(readTrackMetadata(file, getImage: true).pictures.single.bytes, [
+        1,
+        2,
+        3,
+      ]);
+      expect(readReplayGainDb(file), -5.5);
+
+      await writeTrackMetadata(file, [
+        'New 🎵 title',
+        'New artist',
+        'New album',
+        'Electronic',
+        '',
+        '2024',
+        '7',
+        '12',
+        '2',
+        '3',
+        'New lyrics',
+      ]);
+      expect(readTrackMetadata(file, getImage: true).pictures.single.bytes, [
+        1,
+        2,
+        3,
+      ]);
+      expect(readReplayGainDb(file), -5.5);
+
+      final replacementArtwork = Uint8List.fromList(
+        List<int>.generate(70000, (index) => index & 0xff),
+      );
+      await writeAsfTags(
+        file,
+        [
+          'New 🎵 title',
+          'New artist',
+          'New album',
+          'Electronic',
+          '',
+          '2024',
+          '7',
+          '12',
+          '2',
+          '3',
+          'New lyrics',
+        ],
+        artwork: replacementArtwork,
+        artworkMimeType: 'image/png',
+      );
+
+      final updated = readTrackMetadata(file);
+      expect(updated.title, 'New 🎵 title');
+      expect(updated.artist, 'New artist');
+      expect(updated.album, 'New album');
+      expect(updated.genres, ['Electronic']);
+      expect(updated.year?.year, 2024);
+      expect(updated.trackNumber, 7);
+      expect(updated.trackTotal, 12);
+      expect(updated.discNumber, 2);
+      expect(updated.totalDisc, 3);
+      expect(updated.lyrics, 'New lyrics');
+      final updatedPicture = readTrackMetadata(
+        file,
+        getImage: true,
+      ).pictures.single;
+      expect(updatedPicture.bytes, replacementArtwork);
+      expect(updatedPicture.mimetype, 'image/png');
+
+      final rewritten = await file.readAsBytes();
+      final headerSize = ByteData.sublistView(rewritten)
+          .getUint64(16, Endian.little);
+      expect(
+        rewritten.sublist(headerSize),
+        original.sublist(originalHeaderSize),
+      );
+      expect(_containsBytes(rewritten, _asfText('Preserve me')), isTrue);
+      expect(_containsBytes(rewritten, _asfText('Keep description')), isTrue);
+      expect(_containsBytes(rewritten, _asfText('CUSTOM_BINARY')), isTrue);
+      expect(_containsBytes(rewritten, [0x11, 0x22]), isTrue);
+      const filePropertiesGuid = [
+        0xa1,
+        0xdc,
+        0xab,
+        0x8c,
+        0x47,
+        0xa9,
+        0xcf,
+        0x11,
+        0x8e,
+        0xe4,
+        0x00,
+        0xc0,
+        0x0c,
+        0x20,
+        0x53,
+        0x65,
+      ];
+      var filePropertiesOffset = -1;
+      for (var index = 0; index + 16 <= rewritten.length; index++) {
+        if (_containsBytes(
+          rewritten.sublist(index, index + 16),
+          filePropertiesGuid,
+        )) {
+          filePropertiesOffset = index;
+          break;
+        }
+      }
+      expect(filePropertiesOffset, greaterThanOrEqualTo(0));
+      expect(
+        ByteData.sublistView(rewritten)
+            .getUint64(filePropertiesOffset + 40, Endian.little),
+        rewritten.length,
+      );
+    },
+  );
 
   test('OGG artwork edits round-trip and survive later tag edits', () async {
     final directory = await Directory.systemTemp.createTemp('neonamp-ogg-');
