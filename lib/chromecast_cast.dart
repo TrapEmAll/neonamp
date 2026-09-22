@@ -16,6 +16,7 @@ class ChromecastCast {
 
   bool get isConnected => _session != null;
   String? get deviceName => _session?.device.name;
+  CastDevice? get device => _session?.device;
 
   Future<List<CastDevice>> discover({
     Duration timeout = const Duration(seconds: 5),

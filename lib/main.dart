@@ -2377,6 +2377,51 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _castTrack(
+    Track track, {
+    CastDevice? chromecastDevice,
+    MediaRenderer? dlnaRenderer,
+  }) async {
+    if (isMidiFilePath(track.path)) {
+      throw UnsupportedError('MIDI/KAR casting is not supported yet.');
+    }
+    if (chromecastDevice != null) {
+      await _chromecastCast.play(
+        device: chromecastDevice,
+        path: track.path,
+        title: track.name,
+        duration: _duration,
+        segmentStart: track.cueStart,
+        startPosition: _position,
+      );
+    } else if (dlnaRenderer != null) {
+      await _dlnaCast.play(
+        renderer: dlnaRenderer,
+        path: track.path,
+        title: track.name,
+        artist: track.artist,
+        album: track.album,
+        duration: track.cueStart + _duration,
+        segmentStart: track.cueStart,
+        segmentEnd: track.cueEnd,
+      );
+    } else {
+      throw StateError('The network player is no longer available.');
+    }
+
+    if (_dspActive) {
+      await _dspPlayer.pause();
+    } else if (_midiActive) {
+      await _midiPlayer.pause();
+    } else {
+      await _player.pause();
+    }
+    if (mounted) {
+      setState(() => _playerState = PlayerState.playing);
+      _startCastPositionPolling();
+    }
+  }
+
   AudioPlayer get _player => _activePlayer;
 
   Track? get _current =>
@@ -2484,6 +2529,7 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() => _position = relative);
       _rememberResumePosition(relative);
       if (track?.cueStartMs == null &&
+          !_casting &&
           _crossfade &&
           !_crossfadeInProgress &&
           _isPlaying) {
@@ -2524,6 +2570,7 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() => _position = relative);
       _rememberResumePosition(relative);
       if (track?.cueStartMs == null &&
+          !_casting &&
           _crossfade &&
           !_crossfadeInProgress &&
           _isPlaying) {
@@ -2697,39 +2744,12 @@ class _PlayerPageState extends State<PlayerPage>
                             onTap: () async {
                               final track = _current;
                               if (track == null) return;
-                              if (isMidiFilePath(track.path)) {
-                                ScaffoldMessenger.of(this.context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'MIDI/KAR casting is not supported yet.',
-                                    ),
-                                  ),
-                                );
-                                return;
-                              }
                               Navigator.pop(dialogContext);
                               try {
-                                await _chromecastCast.play(
-                                  device: device,
-                                  path: track.path,
-                                  title: track.name,
-                                  duration: _duration,
-                                  segmentStart: track.cueStart,
-                                  startPosition: _position,
+                                await _castTrack(
+                                  track,
+                                  chromecastDevice: device,
                                 );
-                                if (_dspActive) {
-                                  await _dspPlayer.pause();
-                                } else if (_midiActive) {
-                                  await _midiPlayer.pause();
-                                } else {
-                                  await _player.pause();
-                                }
-                                if (mounted) {
-                                  setState(
-                                    () => _playerState = PlayerState.playing,
-                                  );
-                                  _startCastPositionPolling();
-                                }
                               } catch (e) {
                                 if (mounted)
                                   ScaffoldMessenger.of(this.context)
@@ -2761,43 +2781,12 @@ class _PlayerPageState extends State<PlayerPage>
                                 onTap: () async {
                                   final track = _current;
                                   if (track == null) return;
-                                  if (isMidiFilePath(track.path)) {
-                                    ScaffoldMessenger.of(this.context)
-                                        .showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              'MIDI/KAR casting is not supported yet.',
-                                            ),
-                                          ),
-                                        );
-                                    return;
-                                  }
                                   Navigator.pop(dialogContext);
                                   try {
-                                    await _dlnaCast.play(
-                                      renderer: device,
-                                      path: track.path,
-                                      title: track.name,
-                                      artist: track.artist,
-                                      album: track.album,
-                                      duration: track.cueStart + _duration,
-                                      segmentStart: track.cueStart,
-                                      segmentEnd: track.cueEnd,
+                                    await _castTrack(
+                                      track,
+                                      dlnaRenderer: device,
                                     );
-                                    if (_dspActive) {
-                                      await _dspPlayer.pause();
-                                    } else if (_midiActive) {
-                                      await _midiPlayer.pause();
-                                    } else {
-                                      await _player.pause();
-                                    }
-                                    if (mounted) {
-                                      setState(
-                                        () =>
-                                            _playerState = PlayerState.playing,
-                                      );
-                                      _startCastPositionPolling();
-                                    }
                                   } catch (e) {
                                     if (mounted)
                                       ScaffoldMessenger.of(this.context)
@@ -3826,6 +3815,8 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    final castDevice = _chromecastCast.device;
+    final castRenderer = _dlnaCast.renderer;
     _castPositionTimer?.cancel();
     if (_casting) await _stopCasting();
     _selectionInProgress = true;
@@ -3951,6 +3942,21 @@ class _PlayerPageState extends State<PlayerPage>
         await _seekCurrent(resumePosition ?? Duration.zero);
       }
       await _saveQueue();
+      if (castDevice != null || castRenderer != null) {
+        try {
+          await _castTrack(
+            track,
+            chromecastDevice: castDevice,
+            dlnaRenderer: castRenderer,
+          );
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not continue casting: $error')),
+            );
+          }
+        }
+      }
     } finally {
       _selectionInProgress = false;
     }
@@ -3982,6 +3988,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _next({bool useCrossfade = true}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_casting) useCrossfade = false;
     final next = _targetNextIndex();
     final cueTransition =
         _current?.cueStartMs != null || _queue[next].cueStartMs != null;
@@ -4010,6 +4017,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _crossfadeToNext({int? targetIndex}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_casting) return;
     final next = targetIndex ?? _targetNextIndex();
     final track = _queue[next];
     if (_current?.cueStartMs != null || track.cueStartMs != null) {

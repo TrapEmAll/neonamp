@@ -16,6 +16,7 @@ class DlnaCast {
 
   bool get isConnected => _renderer != null;
   String? get rendererName => _renderer?.description?.friendlyName;
+  MediaRenderer? get renderer => _renderer;
 
   Future<List<MediaRenderer>> discover({
     Duration timeout = const Duration(seconds: 5),
