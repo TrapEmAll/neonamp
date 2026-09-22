@@ -201,6 +201,14 @@ void main() {
     expect(stereoBalanceLabel(.5), 'Right 50%');
   });
 
+  test('video queue wraps in both directions and filters extensions', () {
+    expect(wrappedVideoIndex(3, 3), 0);
+    expect(wrappedVideoIndex(-1, 3), 2);
+    expect(isSupportedVideoPath('clip.MP4'), isTrue);
+    expect(isSupportedVideoPath('track.mp3'), isFalse);
+    expect(() => wrappedVideoIndex(0, 0), throwsArgumentError);
+  });
+
   test('normalizes SHOUTcast station records for the shared radio UI', () {
     final station = normalizeShoutcastStation({
       'ID': 42,
