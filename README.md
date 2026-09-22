@@ -33,6 +33,7 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
 - Import and export ASX playlists with titles, stream URLs, and relative media references.
 - Play tracker/module music (including MOD, IT, XM, S3M, and other libxmp-supported formats) on Windows and Android.
+- Import an SF2 SoundFont to render MIDI/KAR consistently through the shared Windows/Android DSP engine, enabling the 10-band equalizer, balance, speed, seek, and volume controls. Without an imported SoundFont, playback continues through each platform's system MIDI synthesizer.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - View embedded lyrics directly from library tracks.
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.

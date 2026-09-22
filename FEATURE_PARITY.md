@@ -46,7 +46,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Persistent recently played history shared by the Windows and Android UIs
 - Per-track playback-position resume shared by the Windows and Android UIs
 - Persistent queue reordering, per-track removal, and clear-queue controls
-- Native 10-band DSP equalizer for local files with presets and persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android
+- Native 10-band DSP equalizer for local files with presets and persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android; importing a user-owned SF2 SoundFont enables shared DSP processing for MIDI/KAR on both platforms
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android
 - ReplayGain reads Vorbis comments, MP3 ID3 user-text, and APEv2 fields, preferring valid track gain before album gain
 - Spectrum visualization
@@ -67,6 +67,6 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
 - Google Cast-only receivers and other non-DLNA casting protocols
-- Per-track volume and equalizer processing for Windows MIDI/KAR playback (the built-in Windows MIDI sequencer does not expose per-stream audio gain)
+- Equalizer processing for native system-synth MIDI/KAR playback when no SF2 SoundFont is configured; imported-SoundFont rendering routes MIDI/KAR through the shared DSP path on Windows and Android
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.
