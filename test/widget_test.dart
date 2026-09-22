@@ -460,6 +460,25 @@ void main() {
     metadata = readMetadata(file);
     expect(metadata.title, 'Renamed AAC');
     expect(metadata.lyrics, 'Lyrics');
+
+    final artwork = Uint8List.fromList([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 3]);
+    await writeAacArtwork(file, artwork, 'image/png', lyrics: 'Lyrics');
+    var updatedWithArtwork = readMetadata(file, getImage: true);
+    expect(updatedWithArtwork.pictures.single.bytes, artwork);
+    expect(updatedWithArtwork.lyrics, 'Lyrics');
+
+    await writeTrackMetadata(file, [...values]..[0] = 'AAC Artwork Kept');
+    written = await file.readAsBytes();
+    tagSize =
+        (written[6] << 21) |
+        (written[7] << 14) |
+        (written[8] << 7) |
+        written[9];
+    expect(written.sublist(10 + tagSize), audioFrames);
+    updatedWithArtwork = readMetadata(file, getImage: true);
+    expect(updatedWithArtwork.title, 'AAC Artwork Kept');
+    expect(updatedWithArtwork.lyrics, 'Lyrics');
+    expect(updatedWithArtwork.pictures.single.bytes, artwork);
   });
 
   test('folder scans recognize the metadata reader audio formats', () {
