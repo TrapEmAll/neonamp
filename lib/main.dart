@@ -3197,8 +3197,19 @@ class _PlayerPageState extends State<PlayerPage>
       final directory = await _pickFolderLocation('Choose a music folder');
       if (directory == null) return;
       if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
-      await _scanFolder(directory);
+      final found = await _scanFolder(directory);
       await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              found == 0
+                  ? 'No supported audio files were found. Select the folder that contains the music files.'
+                  : 'Found $found supported audio file(s).',
+            ),
+          ),
+        );
+      }
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3247,7 +3258,7 @@ class _PlayerPageState extends State<PlayerPage>
         .writeAsString(contents);
   }
 
-  Future<void> _scanFolder(String directory) async {
+  Future<int> _scanFolder(String directory) async {
     final List<({String path, String name, String relativePath})> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
@@ -3288,13 +3299,14 @@ class _PlayerPageState extends State<PlayerPage>
       final alreadyInLibrary = _library.any((track) => track.path == file.path);
       if (alreadyQueued && alreadyInLibrary) continue;
       final track = await _readTrack(file.path, file.name);
-      if (!mounted) return;
+      if (!mounted) return 0;
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
         if (!alreadyQueued) _queue.add(track);
         if (!alreadyInLibrary) _library.add(track);
       });
     }
+    return files.length;
   }
 
   Future<void> _rescanFolders() async {
@@ -3320,10 +3332,17 @@ class _PlayerPageState extends State<PlayerPage>
               'Choose a saved music folder again',
             );
             if (directory == null) return;
-            await _scanFolder(directory);
+            final found = await _scanFolder(directory);
             final index = _libraryFolders.indexOf(oldFolder);
             if (index >= 0) _libraryFolders[index] = directory;
             await _saveQueue();
+            if (mounted && found == 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('No new supported audio files were found.'),
+                ),
+              );
+            }
           } on Object catch (error) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -3338,10 +3357,11 @@ class _PlayerPageState extends State<PlayerPage>
         return;
       }
     }
+    var found = 0;
     for (final folder in List<String>.from(_libraryFolders)) {
       try {
         if (Platform.isAndroid || Directory(folder).existsSync()) {
-          await _scanFolder(folder);
+          found += await _scanFolder(folder);
         }
       } on Object catch (error) {
         if (!mounted) return;
@@ -3354,7 +3374,11 @@ class _PlayerPageState extends State<PlayerPage>
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Rescanned ${_libraryFolders.length} folder(s)'),
+          content: Text(
+            found == 0
+                ? 'Folders rescanned; no supported audio files found.'
+                : 'Folders rescanned; found $found supported track(s).',
+          ),
         ),
       );
     }
@@ -6362,27 +6386,33 @@ class _PlayerPageState extends State<PlayerPage>
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Row(
-            children: [
-              const Text('10-band equalizer'),
-              const Spacer(),
-              Switch(
-                value: _equalizerEnabled,
-                onChanged: _midiEqualizerUnavailable
-                    ? null
-                    : (value) {
-                        unawaited(_setEqualizerEnabled(value));
-                        setDialogState(() {});
-                      },
-              ),
-            ],
+          constraints: BoxConstraints(
+            maxWidth: math.min(
+              560.0,
+              MediaQuery.sizeOf(this.context).width - 24.0,
+            ),
           ),
+          title: const Text('10-band equalizer'),
           content: SizedBox(
-            width: 560,
+            width: math.min(
+              560.0,
+              math.max(200.0, MediaQuery.sizeOf(this.context).width - 128.0),
+            ),
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Enable equalizer'),
+                    value: _equalizerEnabled,
+                    onChanged: _midiEqualizerUnavailable
+                        ? null
+                        : (value) {
+                            unawaited(_setEqualizerEnabled(value));
+                            setDialogState(() {});
+                          },
+                  ),
                   if (_midiEqualizerUnavailable)
                     const Padding(
                       padding: EdgeInsets.only(bottom: 12),
@@ -7342,7 +7372,7 @@ class _PlayerPageState extends State<PlayerPage>
   );
   Widget _compactLayout() => Column(
     children: [
-      SizedBox(height: 104, child: _heroPanel(compact: true)),
+      SizedBox(height: 88, child: _heroPanel(compact: true)),
       Expanded(child: _queuePanel()),
     ],
   );
@@ -8064,7 +8094,7 @@ class _PlayerPageState extends State<PlayerPage>
               ),
             ),
             Padding(
-              padding: EdgeInsets.all(compact ? 12 : 32),
+              padding: EdgeInsets.all(compact ? 8 : 32),
               child: compact
                   ? Row(
                       children: [
@@ -8073,8 +8103,8 @@ class _PlayerPageState extends State<PlayerPage>
                           child: _current?.artwork != null
                               ? Image.memory(
                                   _current!.artwork!,
-                                  width: 58,
-                                  height: 58,
+                                  width: 44,
+                                  height: 44,
                                   fit: BoxFit.cover,
                                   errorBuilder: (_, __, ___) => const Icon(
                                     Icons.graphic_eq,
@@ -8083,11 +8113,11 @@ class _PlayerPageState extends State<PlayerPage>
                                   ),
                                 )
                               : const SizedBox(
-                                  width: 58,
-                                  height: 58,
+                                  width: 44,
+                                  height: 44,
                                   child: Icon(
                                     Icons.graphic_eq,
-                                    size: 42,
+                                    size: 34,
                                     color: Colors.white24,
                                   ),
                                 ),

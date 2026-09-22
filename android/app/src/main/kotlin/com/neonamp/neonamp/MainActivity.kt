@@ -296,12 +296,16 @@ class MainActivity : AudioServiceActivity() {
                 while (cursor.moveToNext()) {
                     val documentId = cursor.getString(idColumn)
                     val name = cursor.getString(nameColumn) ?: continue
-                    if (cursor.getString(mimeColumn) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    val mimeType = cursor.getString(mimeColumn).orEmpty()
+                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
                         pending.add(documentId)
                         continue
                     }
-                    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                    if (extension !in audioExtensions) continue
+                    val extension =
+                        name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                        .takeIf { it in audioExtensions }
+                        ?: audioExtensionForMimeType(mimeType)
+                        ?: continue
                     val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
                     val cacheName = sha256(documentUri.toString()) + "." + extension
                     val cachedFile = File(cacheDirectory, cacheName)
@@ -337,6 +341,20 @@ class MainActivity : AudioServiceActivity() {
         }
         return results
     }
+
+    private fun audioExtensionForMimeType(mimeType: String): String? =
+        when (mimeType.lowercase(Locale.ROOT)) {
+            "audio/mpeg", "audio/mp3", "audio/x-mpeg" -> "mp3"
+            "audio/flac", "audio/x-flac" -> "flac"
+            "audio/wav", "audio/x-wav", "audio/vnd.wave" -> "wav"
+            "audio/ogg", "application/ogg", "audio/vorbis" -> "ogg"
+            "audio/opus" -> "opus"
+            "audio/mp4", "audio/x-m4a" -> "m4a"
+            "audio/aac", "audio/x-aac" -> "aac"
+            "audio/midi", "audio/x-midi" -> "mid"
+            "audio/x-ms-wma", "audio/wma" -> "wma"
+            else -> null
+        }
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
