@@ -50,6 +50,20 @@ void main() {
       ]);
     });
 
+    test('parses ASX stream references and playlist titles', () {
+      const source =
+          '''<ASX version="3.0"><HEAD><TITLE>Favorites &amp; More</TITLE></HEAD>
+<ENTRY><TITLE>Station</TITLE><REF HREF="https://example.com/live"/></ENTRY>
+<ENTRY><REF HREF="relative/song.mp3"/></ENTRY></ASX>''';
+      final playlist = parsePlaylistDocument(source, '.asx');
+      expect(playlist.name, 'Favorites & More');
+      expect(playlist.entries.map((entry) => entry.path), [
+        'https://example.com/live',
+        'relative/song.mp3',
+      ]);
+      expect(playlist.entries.map((entry) => entry.title), ['Station', null]);
+    });
+
     test('resolves relative paths beside the playlist but preserves absolute paths and URLs', () {
       final playlistPath =
           '${Directory.systemTemp.path}${Platform.pathSeparator}lists${Platform.pathSeparator}mix.m3u';
@@ -95,12 +109,30 @@ void main() {
       );
     });
 
-    test('rejects malformed WPL XML and unsupported extensions', () {
+    test('ASX export round-trips entry paths, titles, and label', () {
+      final xml = buildAsxPlaylist(entries, name: 'A & B');
+      final parsed = parsePlaylistDocument(xml, 'asx');
+      expect(parsed.name, 'A & B');
+      expect(
+        parsed.entries.map((entry) => entry.path),
+        entries.map((entry) => entry.path),
+      );
+      expect(
+        parsed.entries.map((entry) => entry.title),
+        entries.map((entry) => entry.title),
+      );
+    });
+
+    test('rejects malformed XML playlists', () {
       expect(
         () => parsePlaylistDocument('<smil>', 'wpl'),
         throwsFormatException,
       );
-      expect(() => parsePlaylistDocument('', 'asx'), throwsFormatException);
+      expect(
+        () => parsePlaylistDocument('<ASX>', 'asx'),
+        throwsFormatException,
+      );
+      expect(() => parsePlaylistDocument('', 'unknown'), throwsFormatException);
     });
   });
 }

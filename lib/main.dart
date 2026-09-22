@@ -3119,7 +3119,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _importPlaylist() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl'],
+      allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
     );
     if (result.isEmpty || result.first.path == null) return;
     final playlistPath = result.first.path!;
@@ -4381,6 +4381,19 @@ class _PlayerPageState extends State<PlayerPage>
       fileName: 'neonamp-playlist.wpl',
       type: FileType.custom,
       allowedExtensions: ['wpl'],
+    );
+  }
+
+  Future<void> _exportAsxPlaylist() async {
+    final xml = buildAsxPlaylist([
+      for (final track in _queue)
+        PlaylistEntry(path: track.path, title: track.name),
+    ]);
+    await FilePicker.saveFile(
+      bytes: Uint8List.fromList(utf8.encode(xml)),
+      fileName: 'neonamp-playlist.asx',
+      type: FileType.custom,
+      allowedExtensions: ['asx'],
     );
   }
 
@@ -6677,7 +6690,12 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.library_music, color: Colors.white60),
           ),
           IconButton(
-            tooltip: 'Import M3U, PLS, B4S, or WPL playlist',
+            tooltip: 'Export ASX playlist',
+            onPressed: _exportAsxPlaylist,
+            icon: const Icon(Icons.playlist_play, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Import M3U, PLS, B4S, WPL, or ASX playlist',
             onPressed: _importPlaylist,
             icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
           ),
@@ -6739,6 +6757,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'exportPls') _exportPlsPlaylist();
               if (value == 'exportB4s') _exportB4sPlaylist();
               if (value == 'exportWpl') _exportWplPlaylist();
+              if (value == 'exportAsx') _exportAsxPlaylist();
               if (value == 'video') _openVideoPicker();
             },
             itemBuilder: (_) => const [
@@ -6751,7 +6770,7 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(
                 value: 'import',
-                child: Text('Import M3U, PLS, B4S, or WPL playlist'),
+                child: Text('Import M3U, PLS, B4S, WPL, or ASX playlist'),
               ),
               PopupMenuItem(
                 value: 'importItunes',
@@ -6820,6 +6839,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'exportWpl',
                 child: Text('Export WPL playlist'),
+              ),
+              PopupMenuItem(
+                value: 'exportAsx',
+                child: Text('Export ASX playlist'),
               ),
               PopupMenuItem(value: 'video', child: Text('Play videos')),
             ],
