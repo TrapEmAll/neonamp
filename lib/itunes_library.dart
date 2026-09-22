@@ -153,10 +153,7 @@ String buildItunesLibrary(
                     _writeInteger(builder, 'Disc Count', track['discTotal']);
                     _writeInteger(builder, 'Year', track['year']);
                     builder.element('key', nest: 'Location');
-                    builder.element(
-                      'string',
-                      nest: Uri.file(entry.key).toString(),
-                    );
+                    builder.element('string', nest: _fileLocation(entry.key));
                     builder.element('key', nest: 'Track Type');
                     builder.element('string', nest: 'File');
                   },
@@ -222,6 +219,11 @@ String buildItunesLibrary(
   );
   return '${builder.buildDocument().toXmlString(pretty: true)}\n';
 }
+
+String _fileLocation(String path) => Uri.file(
+  path,
+  windows: RegExp(r'^[A-Za-z]:[\\/]').hasMatch(path),
+).toString();
 
 Map<String, XmlNode> _readDictionary(XmlElement element) {
   final children = element.childElements.toList();
