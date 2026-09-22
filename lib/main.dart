@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
+import 'package:upnp_client/upnp_client.dart' show MediaRenderer;
 
 import 'dsp_local_player.dart';
 import 'video_player_page.dart';
@@ -20,6 +21,7 @@ import 'itunes_library.dart';
 import 'player_layout.dart';
 import 'podcast_opml.dart';
 import 'cue_sheet.dart';
+import 'dlna_cast.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -2261,6 +2263,7 @@ class PlayerPage extends StatefulWidget {
 class _PlayerPageState extends State<PlayerPage>
     with SingleTickerProviderStateMixin {
   AudioPlayer _activePlayer = AudioPlayer();
+  final DlnaCast _dlnaCast = DlnaCast();
   DspLocalPlayer _dspPlayer = DspLocalPlayer();
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
@@ -2319,6 +2322,8 @@ class _PlayerPageState extends State<PlayerPage>
   Timer? _sleepTimer;
   Timer? _resumeSaveTimer;
   DateTime? _sleepDeadline;
+
+  bool get _casting => _dlnaCast.isConnected;
 
   AudioPlayer get _player => _activePlayer;
 
@@ -2510,7 +2515,170 @@ class _PlayerPageState extends State<PlayerPage>
     _audioHandler!.onSeekRequested = _seekCurrent;
   }
 
+  Future<void> _showCastDevices() async {
+    if (_casting) {
+      final stop = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Casting to ${_dlnaCast.rendererName ?? 'device'}'),
+          content: const Text('Audio is playing on your network device.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Keep playing'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Stop casting'),
+            ),
+          ],
+        ),
+      );
+      if (stop == true) {
+        await _dlnaCast.stop();
+        if (mounted) setState(() => _playerState = PlayerState.paused);
+      }
+      return;
+    }
+    List<MediaRenderer> devices = [];
+    var scanning = true;
+    var scanStarted = false;
+    String? error;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, updateDialog) {
+          Future<void> scan() async {
+            if (scanStarted) return;
+            scanStarted = true;
+            if (!dialogContext.mounted) return;
+            updateDialog(() {
+              scanning = true;
+              error = null;
+            });
+            try {
+              devices = await _dlnaCast.discover();
+            } catch (e) {
+              error = 'Could not scan the local network: $e';
+            } finally {
+              scanning = false;
+              scanStarted = false;
+              if (dialogContext.mounted) updateDialog(() {});
+            }
+          }
+
+          if (scanning && devices.isEmpty && error == null && !scanStarted) {
+            scanStarted = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              scanStarted = false;
+              if (dialogContext.mounted) scan();
+            });
+          }
+          return AlertDialog(
+            title: const Text('Cast to a device'),
+            content: SizedBox(
+              width: 360,
+              child: scanning
+                  ? const Row(
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(width: 16),
+                        Text('Searching your network…'),
+                      ],
+                    )
+                  : error != null
+                  ? Text(error!)
+                  : devices.isEmpty
+                  ? const Text(
+                      'No DLNA/UPnP players found. Make sure your device is on the same Wi-Fi network.',
+                    )
+                  : ListView(
+                      shrinkWrap: true,
+                      children: devices
+                          .map(
+                            (device) => ListTile(
+                              leading: const Icon(Icons.speaker_rounded),
+                              title: Text(
+                                device.description?.friendlyName ??
+                                    'Network player',
+                              ),
+                              subtitle: Text(
+                                device.avTransport == null
+                                    ? 'Playback not supported'
+                                    : 'DLNA / UPnP',
+                              ),
+                              enabled: device.avTransport != null,
+                              onTap: () async {
+                                final track = _current;
+                                if (track == null) return;
+                                if (track.cueStartMs != null) {
+                                  ScaffoldMessenger.of(this.context)
+                                      .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Casting CUE segments is not supported yet.',
+                                          ),
+                                        ),
+                                      );
+                                  return;
+                                }
+                                Navigator.pop(dialogContext);
+                                try {
+                                  await _dlnaCast.play(
+                                    renderer: device,
+                                    path: track.path,
+                                    title: track.name,
+                                    artist: track.artist,
+                                    album: track.album,
+                                    duration: _duration,
+                                  );
+                                  if (_dspActive) {
+                                    await _dspPlayer.pause();
+                                  } else {
+                                    await _player.pause();
+                                  }
+                                  if (mounted) {
+                                    setState(
+                                      () => _playerState = PlayerState.playing,
+                                    );
+                                  }
+                                } catch (e) {
+                                  if (mounted)
+                                    ScaffoldMessenger.of(this.context)
+                                        .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Could not start casting: $e',
+                                            ),
+                                          ),
+                                        );
+                                }
+                              },
+                            ),
+                          )
+                          .toList(),
+                    ),
+            ),
+            actions: [
+              if (!scanning)
+                TextButton(onPressed: scan, child: const Text('Scan again')),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _playCurrent() async {
+    if (_casting) {
+      await _dlnaCast.resume();
+      if (mounted) setState(() => _playerState = PlayerState.playing);
+      return;
+    }
     if (_dspActive) {
       await _dspPlayer.resume();
     } else {
@@ -2519,6 +2687,11 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _pauseCurrent() async {
+    if (_casting) {
+      await _dlnaCast.pause();
+      if (mounted) setState(() => _playerState = PlayerState.paused);
+      return;
+    }
     if (_dspActive) {
       await _dspPlayer.pause();
     } else {
@@ -2527,6 +2700,10 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _stopCurrent() async {
+    if (_casting) {
+      await _dlnaCast.stop();
+      if (mounted) setState(() => _playerState = PlayerState.stopped);
+    }
     if (_dspActive) {
       await _dspPlayer.stop();
     } else {
@@ -2535,6 +2712,11 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _seekCurrent(Duration position) async {
+    if (_casting) {
+      await _dlnaCast.seek(position);
+      if (mounted) setState(() => _position = position);
+      return;
+    }
     final sourcePosition = _current == null
         ? position
         : position + _current!.cueStart;
@@ -3208,6 +3390,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    if (_casting) await _dlnaCast.stop();
     _selectionInProgress = true;
     try {
       setState(() {
@@ -6172,6 +6355,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   @override
   void dispose() {
+    unawaited(_dlnaCast.dispose());
     _sleepTimer?.cancel();
     _resumeSaveTimer?.cancel();
     _positionSub?.cancel();
@@ -6239,7 +6423,9 @@ class _PlayerPageState extends State<PlayerPage>
             final muted = _volume > 0;
             final nextVolume = muted ? 0.0 : 0.82;
             setState(() => _volume = nextVolume);
-            if (_dspActive) {
+            if (_casting) {
+              unawaited(_dlnaCast.setVolume(_volumeFor(_current)));
+            } else if (_dspActive) {
               _dspPlayer.setVolume(_volumeFor(_current));
             } else {
               _player.setVolume(_volumeFor(_current));
@@ -7414,6 +7600,17 @@ class _PlayerPageState extends State<PlayerPage>
               style: const TextStyle(color: Colors.white38, fontSize: 11),
             ),
             IconButton(
+              tooltip: _casting
+                  ? 'Casting to ${_dlnaCast.rendererName ?? 'device'}'
+                  : 'Cast to a network player',
+              onPressed: _showCastDevices,
+              icon: Icon(
+                _casting ? Icons.cast_connected_rounded : Icons.cast_rounded,
+                size: 18,
+              ),
+              color: _casting ? const Color(0xffef4bff) : Colors.white54,
+            ),
+            IconButton(
               tooltip: 'Customize player controls',
               onPressed: _showPlayerLayout,
               icon: const Icon(Icons.tune_rounded, size: 18),
@@ -7445,7 +7642,9 @@ class _PlayerPageState extends State<PlayerPage>
                     value: _volume,
                     onChanged: (value) {
                       setState(() => _volume = value);
-                      if (_dspActive) {
+                      if (_casting) {
+                        unawaited(_dlnaCast.setVolume(_volumeFor(_current)));
+                      } else if (_dspActive) {
                         _dspPlayer.setVolume(_volumeFor(_current));
                       } else {
                         _player.setVolume(_volumeFor(_current));
@@ -7534,7 +7733,9 @@ class _PlayerPageState extends State<PlayerPage>
                     value: _volume,
                     onChanged: (value) {
                       setState(() => _volume = value);
-                      if (_dspActive) {
+                      if (_casting) {
+                        unawaited(_dlnaCast.setVolume(_volumeFor(_current)));
+                      } else if (_dspActive) {
                         _dspPlayer.setVolume(_volumeFor(_current));
                       } else {
                         _player.setVolume(_volumeFor(_current));

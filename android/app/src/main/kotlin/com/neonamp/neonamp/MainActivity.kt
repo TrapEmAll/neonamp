@@ -1,9 +1,13 @@
 package com.neonamp.neonamp
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.net.wifi.WifiManager
+import android.os.Build
 import java.io.File
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -11,6 +15,9 @@ import com.ryanheise.audioservice.AudioServiceActivity
 
 class MainActivity : AudioServiceActivity() {
     private val converterChannel = "neonamp/converter"
+    private val nearbyPermissionRequest = 4021
+    private var multicastLock: WifiManager.MulticastLock? = null
+    private var nearbyPermissionResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -50,6 +57,59 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/dlna")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "beginDiscovery" -> beginDlnaDiscovery(result)
+                    "endDiscovery" -> {
+                        releaseMulticastLock()
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun beginDlnaDiscovery(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED
+        ) {
+            nearbyPermissionResult = result
+            requestPermissions(arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES), nearbyPermissionRequest)
+            return
+        }
+        acquireMulticastLock()
+        result.success(true)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != nearbyPermissionRequest) return
+        val result = nearbyPermissionResult ?: return
+        nearbyPermissionResult = null
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            acquireMulticastLock()
+            result.success(true)
+        } else {
+            result.success(false)
+        }
+    }
+
+    private fun acquireMulticastLock() {
+        val wifi = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        val lock = multicastLock ?: wifi.createMulticastLock("NeonAmp DLNA discovery").apply {
+            setReferenceCounted(false)
+        }.also { multicastLock = it }
+        if (!lock.isHeld) lock.acquire()
+    }
+
+    private fun releaseMulticastLock() {
+        multicastLock?.takeIf { it.isHeld }?.release()
+    }
+
+    override fun onDestroy() {
+        releaseMulticastLock()
+        super.onDestroy()
     }
 
     private fun transcodeToM4a(inputPath: String, outputPath: String): Boolean {
