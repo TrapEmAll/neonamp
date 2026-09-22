@@ -24,6 +24,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Convert local tracks to M4A using native Media Foundation on Windows or MediaCodec on Android, with source metadata restored when supported.
 - Import audio CD tracks to standard WAV on Windows; Android exposes the same flow and reports when no optical drive is available.
 - Subscribe to podcast RSS feeds, add playable episode enclosures, and download episodes locally.
+- Import and export podcast subscriptions as OPML files to move feeds between players and devices.
 - Persistent queue between launches.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.

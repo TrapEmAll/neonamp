@@ -16,6 +16,7 @@ import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 import 'dsp_local_player.dart';
 import 'video_player_page.dart';
 import 'asf_metadata.dart';
+import 'podcast_opml.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -3562,6 +3563,53 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _importPodcastSubscriptions() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['opml', 'xml'],
+    );
+    if (picked.isEmpty) return;
+    final bytes = await picked.first.readAsBytes();
+    final feeds = podcastFeedsFromOpml(
+      utf8.decode(bytes, allowMalformed: true),
+    );
+    var addedFeeds = 0;
+    var addedEpisodes = 0;
+    for (final feed in feeds) {
+      if (_podcastFeeds.contains(feed)) continue;
+      try {
+        addedEpisodes += await _loadPodcastFeed(feed);
+        _podcastFeeds.add(feed);
+        addedFeeds++;
+      } on Exception {
+        // A bad or temporarily unavailable feed must not block other imports.
+      }
+    }
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Imported $addedFeeds podcast feed(s), $addedEpisodes new episode(s)',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _exportPodcastSubscriptions() async {
+    final bytes = Uint8List.fromList(
+      utf8.encode(podcastFeedsToOpml(_podcastFeeds)),
+    );
+    await FilePicker.saveFile(
+      fileName: 'neonamp-podcasts.opml',
+      bytes: bytes,
+      mimeType: 'text/x-opml',
+      type: FileType.custom,
+      allowedExtensions: ['opml'],
+    );
+  }
+
   Future<int> _loadPodcastFeed(String feedUrl) async {
     final request = await HttpClient().getUrl(Uri.parse(feedUrl));
     final response = await request.close();
@@ -5657,6 +5705,19 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.podcasts_outlined, color: Colors.white60),
           ),
           IconButton(
+            tooltip: 'Import podcast subscriptions (OPML)',
+            onPressed: _importPodcastSubscriptions,
+            icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export podcast subscriptions (OPML)',
+            onPressed: _exportPodcastSubscriptions,
+            icon: const Icon(
+              Icons.file_download_outlined,
+              color: Colors.white60,
+            ),
+          ),
+          IconButton(
             tooltip: 'Equalizer',
             onPressed: _showEqualizer,
             icon: Icon(
@@ -5732,6 +5793,8 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'radio') _searchRadioDirectory();
               if (value == 'podcast') _addPodcastFeed();
               if (value == 'refreshPodcasts') _refreshPodcasts();
+              if (value == 'importPodcasts') _importPodcastSubscriptions();
+              if (value == 'exportPodcasts') _exportPodcastSubscriptions();
               if (value == 'eq') _showEqualizer();
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'theme') _showThemePicker();
@@ -5765,6 +5828,14 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'refreshPodcasts',
                 child: Text('Refresh podcasts'),
+              ),
+              PopupMenuItem(
+                value: 'importPodcasts',
+                child: Text('Import podcast subscriptions (OPML)'),
+              ),
+              PopupMenuItem(
+                value: 'exportPodcasts',
+                child: Text('Export podcast subscriptions (OPML)'),
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'speed', child: Text('Playback speed')),
