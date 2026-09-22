@@ -781,6 +781,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.0"
+  upnp_client:
+    dependency: "direct main"
+    description:
+      name: upnp_client
+      sha256: "728ef77ea2d8e977ed70088e4c35dd86f5c31ae2ecd9511940cc322152316bec"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.5.0"
   uuid:
     dependency: transitive
     description:
