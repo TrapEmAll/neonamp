@@ -3610,6 +3610,55 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _managePodcastSubscriptions() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Podcast subscriptions'),
+          content: SizedBox(
+            width: 520,
+            height: 360,
+            child: _podcastFeeds.isEmpty
+                ? const Center(child: Text('No podcast subscriptions yet.'))
+                : ListView.builder(
+                    itemCount: _podcastFeeds.length,
+                    itemBuilder: (context, index) {
+                      final feed = _podcastFeeds[index];
+                      final uri = Uri.tryParse(feed);
+                      return ListTile(
+                        leading: const Icon(Icons.podcasts),
+                        title: Text(
+                          uri?.host.isNotEmpty == true ? uri!.host : feed,
+                        ),
+                        subtitle: Text(
+                          feed,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Unsubscribe',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            setDialogState(() => _podcastFeeds.remove(feed));
+                            await _saveQueue();
+                          },
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<int> _loadPodcastFeed(String feedUrl) async {
     final request = await HttpClient().getUrl(Uri.parse(feedUrl));
     final response = await request.close();
@@ -5718,6 +5767,14 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           ),
           IconButton(
+            tooltip: 'Manage podcast subscriptions',
+            onPressed: _managePodcastSubscriptions,
+            icon: const Icon(
+              Icons.manage_accounts_outlined,
+              color: Colors.white60,
+            ),
+          ),
+          IconButton(
             tooltip: 'Equalizer',
             onPressed: _showEqualizer,
             icon: Icon(
@@ -5795,6 +5852,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'refreshPodcasts') _refreshPodcasts();
               if (value == 'importPodcasts') _importPodcastSubscriptions();
               if (value == 'exportPodcasts') _exportPodcastSubscriptions();
+              if (value == 'managePodcasts') _managePodcastSubscriptions();
               if (value == 'eq') _showEqualizer();
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'theme') _showThemePicker();
@@ -5836,6 +5894,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'exportPodcasts',
                 child: Text('Export podcast subscriptions (OPML)'),
+              ),
+              PopupMenuItem(
+                value: 'managePodcasts',
+                child: Text('Manage podcast subscriptions'),
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'speed', child: Text('Playback speed')),

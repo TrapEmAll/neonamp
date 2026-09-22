@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
 import 'package:neonamp/asf_metadata.dart';
@@ -1263,6 +1264,34 @@ void main() {
     expect(find.text('NEONAMP'), findsOneWidget);
     expect(find.text('Your library is quiet.'), findsOneWidget);
   });
+
+  testWidgets(
+    'podcast manager persists unsubscribe without feed network access',
+    (tester) async {
+      tester.view.physicalSize = const Size(1024, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({
+        'podcastFeeds': ['https://example.com/feed.xml'],
+      });
+      await tester.pumpWidget(const NeonAmpApp());
+      await tester.pump();
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Manage podcast subscriptions'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('example.com'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Unsubscribe'));
+      await tester.pump();
+      expect(find.text('No podcast subscriptions yet.'), findsOneWidget);
+      final preferences = await SharedPreferences.getInstance();
+      expect(preferences.getStringList('podcastFeeds'), isEmpty);
+    },
+  );
 
   testWidgets('equalizer exposes stereo balance on the wide layout', (
     tester,
