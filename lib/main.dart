@@ -22,6 +22,7 @@ import 'player_layout.dart';
 import 'podcast_opml.dart';
 import 'cue_sheet.dart';
 import 'dlna_cast.dart';
+import 'playlist_formats.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -3093,72 +3094,55 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _importPlaylist() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['m3u', 'm3u8', 'pls'],
+      allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl'],
     );
     if (result.isEmpty || result.first.path == null) return;
     final playlistPath = result.first.path!;
-    final lines = await File(playlistPath).readAsLines();
-    final entries = <({String path, String? title})>[];
-    final extension = playlistPath.split('.').last.toLowerCase();
-    if (extension == 'pls') {
-      final paths = <int, String>{};
-      final titles = <int, String>{};
-      for (final line in lines) {
-        final pathMatch = RegExp(
-          r'^\s*File(\d+)\s*=\s*(.+)$',
-          caseSensitive: false,
-        ).firstMatch(line);
-        if (pathMatch != null) {
-          paths[int.parse(pathMatch.group(1)!)] = pathMatch.group(2)!.trim();
-          continue;
-        }
-        final titleMatch = RegExp(
-          r'^\s*Title(\d+)\s*=\s*(.*)$',
-          caseSensitive: false,
-        ).firstMatch(line);
-        if (titleMatch != null) {
-          titles[int.parse(titleMatch.group(1)!)] = titleMatch.group(2)!.trim();
-        }
-      }
-      for (final index in paths.keys.toList()..sort()) {
-        entries.add((path: paths[index]!, title: titles[index]));
-      }
-    } else {
-      String? pendingTitle;
-      for (final raw in lines) {
-        final line = raw.trim();
-        if (line.toUpperCase().startsWith('#EXTINF:')) {
-          final comma = line.indexOf(',');
-          pendingTitle = comma >= 0 ? line.substring(comma + 1).trim() : null;
-          continue;
-        }
-        if (line.isEmpty || line.startsWith('#')) continue;
-        entries.add((path: line, title: pendingTitle));
-        pendingTitle = null;
-      }
-    }
-    for (final entry in entries) {
-      final path = entry.path;
-      if (path.isEmpty ||
-          path.startsWith('#') ||
-          _queue.any((track) => track.path == path))
-        continue;
-      final name = path.startsWith('http')
-          ? (Uri.tryParse(path)?.host ?? 'Internet stream')
-          : path.split(RegExp(r'[/\\]')).last;
-      final track = Track(
-        path: path,
-        name: entry.title?.isNotEmpty == true
-            ? entry.title!
-            : name.replaceFirst(RegExp(r'\.[^.]+$'), ''),
-        artist: path.startsWith('http') ? 'Online radio' : 'Local library',
+    try {
+      final extension = playlistPath.split('.').last.toLowerCase();
+      final document = parsePlaylistDocument(
+        await File(playlistPath).readAsString(),
+        extension,
       );
+      var added = 0;
       setState(() {
-        _queue.add(track);
-        if (!_library.any((item) => item.path == path)) _library.add(track);
+        for (final entry in document.entries) {
+          final path = resolvePlaylistPath(entry.path, playlistPath);
+          if (path.isEmpty ||
+              path.startsWith('#') ||
+              _queue.any((track) => track.path == path)) {
+            continue;
+          }
+          final uri = Uri.tryParse(path);
+          final isStream = uri?.scheme == 'http' || uri?.scheme == 'https';
+          final fallbackName = isStream
+              ? (uri?.host ?? 'Internet stream')
+              : path.split(RegExp(r'[/\\]')).last;
+          final track = Track(
+            path: path,
+            name: entry.title?.isNotEmpty == true
+                ? entry.title!
+                : fallbackName.replaceFirst(RegExp(r'\.[^.]+$'), ''),
+            artist: isStream ? 'Online radio' : 'Local library',
+          );
+          _queue.add(track);
+          if (!_library.any((item) => item.path == path)) _library.add(track);
+          added++;
+        }
       });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imported $added track(s) from playlist.')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import playlist: $error')),
+        );
+      }
     }
-    await _saveQueue();
   }
 
   Future<void> _importItunesLibrary() async {
@@ -4334,6 +4318,32 @@ class _PlayerPageState extends State<PlayerPage>
       mimeType: 'audio/x-mpegurl',
       type: FileType.custom,
       allowedExtensions: ['m3u'],
+    );
+  }
+
+  Future<void> _exportB4sPlaylist() async {
+    final xml = buildB4sPlaylist([
+      for (final track in _queue)
+        PlaylistEntry(path: track.path, title: track.name),
+    ]);
+    await FilePicker.saveFile(
+      bytes: Uint8List.fromList(utf8.encode(xml)),
+      fileName: 'neonamp-playlist.b4s',
+      type: FileType.custom,
+      allowedExtensions: ['b4s'],
+    );
+  }
+
+  Future<void> _exportWplPlaylist() async {
+    final xml = buildWplPlaylist([
+      for (final track in _queue)
+        PlaylistEntry(path: track.path, title: track.name),
+    ]);
+    await FilePicker.saveFile(
+      bytes: Uint8List.fromList(utf8.encode(xml)),
+      fileName: 'neonamp-playlist.wpl',
+      type: FileType.custom,
+      allowedExtensions: ['wpl'],
     );
   }
 
@@ -6620,7 +6630,17 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.radio, color: Colors.white60),
           ),
           IconButton(
-            tooltip: 'Import M3U or PLS playlist',
+            tooltip: 'Export Winamp B4S playlist',
+            onPressed: _exportB4sPlaylist,
+            icon: const Icon(Icons.queue_music, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export WPL playlist',
+            onPressed: _exportWplPlaylist,
+            icon: const Icon(Icons.library_music, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Import M3U, PLS, B4S, or WPL playlist',
             onPressed: _importPlaylist,
             icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
           ),
@@ -6680,6 +6700,8 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'cd') _importAudioCd();
               if (value == 'sleep') _showSleepTimer();
               if (value == 'exportPls') _exportPlsPlaylist();
+              if (value == 'exportB4s') _exportB4sPlaylist();
+              if (value == 'exportWpl') _exportWplPlaylist();
               if (value == 'video') _openVideoPicker();
             },
             itemBuilder: (_) => const [
@@ -6692,7 +6714,7 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(
                 value: 'import',
-                child: Text('Import M3U or PLS playlist'),
+                child: Text('Import M3U, PLS, B4S, or WPL playlist'),
               ),
               PopupMenuItem(
                 value: 'importItunes',
@@ -6753,6 +6775,14 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'exportPls',
                 child: Text('Export PLS playlist'),
+              ),
+              PopupMenuItem(
+                value: 'exportB4s',
+                child: Text('Export Winamp B4S playlist'),
+              ),
+              PopupMenuItem(
+                value: 'exportWpl',
+                child: Text('Export WPL playlist'),
               ),
               PopupMenuItem(value: 'video', child: Text('Play videos')),
             ],
