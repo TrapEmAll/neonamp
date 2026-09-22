@@ -14,6 +14,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
+- Play local videos in a separate Windows/Android queue with seeking, speed and volume controls; codec support depends on the device's native decoders.
 - Add HTTP audio streams and online radio URLs.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
@@ -29,6 +30,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - View embedded lyrics directly from library tracks.
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.
 - Metadata editing also writes common ID3 fields and lyrics into AIFF/AIFC files.
+- WMA/ASF tags support common fields, lyrics, and cover art while retaining unknown metadata and encoded media data.
 - AAC/ADTS metadata editing writes standard leading ID3v2 tags while preserving the encoded AAC frames.
 - WebM/Matroska metadata editing supports common tags and lyrics while keeping encoded clusters intact.
 - OGG Vorbis and Opus metadata editing preserves Ogg audio packets and supports common tags, lyrics, track/disc totals, and embedded cover artwork.

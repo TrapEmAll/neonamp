@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dsp_local_player.dart';
 import 'video_player_page.dart';
+import 'asf_metadata.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -47,6 +48,13 @@ bool isAiffAudioPath(String path) {
 bool isWavAudioPath(String path) => path.split('.').last.toLowerCase() == 'wav';
 
 bool isAacAudioPath(String path) => path.split('.').last.toLowerCase() == 'aac';
+
+bool isAsfAudioPath(String path) => path.split('.').last.toLowerCase() == 'wma';
+
+AudioMetadata readTrackMetadata(File file, {bool getImage = false}) =>
+    isAsfAudioPath(file.path)
+    ? readAsfMetadata(file, getImage: getImage)
+    : readMetadata(file, getImage: getImage);
 
 bool isMatroskaAudioPath(String path) {
   final extension = path.split('.').last.toLowerCase();
@@ -1367,6 +1375,10 @@ Future<void> writeTrackMetadata(File file, List<String> values) async {
     await writeAacTags(file, values);
     return;
   }
+  if (isAsfAudioPath(file.path)) {
+    await writeAsfTags(file, values);
+    return;
+  }
   if (isWavAudioPath(file.path)) {
     await writeWavTags(file, values);
     return;
@@ -1428,6 +1440,18 @@ double? replayGainDbFromMetadata(Object metadata) {
 
 double? readReplayGainDb(File file) {
   try {
+    if (isAsfAudioPath(file.path)) {
+      final fields = readAsfFieldsFromFile(file);
+      String? field(String name) {
+        for (final entry in fields.entries) {
+          if (entry.key.toUpperCase() == name) return entry.value;
+        }
+        return null;
+      }
+
+      return parseReplayGainDb(field('REPLAYGAIN_TRACK_GAIN')) ??
+          parseReplayGainDb(field('REPLAYGAIN_ALBUM_GAIN'));
+    }
     return replayGainDbFromMetadata(readAllMetadata(file, getImage: false));
   } on Object {
     return null;
@@ -2795,7 +2819,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<Track> _readTrack(String path, String fileName) async {
     final fallback = fileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
     try {
-      final metadata = readMetadata(File(path), getImage: true);
+      final metadata = readTrackMetadata(File(path), getImage: true);
       final replayGainDb = readReplayGainDb(File(path));
       final hasContainerId3 = isAiffAudioPath(path) || isWavAudioPath(path);
       final containerId3 = hasContainerId3
@@ -4123,7 +4147,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (values == null || values.length != 11) return;
     try {
       await writeTrackMetadata(File(track.path), values);
-      final written = readMetadata(File(track.path));
+      final written = readTrackMetadata(File(track.path));
       final titleMatches =
           values[0].isEmpty || written.title?.trim() == values[0];
       final artistMatches =
@@ -4365,6 +4389,25 @@ class _PlayerPageState extends State<PlayerPage>
             ? writeWavTags
             : writeAiffTags;
         await writer(
+          File(track.path),
+          [
+            track.name,
+            track.artist,
+            track.album,
+            track.genre,
+            '',
+            track.year?.toString() ?? '',
+            track.trackNumber?.toString() ?? '',
+            track.trackTotal?.toString() ?? '',
+            track.discNumber?.toString() ?? '',
+            track.discTotal?.toString() ?? '',
+            track.lyrics ?? '',
+          ],
+          artwork: bytes,
+          artworkMimeType: mimeType,
+        );
+      } else if (isAsfAudioPath(track.path)) {
+        await writeAsfTags(
           File(track.path),
           [
             track.name,

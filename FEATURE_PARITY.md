@@ -8,6 +8,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Embedded metadata reading and tag editing for supported MP3/FLAC/M4A/WAV/APE containers plus core Vorbis tags in OGG/Opus, including year, track/disc numbers, lyrics, and write verification
 - AAC/ADTS metadata editing through leading ID3v2 tags, preserving encoded AAC frames during initial tagging and subsequent edits
 - WebM/Matroska audio metadata editing for common fields and lyrics; encoded clusters and unrecognized tags are retained
+- WMA/ASF metadata reading and editing for title, artist, album, genre, year, track/disc numbers, lyrics, and embedded cover art; unknown header objects and media packets are preserved
 - WAV metadata editing uses embedded ID3 chunks for common fields, lyrics, and artwork while preserving PCM/audio and other RIFF chunks
 - AIFF/AIFC and WAV reload track/disc numbers and totals from their embedded ID3 frames, and save verification checks those values
 - OGG Vorbis and Opus tag editing rewrites Vorbis comments, including lyrics, totals, and embedded picture blocks, while retaining encoded audio packets
@@ -25,6 +26,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Named playlist editing, renaming, deletion, and per-track removal
 - M3U/M3U8 and legacy PLS playlist import/export for local tracks and radio streams
 - HTTP audio stream / internet radio URL playback
+- Local video queue for Windows and Android with play/pause, seeking, volume, speed, and fullscreen controls; supported video codecs depend on the platform's native decoder
 - Internet-radio station discovery through Radio Browser and SHOUTcast with normalized metadata, duplicate-stream merging, listener sorting, saved station favorites, and lazy stream resolution
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
 - Recursive folder scanning and M3U/M3U8 playlist import
