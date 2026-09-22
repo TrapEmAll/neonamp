@@ -6,6 +6,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 - Local audio queue and persistent library
 - Embedded metadata reading and tag editing for supported MP3/FLAC/M4A/WAV/APE containers plus core Vorbis tags in OGG/Opus, including year, track/disc numbers, lyrics, and write verification
+- AAC/ADTS metadata editing through leading ID3v2 tags, preserving encoded AAC frames during initial tagging and subsequent edits
 - WAV metadata editing uses embedded ID3 chunks for common fields, lyrics, and artwork while preserving PCM/audio and other RIFF chunks
 - AIFF/AIFC and WAV reload track/disc numbers and totals from their embedded ID3 frames, and save verification checks those values
 - OGG Vorbis and Opus tag editing rewrites Vorbis comments, including lyrics, totals, and embedded picture blocks, while retaining encoded audio packets
