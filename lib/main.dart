@@ -58,6 +58,25 @@ bool isSupportedLibraryAudioPath(String path) {
   return dot >= 0 && extensions.contains(lowerPath.substring(dot));
 }
 
+int nextQueueIndex({
+  required int selected,
+  required int length,
+  required bool shuffle,
+  int? shuffledOffset,
+}) {
+  if (length <= 0) throw ArgumentError.value(length, 'length');
+  if (selected < 0 || selected >= length) {
+    throw RangeError.range(selected, 0, length - 1, 'selected');
+  }
+  if (!shuffle || length == 1) return (selected + 1) % length;
+  final offset = shuffledOffset;
+  if (offset == null) throw ArgumentError.notNull('shuffledOffset');
+  if (offset < 0 || offset >= length - 1) {
+    throw RangeError.range(offset, 0, length - 2, 'shuffledOffset');
+  }
+  return offset >= selected ? offset + 1 : offset;
+}
+
 List<int> _bigEndian32(int value) => [
   (value >> 24) & 0xff,
   (value >> 16) & 0xff,
@@ -2858,9 +2877,14 @@ class _PlayerPageState extends State<PlayerPage>
       await _crossfadeToNext();
       return;
     }
-    final next = _shuffle
-        ? math.Random().nextInt(_queue.length)
-        : (_selected + 1) % _queue.length;
+    final next = nextQueueIndex(
+      selected: _selected,
+      length: _queue.length,
+      shuffle: _shuffle,
+      shuffledOffset: _shuffle && _queue.length > 1
+          ? math.Random().nextInt(_queue.length - 1)
+          : null,
+    );
     await _select(next);
   }
 
@@ -2872,9 +2896,14 @@ class _PlayerPageState extends State<PlayerPage>
     }
     _crossfadeInProgress = true;
     final previousPlayer = _player;
-    final next = _shuffle
-        ? math.Random().nextInt(_queue.length)
-        : (_selected + 1) % _queue.length;
+    final next = nextQueueIndex(
+      selected: _selected,
+      length: _queue.length,
+      shuffle: _shuffle,
+      shuffledOffset: _shuffle && _queue.length > 1
+          ? math.Random().nextInt(_queue.length - 1)
+          : null,
+    );
     final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = AudioPlayer();
@@ -2933,9 +2962,14 @@ class _PlayerPageState extends State<PlayerPage>
     if (_queue.isEmpty || _crossfadeInProgress) return;
     _crossfadeInProgress = true;
     final previousPlayer = _dspPlayer;
-    final next = _shuffle
-        ? math.Random().nextInt(_queue.length)
-        : (_selected + 1) % _queue.length;
+    final next = nextQueueIndex(
+      selected: _selected,
+      length: _queue.length,
+      shuffle: _shuffle,
+      shuffledOffset: _shuffle && _queue.length > 1
+          ? math.Random().nextInt(_queue.length - 1)
+          : null,
+    );
     final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = DspLocalPlayer();
