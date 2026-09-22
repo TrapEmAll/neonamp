@@ -106,6 +106,49 @@ Future<void> _writeOggFixture(File file, {required bool opus}) async {
   await file.writeAsBytes(pages);
 }
 
+List<int> _ebmlElementForTest(int id, List<int> payload) {
+  var idWidth = 1;
+  while (idWidth < 4 && id >= (1 << (idWidth * 8))) {
+    idWidth++;
+  }
+  final idBytes = List<int>.generate(
+    idWidth,
+    (index) => (id >> ((idWidth - index - 1) * 8)) & 0xff,
+  );
+  var sizeWidth = 1;
+  while (payload.length >= (1 << (7 * sizeWidth)) - 1) {
+    sizeWidth++;
+  }
+  final sizeBytes = List<int>.filled(sizeWidth, 0);
+  var size = payload.length;
+  for (var index = sizeWidth - 1; index >= 0; index--) {
+    sizeBytes[index] = size & 0xff;
+    size >>= 8;
+  }
+  sizeBytes[0] |= 1 << (8 - sizeWidth);
+  return [...idBytes, ...sizeBytes, ...payload];
+}
+
+List<int> _webmSimpleTagForTest(String name, String value) =>
+    _ebmlElementForTest(0x67c8, [
+      ..._ebmlElementForTest(0x45a3, utf8.encode(name)),
+      ..._ebmlElementForTest(0x4487, utf8.encode(value)),
+    ]);
+
+bool _containsBytes(List<int> source, List<int> target) {
+  for (var start = 0; start + target.length <= source.length; start++) {
+    var matches = true;
+    for (var offset = 0; offset < target.length; offset++) {
+      if (source[start + offset] != target[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
+}
+
 List<Uint8List> _readOggPackets(Uint8List source) {
   final packets = <Uint8List>[];
   final pending = <int>[];
@@ -496,8 +539,86 @@ void main() {
     expect(untaggedMetadata.pictures.single.bytes, artwork);
   });
 
+  test('WebM tag edits retain audio clusters and custom tags', () async {
+    final directory = await Directory.systemTemp.createTemp('neonamp-webm-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/fixture.webm');
+    final cluster = _ebmlElementForTest(0x1f43b675, [0x81, 0x00, 0x00, 0x80]);
+    final oldTag = _ebmlElementForTest(0x7373, [
+      ..._webmSimpleTagForTest('TITLE', 'Old title'),
+      ..._webmSimpleTagForTest('CUSTOM_LABEL', 'Keep this'),
+    ]);
+    final tags = _ebmlElementForTest(0x1254c367, oldTag);
+    final segmentPayload = [...tags, ...cluster];
+    await file.writeAsBytes([
+      ..._ebmlElementForTest(0x1a45dfa3, []),
+      0x18,
+      0x53,
+      0x80,
+      0x67,
+      0x01,
+      ...List<int>.filled(7, 0xff), // Unknown-size Segment.
+      ...segmentPayload,
+    ]);
+    const values = [
+      'WebM title',
+      'Artist',
+      'Album',
+      'Electronic',
+      '',
+      '2026',
+      '4',
+      '11',
+      '2',
+      '3',
+      'Embedded lyrics',
+    ];
+
+    await writeTrackMetadata(file, values);
+    var metadata = readMetadata(file);
+    expect(metadata.title, 'WebM title');
+    expect(metadata.artist, 'Artist');
+    expect(metadata.album, 'Album');
+    expect(metadata.genres, contains('Electronic'));
+    expect(metadata.trackNumber, 4);
+    expect(metadata.trackTotal, 11);
+    expect(metadata.discNumber, 2);
+    expect(metadata.totalDisc, 3);
+    expect(metadata.lyrics, 'Embedded lyrics');
+    var allMetadata = readAllMetadata(file) as VorbisMetadata;
+    expect(allMetadata.title, ['WebM title']);
+    expect(allMetadata.unknowns['CUSTOM_LABEL'], 'Keep this');
+    expect(_containsBytes(await file.readAsBytes(), cluster), isTrue);
+
+    await writeTrackMetadata(file, [...values]..[0] = 'Renamed WebM');
+    metadata = readMetadata(file);
+    expect(metadata.title, 'Renamed WebM');
+    allMetadata = readAllMetadata(file) as VorbisMetadata;
+    expect(allMetadata.title, ['Renamed WebM']);
+    expect(allMetadata.unknowns['CUSTOM_LABEL'], 'Keep this');
+    expect(_containsBytes(await file.readAsBytes(), cluster), isTrue);
+
+    final finiteFile = File('${directory.path}/finite.mkv');
+    final trailingVoid = _ebmlElementForTest(0xec, [0x5a, 0x01]);
+    await finiteFile.writeAsBytes([
+      ..._ebmlElementForTest(0x1a45dfa3, []),
+      ..._ebmlElementForTest(0x18538067, cluster),
+      ...trailingVoid,
+    ]);
+    await writeTrackMetadata(finiteFile, values);
+    expect(readMetadata(finiteFile).title, 'WebM title');
+    final finiteUpdated = await finiteFile.readAsBytes();
+    expect(_containsBytes(finiteUpdated, cluster), isTrue);
+    expect(
+      finiteUpdated.sublist(finiteUpdated.length - trailingVoid.length),
+      trailingVoid,
+    );
+  });
+
   test('folder scans recognize the metadata reader audio formats', () {
     expect(isAacAudioPath('music/track.AAC'), isTrue);
+    expect(isMatroskaAudioPath('music/track.mka'), isTrue);
+    expect(isSupportedLibraryAudioPath('recording.mka'), isTrue);
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
     expect(isSupportedLibraryAudioPath('cover.jpg'), isFalse);

@@ -30,6 +30,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.
 - Metadata editing also writes common ID3 fields and lyrics into AIFF/AIFC files.
 - AAC/ADTS metadata editing writes standard leading ID3v2 tags while preserving the encoded AAC frames.
+- WebM/Matroska metadata editing supports common tags and lyrics while keeping encoded clusters intact.
 - OGG Vorbis and Opus metadata editing preserves Ogg audio packets and supports common tags, lyrics, track/disc totals, and embedded cover artwork.
 - AIFF/AIFC cover-art replacement embeds the selected image as an ID3 picture frame and preserves it during later metadata edits.
 - WAV edits store common tags, lyrics, and cover art in an embedded ID3 chunk while preserving existing audio and RIFF chunks.
