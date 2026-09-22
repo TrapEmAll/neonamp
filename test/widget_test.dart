@@ -649,6 +649,45 @@ FILE "disc image.flac" WAVE
     expect(restoreResumePosition(3001), const Duration(milliseconds: 3001));
   });
 
+  test(
+    '15-second seek controls clamp to the track and allow unknown duration',
+    () {
+      const duration = Duration(minutes: 3);
+      expect(
+        seekByOffset(
+          position: const Duration(seconds: 8),
+          duration: duration,
+          offset: const Duration(seconds: -15),
+        ),
+        Duration.zero,
+      );
+      expect(
+        seekByOffset(
+          position: const Duration(seconds: 80),
+          duration: duration,
+          offset: const Duration(seconds: 15),
+        ),
+        const Duration(seconds: 95),
+      );
+      expect(
+        seekByOffset(
+          position: const Duration(seconds: 175),
+          duration: duration,
+          offset: const Duration(seconds: 15),
+        ),
+        duration,
+      );
+      expect(
+        seekByOffset(
+          position: const Duration(seconds: 40),
+          duration: Duration.zero,
+          offset: const Duration(seconds: 15),
+        ),
+        const Duration(seconds: 55),
+      );
+    },
+  );
+
   test('AIFF ID3 tags include editable common fields', () {
     final tag = buildAiffId3Tag([
       'Title',
