@@ -11,6 +11,7 @@ import 'package:neonamp/dsp_local_player.dart';
 import 'package:neonamp/asf_metadata.dart';
 import 'package:neonamp/podcast_opml.dart';
 import 'package:neonamp/cue_sheet.dart';
+import 'package:neonamp/itunes_library.dart';
 
 Future<void> _writeOggFixture(File file, {required bool opus}) async {
   final packets = <List<int>>[
@@ -1361,6 +1362,85 @@ FILE "disc image.flac" WAVE
     expect(twoBookmarks, hasLength(2));
     expect(toggleTrackBookmark(twoBookmarks, first), [second]);
     expect(toggleTrackBookmark([], first), [first]);
+  });
+
+  test('iTunes XML library preserves metadata and named playlists', () {
+    final sourceTrack = Track(
+      path: 'C:\\Music\\Artist\\Song & Title.mp3',
+      name: 'Song & Title',
+      artist: 'An Artist',
+      album: 'An Album',
+      genre: 'Rock',
+      year: 1998,
+      trackNumber: 4,
+      trackTotal: 11,
+      discNumber: 1,
+      discTotal: 2,
+    );
+    final xml = buildItunesLibrary(
+      [sourceTrack.toJson()],
+      {
+        'Road Trip': [sourceTrack.path],
+      },
+    );
+    final imported = parseItunesLibrary(xml);
+
+    expect(imported.tracks, hasLength(1));
+    expect(
+      Track.fromJson(Map<String, dynamic>.from(imported.tracks.single))
+          .toJson(),
+      sourceTrack.toJson(),
+    );
+    expect(imported.playlists, {
+      'Road Trip': [sourceTrack.path],
+    });
+  });
+
+  test('iTunes XML rejects malformed data and skips missing tracks safely', () {
+    expect(() => parseItunesLibrary('<not-a-plist/>'), throwsFormatException);
+    expect(
+      () => parseItunesLibrary('''
+        <?xml version="1.0"?><plist version="1.0"><dict>
+          <key>Tracks</key><dict></dict>
+        </dict></plist>
+      '''),
+      throwsFormatException,
+    );
+  });
+
+  test('imports standard iTunes plist dictionaries and file URLs', () {
+    const xml = '''
+      <?xml version="1.0" encoding="UTF-8"?>
+      <plist version="1.0"><dict>
+        <key>Tracks</key><dict><key>42</key><dict>
+          <key>Track ID</key><integer>42</integer>
+          <key>Name</key><string>A &amp; B</string>
+          <key>Artist</key><string>Example Artist</string>
+          <key>Album</key><string>Example Album</string>
+          <key>Genre</key><string>Alternative</string>
+          <key>Year</key><integer>2004</integer>
+          <key>Track Number</key><integer>3</integer>
+          <key>Location</key>
+          <string>file://localhost/C:/Music/Example%20Song.mp3</string>
+        </dict></dict>
+        <key>Playlists</key><array>
+          <dict><key>Name</key><string>Library</string><key>Master</key><true/>
+            <key>Playlist Items</key><array><dict><key>Track ID</key><integer>42</integer></dict></array>
+          </dict>
+          <dict><key>Name</key><string>Favorites</string>
+            <key>Playlist Items</key><array><dict><key>Track ID</key><integer>42</integer></dict></array>
+          </dict>
+        </array>
+      </dict></plist>
+    ''';
+    final imported = parseItunesLibrary(xml);
+
+    expect(imported.tracks.single['path'], r'C:\Music\Example Song.mp3');
+    expect(imported.tracks.single['name'], 'A & B');
+    expect(imported.tracks.single['year'], 2004);
+    expect(imported.playlists, {
+      'Favorites': [r'C:\Music\Example Song.mp3'],
+    });
   });
 
   testWidgets(
