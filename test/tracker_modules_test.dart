@@ -53,6 +53,16 @@ void main() {
     expect(isSupportedLibraryAudioPath('C:/Music/readme.txt'), isFalse);
   });
 
+  test(
+    'individual file picker exposes the shared multi-format library set',
+    () async {
+      final source = await File('lib/main.dart').readAsString();
+      expect(source, contains('...supportedLibraryAudioExtensions'));
+      expect(source, contains('...trackerModuleExtensions'));
+      expect(source, contains('...midiFileExtensions'));
+    },
+  );
+
   test('MIDI and karaoke MIDI files are recognized for library scans', () {
     for (final extension in midiFileExtensions) {
       expect(isMidiFilePath('C:/Music/song.$extension'), isTrue);
