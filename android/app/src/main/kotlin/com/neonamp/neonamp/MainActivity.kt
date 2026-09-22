@@ -320,7 +320,18 @@ class MainActivity : AudioServiceActivity() {
                         }
                         if (sourceModified > 0) cachedFile.setLastModified(sourceModified)
                     }
-                    results.add(mapOf("path" to cachedFile.absolutePath, "name" to name))
+                    val relativePath = if (documentId.startsWith("$rootDocumentId/")) {
+                        documentId.removePrefix("$rootDocumentId/")
+                    } else {
+                        name
+                    }
+                    results.add(
+                        mapOf(
+                            "path" to cachedFile.absolutePath,
+                            "name" to name,
+                            "relativePath" to relativePath,
+                        ),
+                    )
                 }
             } ?: throw IllegalStateException("Android could not read this folder. Re-add it to restore access.")
         }

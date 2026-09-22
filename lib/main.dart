@@ -27,6 +27,7 @@ import 'playlist_formats.dart';
 import 'tracker_modules.dart';
 import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
+import 'playlist_library_resolution.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -2281,6 +2282,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<String> _playHistory = [];
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
+  final Map<String, String> _libraryRelativePaths = {};
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
   final List<SmartPlaylist> _smartPlaylists = [];
@@ -3045,6 +3047,14 @@ class _PlayerPageState extends State<PlayerPage>
       }
       if (savedSettings != null) {
         final settings = jsonDecode(savedSettings) as Map<String, dynamic>;
+        final savedRelativePaths = settings['libraryRelativePaths'];
+        if (savedRelativePaths is Map) {
+          _libraryRelativePaths.addAll(
+            savedRelativePaths.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ),
+          );
+        }
         _volume = (settings['volume'] as num?)?.toDouble() ?? _volume;
         _balance = normalizeStereoBalance(
           (settings['balance'] as num?)?.toDouble() ?? _balance,
@@ -3125,6 +3135,7 @@ class _PlayerPageState extends State<PlayerPage>
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
+        'libraryRelativePaths': _libraryRelativePaths,
         if (_playerLayoutCustomized) 'playerControls': _playerControls,
       }),
     );
@@ -3226,7 +3237,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _scanFolder(String directory) async {
-    final List<({String path, String name})> files;
+    final List<({String path, String name, String relativePath})> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
         throw StateError('Reselect this folder to grant Android media access.');
@@ -3237,14 +3248,28 @@ class _PlayerPageState extends State<PlayerPage>
           });
       files = (results ?? []).map((item) {
         final path = item['path'] as String;
-        return (path: path, name: item['name'] as String? ?? path);
+        final name = item['name'] as String? ?? path;
+        return (
+          path: path,
+          name: name,
+          relativePath: item['relativePath'] as String? ?? name,
+        );
       }).toList();
     } else {
       files = Directory(directory)
           .listSync(recursive: true)
           .whereType<File>()
           .where((file) => isSupportedLibraryAudioPath(file.path))
-          .map((file) => (path: file.path, name: file.uri.pathSegments.last))
+          .map(
+            (file) => (
+              path: file.path,
+              name: file.uri.pathSegments.last,
+              relativePath: file.path
+                  .substring(directory.length)
+                  .replaceFirst(RegExp(r'^[/\\]+'), '')
+                  .replaceAll('\\', '/'),
+            ),
+          )
           .toList();
     }
     for (final file in files) {
@@ -3254,6 +3279,7 @@ class _PlayerPageState extends State<PlayerPage>
       final track = await _readTrack(file.path, file.name);
       if (!mounted) return;
       setState(() {
+        _libraryRelativePaths[file.path] = file.relativePath;
         if (!alreadyQueued) _queue.add(track);
         if (!alreadyInLibrary) _library.add(track);
       });
@@ -3337,26 +3363,46 @@ class _PlayerPageState extends State<PlayerPage>
         extension,
       );
       var added = 0;
+      var skipped = 0;
       setState(() {
         for (final entry in document.entries) {
-          final path = resolvePlaylistPath(entry.path, playlistPath);
-          if (path.isEmpty ||
-              path.startsWith('#') ||
-              _queue.any((track) => track.path == path)) {
-            continue;
-          }
+          var path = resolvePlaylistPath(entry.path, playlistPath);
+          if (path.isEmpty || path.startsWith('#')) continue;
           final uri = Uri.tryParse(path);
           final isStream = uri?.scheme == 'http' || uri?.scheme == 'https';
+          if (!isStream && Platform.isAndroid) {
+            path =
+                resolvePlaylistLibraryPath(
+                  entryPath: entry.path,
+                  resolvedPath: path,
+                  libraryRelativePaths: _libraryRelativePaths,
+                ) ??
+                path;
+            if (!File(path).existsSync()) {
+              skipped++;
+              continue;
+            }
+          }
+          if (_queue.any((track) => track.path == path)) continue;
+          final existingTrack = _library
+              .where((track) => track.path == path)
+              .firstOrNull;
           final fallbackName = isStream
               ? (uri?.host ?? 'Internet stream')
               : path.split(RegExp(r'[/\\]')).last;
-          final track = Track(
-            path: path,
-            name: entry.title?.isNotEmpty == true
-                ? entry.title!
-                : fallbackName.replaceFirst(RegExp(r'\.[^.]+$'), ''),
-            artist: isStream ? 'Online radio' : 'Local library',
-          );
+          final track =
+              existingTrack?.copyWith(
+                name: entry.title?.isNotEmpty == true
+                    ? entry.title!
+                    : existingTrack.name,
+              ) ??
+              Track(
+                path: path,
+                name: entry.title?.isNotEmpty == true
+                    ? entry.title!
+                    : fallbackName.replaceFirst(RegExp(r'\.[^.]+$'), ''),
+                artist: isStream ? 'Online radio' : 'Local library',
+              );
           _queue.add(track);
           if (!_library.any((item) => item.path == path)) _library.add(track);
           added++;
@@ -3365,7 +3411,12 @@ class _PlayerPageState extends State<PlayerPage>
       await _saveQueue();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Imported $added track(s) from playlist.')),
+          SnackBar(
+            content: Text(
+              'Imported $added track(s) from playlist.'
+              '${skipped == 0 ? '' : ' $skipped local track(s) were not found in the library.'}',
+            ),
+          ),
         );
       }
     } on Object catch (error) {
