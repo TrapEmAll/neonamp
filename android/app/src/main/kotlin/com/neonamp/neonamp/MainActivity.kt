@@ -298,6 +298,7 @@ class MainActivity : AudioServiceActivity() {
                     DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                     DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                     DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    DocumentsContract.Document.COLUMN_FLAGS,
                     DocumentsContract.Document.COLUMN_SIZE,
                     DocumentsContract.Document.COLUMN_LAST_MODIFIED,
                 ),
@@ -308,15 +309,22 @@ class MainActivity : AudioServiceActivity() {
                 val idColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
                 val nameColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
                 val mimeColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                val flagsColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_FLAGS)
                 val sizeColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
                 val modifiedColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
                 while (cursor.moveToNext()) {
                     val documentId = cursor.getString(idColumn)
                     val name = cursor.getString(nameColumn) ?: continue
                     val mimeType = cursor.getString(mimeColumn).orEmpty()
+                    val documentFlags = if (flagsColumn >= 0 && !cursor.isNull(flagsColumn)) {
+                        cursor.getLong(flagsColumn)
+                    } else {
+                        0L
+                    }
                     val isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
                         mimeType.equals("inode/directory", ignoreCase = true) ||
-                        mimeType.endsWith("/directory", ignoreCase = true)
+                        mimeType.endsWith("/directory", ignoreCase = true) ||
+                        (documentFlags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong() != 0L)
                     if (isDirectory) {
                         pending.add(documentId)
                         continue

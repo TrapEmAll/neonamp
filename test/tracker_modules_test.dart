@@ -22,6 +22,8 @@ void main() {
         greaterThan(directoryClassificationStart),
         reason: 'Recurse through provider directories before classifying files.',
       );
+      expect(nativeSource, contains('COLUMN_FLAGS'));
+      expect(nativeSource, contains('FLAG_DIR_SUPPORTS_CREATE'));
       final nativeSetBody = RegExp(
         r'val audioExtensions = setOf\((.*?)\n\s*\)',
         dotAll: true,
