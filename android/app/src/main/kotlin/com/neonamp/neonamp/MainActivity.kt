@@ -10,6 +10,7 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import java.io.File
@@ -35,6 +36,20 @@ class MainActivity : AudioServiceActivity() {
     companion object {
         init {
             System.loadLibrary("neonamp_tracker")
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                4023,
+            )
         }
     }
 
