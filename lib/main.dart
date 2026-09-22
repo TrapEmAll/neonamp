@@ -23,6 +23,7 @@ import 'podcast_opml.dart';
 import 'cue_sheet.dart';
 import 'dlna_cast.dart';
 import 'playlist_formats.dart';
+import 'tracker_modules.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -70,7 +71,7 @@ bool isMatroskaAudioPath(String path) {
 }
 
 bool isSupportedLibraryAudioPath(String path) {
-  const extensions = {
+  const extensions = <String>{
     '.mp3',
     '.flac',
     '.wav',
@@ -91,7 +92,9 @@ bool isSupportedLibraryAudioPath(String path) {
   };
   final lowerPath = path.toLowerCase();
   final dot = lowerPath.lastIndexOf('.');
-  return dot >= 0 && extensions.contains(lowerPath.substring(dot));
+  return dot >= 0 &&
+      (extensions.contains(lowerPath.substring(dot)) ||
+          trackerModuleExtensions.contains(lowerPath.substring(dot + 1)));
 }
 
 int nextQueueIndex({
@@ -3029,7 +3032,29 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _addFiles() async {
-    final result = await FilePicker.pickFiles(type: FileType.audio);
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: [
+        'mp3',
+        'flac',
+        'wav',
+        'ogg',
+        'm4a',
+        'mp4',
+        'aac',
+        'wma',
+        'opus',
+        'ape',
+        'aif',
+        'aiff',
+        'aifc',
+        'mov',
+        'webm',
+        'mkv',
+        'mka',
+        ...trackerModuleExtensions,
+      ],
+    );
     if (result.isEmpty) return;
     for (final file in result) {
       final path = file.path;
@@ -3325,6 +3350,16 @@ class _PlayerPageState extends State<PlayerPage>
   Future<Track> _readTrack(String path, String fileName) async {
     final fallback = fileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
     try {
+      if (isTrackerModulePath(path)) {
+        final module = await TrackerModuleDecoder.readInfo(path);
+        return Track(
+          path: path,
+          name: module.title.trim().isEmpty ? fallback : module.title.trim(),
+          artist:
+              'Tracker module${module.format.trim().isEmpty ? '' : ' · ${module.format.trim()}'}',
+          album: 'Tracker modules',
+        );
+      }
       final metadata = readTrackMetadata(File(path), getImage: true);
       final replayGainDb = readReplayGainDb(File(path));
       final hasContainerId3 = isAiffAudioPath(path) || isWavAudioPath(path);
@@ -3398,7 +3433,9 @@ class _PlayerPageState extends State<PlayerPage>
         _resumePositions[track.identityKey],
       );
       final trackVolume = _volumeFor(track);
-      final shouldUseDsp = _equalizerEnabled && !track.path.startsWith('http');
+      final shouldUseDsp =
+          !track.path.startsWith('http') &&
+          (_equalizerEnabled || isTrackerModulePath(track.path));
       if (shouldUseDsp) {
         if (!_dspActive) {
           await _player.stop();
@@ -3408,7 +3445,7 @@ class _PlayerPageState extends State<PlayerPage>
           track.path,
           volume: trackVolume,
           playbackSpeed: _playbackSpeed,
-          equalizerEnabled: true,
+          equalizerEnabled: _equalizerEnabled,
           bands: _eqBands,
           balance: _balance,
         );

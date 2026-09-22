@@ -19,6 +19,15 @@ class MainActivity : AudioServiceActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nearbyPermissionResult: MethodChannel.Result? = null
 
+    private external fun nativeReadTrackerInfo(inputPath: String): Array<String>?
+    private external fun nativeRenderTrackerToWav(inputPath: String, outputPath: String): Boolean
+
+    companion object {
+        init {
+            System.loadLibrary("neonamp_tracker")
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, converterChannel)
@@ -64,6 +73,48 @@ class MainActivity : AudioServiceActivity() {
                     "endDiscovery" -> {
                         releaseMulticastLock()
                         result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/tracker")
+            .setMethodCallHandler { call, result ->
+                val inputPath = call.argument<String>("inputPath")
+                if (inputPath == null) {
+                    result.error("invalid_arguments", "A module path is required.", null)
+                    return@setMethodCallHandler
+                }
+                when (call.method) {
+                    "readInfo" -> {
+                        val info = try {
+                            nativeReadTrackerInfo(inputPath)
+                        } catch (_: Throwable) {
+                            null
+                        }
+                        if (info == null || info.size < 2) {
+                            result.error("invalid_module", "Unsupported or malformed tracker module.", null)
+                        } else {
+                            result.success(mapOf("title" to info[0], "format" to info[1]))
+                        }
+                    }
+                    "decodeToWav" -> {
+                        val outputPath = call.argument<String>("outputPath")
+                        if (outputPath == null) {
+                            result.error("invalid_arguments", "An output path is required.", null)
+                            return@setMethodCallHandler
+                        }
+                        Thread {
+                            val decoded = try {
+                                nativeRenderTrackerToWav(inputPath, outputPath)
+                            } catch (_: Throwable) {
+                                false
+                            }
+                            if (!decoded) File(outputPath).delete()
+                            runOnUiThread {
+                                if (decoded) result.success(true)
+                                else result.error("decode_failed", "Could not decode tracker module.", null)
+                            }
+                        }.start()
                     }
                     else -> result.notImplemented()
                 }

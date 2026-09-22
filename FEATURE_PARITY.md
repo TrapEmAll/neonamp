@@ -5,6 +5,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 ## Implemented in the current build
 
 - Local audio queue and persistent library
+- Native tracker-module playback on Windows and Android for MOD, IT, XM, S3M, MTM, STM, 669, FAR, ULT, and additional libxmp-supported module formats
 - Embedded metadata reading and tag editing for supported MP3/FLAC/M4A/WAV/APE containers plus core Vorbis tags in OGG/Opus, including year, track/disc numbers, lyrics, and write verification
 - AAC/ADTS metadata editing through leading ID3v2 tags, preserving encoded AAC frames during initial tagging and subsequent edits
 - WebM/Matroska audio metadata editing for common fields and lyrics; encoded clusters and unrecognized tags are retained
@@ -61,7 +62,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 ## Next parity milestones
 
-- Broaden tag-writing coverage beyond the currently supported containers
+- Broaden playable format coverage to the remaining Winamp-native codecs and legacy formats
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
 - Google Cast-only receivers and other non-DLNA casting protocols

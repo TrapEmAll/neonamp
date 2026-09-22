@@ -42,6 +42,10 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       system_controls_channel_;
 
+  // Serves tracker-module metadata and offline PCM rendering to Dart.
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      tracker_channel_;
+
   winrt::Windows::Media::SystemMediaTransportControls system_media_controls_{
       nullptr};
   winrt::event_token system_media_button_token_{};

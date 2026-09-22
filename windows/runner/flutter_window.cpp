@@ -3,6 +3,7 @@
 #include <optional>
 #include <algorithm>
 #include <fstream>
+#include <thread>
 #include <vector>
 #include <string>
 
@@ -19,6 +20,7 @@
 #include <winrt/base.h>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "../../native/tracker/include/tracker_decoder.h"
 
 namespace {
 
@@ -349,6 +351,57 @@ bool FlutterWindow::OnCreate() {
         } else {
           result->NotImplemented();
         }
+      });
+  tracker_channel_ = std::make_unique<
+      flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "neonamp/tracker",
+      &flutter::StandardMethodCodec::GetInstance());
+  tracker_channel_->SetMethodCallHandler(
+      [](const auto& call, auto result) {
+        const auto* values =
+            std::get_if<flutter::EncodableMap>(call.arguments());
+        if (values == nullptr) {
+          result->Error("invalid_arguments", "Expected a map of arguments.");
+          return;
+        }
+        const auto input_path = ToUtf8(GetStringArgument(*values, "inputPath"));
+        if (input_path.empty()) {
+          result->Error("invalid_arguments", "A module path is required.");
+          return;
+        }
+        if (call.method_name() == "readInfo") {
+          TrackerModuleInfo info;
+          std::string error;
+          if (!ReadTrackerModuleInfo(input_path, &info, &error)) {
+            result->Error("invalid_module", error);
+            return;
+          }
+          flutter::EncodableMap response;
+          response[flutter::EncodableValue("title")] =
+              flutter::EncodableValue(info.title);
+          response[flutter::EncodableValue("format")] =
+              flutter::EncodableValue(info.format);
+          result->Success(flutter::EncodableValue(response));
+          return;
+        }
+        if (call.method_name() == "decodeToWav") {
+          const auto output_path = ToUtf8(GetStringArgument(*values, "outputPath"));
+          if (output_path.empty()) {
+            result->Error("invalid_arguments", "An output path is required.");
+            return;
+          }
+          std::thread([input_path, output_path,
+                       result = std::move(result)]() mutable {
+            std::string error;
+            if (RenderTrackerModuleToWav(input_path, output_path, &error)) {
+              result->Success();
+            } else {
+              result->Error("decode_failed", error);
+            }
+          }).detach();
+          return;
+        }
+        result->NotImplemented();
       });
   InitializeSystemMediaControls();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());

@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
+
+import 'tracker_modules.dart';
 
 double dspGainForDb(double decibels) =>
     math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
@@ -20,6 +23,7 @@ class DspLocalPlayer {
 
   soloud.AudioSource? _source;
   soloud.SoundHandle? _handle;
+  String? _renderedModulePath;
   Timer? _pollTimer;
   bool _completionSent = false;
   bool _disposed = false;
@@ -55,10 +59,33 @@ class DspLocalPlayer {
   }) async {
     await _ensureInitialized();
     await stop();
-    final source = await soloud.SoLoud.instance.loadFile(
-      path,
-      mode: soloud.LoadMode.memory,
-    );
+    final isTrackerModule = isTrackerModulePath(path);
+    var sourcePath = path;
+    if (isTrackerModule) {
+      sourcePath =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'neonamp-tracker-${DateTime.now().microsecondsSinceEpoch}.wav';
+      try {
+        await TrackerModuleDecoder.decodeToWav(path, sourcePath);
+      } on Object {
+        final output = File(sourcePath);
+        if (await output.exists()) await output.delete();
+        rethrow;
+      }
+    }
+    late final soloud.AudioSource source;
+    try {
+      source = await soloud.SoLoud.instance.loadFile(
+        sourcePath,
+        mode: isTrackerModule ? soloud.LoadMode.disk : soloud.LoadMode.memory,
+      );
+    } on Object {
+      if (isTrackerModule) {
+        final output = File(sourcePath);
+        if (await output.exists()) await output.delete();
+      }
+      rethrow;
+    }
     final equalizer = source.filters.parametricEqFilter;
     equalizer.activate();
     equalizer.numBands().value = bands.length.toDouble();
@@ -73,6 +100,7 @@ class DspLocalPlayer {
     );
     soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
     _source = source;
+    _renderedModulePath = isTrackerModule ? sourcePath : null;
     _handle = handle;
     _completionSent = false;
     _durationController.add(soloud.SoLoud.instance.getLength(source));
@@ -177,6 +205,12 @@ class DspLocalPlayer {
     _source = null;
     if (source != null && soloud.SoLoud.instance.isInitialized) {
       await soloud.SoLoud.instance.disposeSource(source);
+    }
+    final renderedModulePath = _renderedModulePath;
+    _renderedModulePath = null;
+    if (renderedModulePath != null) {
+      final renderedModule = File(renderedModulePath);
+      if (await renderedModule.exists()) await renderedModule.delete();
     }
     if (!_disposed) _stateController.add(PlayerState.stopped);
   }

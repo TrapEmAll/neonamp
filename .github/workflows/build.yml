@@ -40,6 +40,12 @@ jobs:
         run: flutter pub get
       - name: Build Windows release
         run: flutter build windows --release
+      - name: Configure native tracker tests
+        run: cmake -S windows -B build/windows/x64 -DNEONAMP_BUILD_TRACKER_TESTS=ON
+      - name: Build native tracker tests
+        run: cmake --build build/windows/x64 --config Release --target tracker_decoder_test
+      - name: Test native tracker decoding
+        run: ctest --test-dir build/windows/x64/runner/tracker -C Release --output-on-failure
 
   build-android:
     runs-on: ubuntu-latest
