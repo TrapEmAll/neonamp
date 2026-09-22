@@ -32,6 +32,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - OGG Vorbis and Opus metadata editing preserves Ogg audio packets and supports common tags, lyrics, track/disc totals, and embedded cover artwork.
 - AIFF/AIFC cover-art replacement embeds the selected image as an ID3 picture frame and preserves it during later metadata edits.
 - WAV edits store common tags, lyrics, and cover art in an embedded ID3 chunk while preserving existing audio and RIFF chunks.
+- AIFF/AIFC and WAV reload and verify ID3 track/disc numbers and totals alongside their existing common tags.
 - Select multiple library tracks and apply shared artist, album, genre, year, or rating metadata in one operation on Windows or Android.
 - Persistent smart playlists for favorites, top-rated, most-played, genre, and artist rules, including two-rule all/any matching.
 - Sort the library by recently added, title, artist, album, rating, or play count with a persisted direction.

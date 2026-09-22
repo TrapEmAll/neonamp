@@ -195,6 +195,97 @@ String? readAiffId3Lyrics(Uint8List source) {
   return null;
 }
 
+({int? track, int? trackTotal, int? disc, int? discTotal})?
+readContainerId3TrackDiscNumbers(Uint8List source) {
+  if (source.length < 12) return null;
+  final container = ascii.decode(source.sublist(0, 4));
+  final isRiff = container == 'RIFF';
+  if ((!isRiff && container != 'FORM') ||
+      (isRiff && ascii.decode(source.sublist(8, 12)) != 'WAVE')) {
+    return null;
+  }
+  var offset = 12;
+  while (offset + 8 <= source.length) {
+    final chunkId = ascii.decode(source.sublist(offset, offset + 4));
+    final chunkSize = ByteData.sublistView(
+      source,
+      offset + 4,
+      offset + 8,
+    ).getUint32(0, isRiff ? Endian.little : Endian.big);
+    final start = offset + 8;
+    final end = start + chunkSize;
+    if (end > source.length) return null;
+    if (chunkId == 'ID3 ' && chunkSize >= 10) {
+      final tag = source.sublist(start, end);
+      if (ascii.decode(tag.sublist(0, 3)) != 'ID3') return null;
+      final majorVersion = tag[3];
+      if (majorVersion != 3 && majorVersion != 4) return null;
+      final tagSize =
+          (tag[9] & 0x7f) |
+          ((tag[8] & 0x7f) << 7) |
+          ((tag[7] & 0x7f) << 14) |
+          ((tag[6] & 0x7f) << 21);
+      final tagEnd = math.min(tag.length, 10 + tagSize);
+      int? track;
+      int? trackTotal;
+      int? disc;
+      int? discTotal;
+      var frameOffset = 10;
+      while (frameOffset + 10 <= tagEnd) {
+        final id = ascii.decode(tag.sublist(frameOffset, frameOffset + 4));
+        if (id.trim().isEmpty) break;
+        final sizeView = ByteData.sublistView(
+          tag,
+          frameOffset + 4,
+          frameOffset + 8,
+        );
+        final frameSize = majorVersion == 4
+            ? (tag[frameOffset + 7] & 0x7f) |
+                  ((tag[frameOffset + 6] & 0x7f) << 7) |
+                  ((tag[frameOffset + 5] & 0x7f) << 14) |
+                  ((tag[frameOffset + 4] & 0x7f) << 21)
+            : sizeView.getUint32(0);
+        final frameStart = frameOffset + 10;
+        final frameEnd = frameStart + frameSize;
+        if (frameEnd > tagEnd) return null;
+        if ((id == 'TRCK' || id == 'TPOS') && frameSize > 1) {
+          final encoding = tag[frameStart];
+          String value;
+          if (encoding == 3) {
+            value = utf8.decode(
+              tag.sublist(frameStart + 1, frameEnd),
+              allowMalformed: true,
+            );
+          } else if (encoding == 0) {
+            value = latin1.decode(tag.sublist(frameStart + 1, frameEnd));
+          } else {
+            value = '';
+          }
+          final parts = value.replaceAll('\u0000', '').split('/');
+          final number = int.tryParse(parts.first.trim());
+          final total = parts.length > 1 ? int.tryParse(parts[1].trim()) : null;
+          if (id == 'TRCK') {
+            track = number;
+            trackTotal = total;
+          } else {
+            disc = number;
+            discTotal = total;
+          }
+        }
+        frameOffset = frameEnd;
+      }
+      return (
+        track: track,
+        trackTotal: trackTotal,
+        disc: disc,
+        discTotal: discTotal,
+      );
+    }
+    offset = end + (chunkSize.isOdd ? 1 : 0);
+  }
+  return null;
+}
+
 String? readWavId3Lyrics(Uint8List source) {
   if (source.length < 12 ||
       ascii.decode(source.sublist(0, 4)) != 'RIFF' ||
@@ -2199,6 +2290,13 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       final metadata = readMetadata(File(path), getImage: true);
       final replayGainDb = readReplayGainDb(File(path));
+      final hasContainerId3 = isAiffAudioPath(path) || isWavAudioPath(path);
+      final containerId3 = hasContainerId3
+          ? await File(path).readAsBytes()
+          : null;
+      final id3Numbers = containerId3 == null
+          ? null
+          : readContainerId3TrackDiscNumbers(containerId3);
       return Track(
         path: path,
         name: metadata.title?.trim().isNotEmpty == true
@@ -2214,21 +2312,21 @@ class _PlayerPageState extends State<PlayerPage>
             ? metadata.genres.first
             : 'Unknown genre',
         year: metadata.year?.year == 0 ? null : metadata.year?.year,
-        trackNumber: metadata.trackNumber,
-        trackTotal: metadata.trackTotal,
-        discNumber: metadata.discNumber,
-        discTotal: metadata.totalDisc,
+        trackNumber: id3Numbers?.track ?? metadata.trackNumber,
+        trackTotal: id3Numbers?.trackTotal ?? metadata.trackTotal,
+        discNumber: id3Numbers?.disc ?? metadata.discNumber,
+        discTotal: id3Numbers?.discTotal ?? metadata.totalDisc,
         lyrics:
             metadata.lyrics ??
             (isAiffAudioPath(path)
-                ? readAiffId3Lyrics(await File(path).readAsBytes())
+                ? readAiffId3Lyrics(containerId3!)
                 : isWavAudioPath(path)
-                ? readWavId3Lyrics(await File(path).readAsBytes())
+                ? readWavId3Lyrics(containerId3!)
                 : null),
         artwork: metadata.pictures.isNotEmpty
             ? metadata.pictures.first.bytes
             : (isAiffAudioPath(path) || isWavAudioPath(path))
-            ? readAiffId3Picture(await File(path).readAsBytes())?.$1
+            ? readAiffId3Picture(containerId3!)?.$1
             : null,
         replayGainDb: replayGainDb,
       );
@@ -3489,12 +3587,23 @@ class _PlayerPageState extends State<PlayerPage>
           : isWavAudioPath(track.path)
           ? readWavId3Lyrics(await File(track.path).readAsBytes())
           : written.lyrics;
+      final customId3Numbers =
+          isAiffAudioPath(track.path) || isWavAudioPath(track.path)
+          ? readContainerId3TrackDiscNumbers(
+              await File(track.path).readAsBytes(),
+            )
+          : null;
+      final writtenTrackNumber = customId3Numbers?.track ?? written.trackNumber;
+      final writtenTrackTotal =
+          customId3Numbers?.trackTotal ?? written.trackTotal;
+      final writtenDiscNumber = customId3Numbers?.disc ?? written.discNumber;
+      final writtenDiscTotal = customId3Numbers?.discTotal ?? written.totalDisc;
       final metadataMatches =
           (year == null || written.year?.year == year) &&
-          (trackNumber == null || written.trackNumber == trackNumber) &&
-          (trackTotal == null || written.trackTotal == trackTotal) &&
-          (discNumber == null || written.discNumber == discNumber) &&
-          (discTotal == null || written.totalDisc == discTotal) &&
+          (trackNumber == null || writtenTrackNumber == trackNumber) &&
+          (trackTotal == null || writtenTrackTotal == trackTotal) &&
+          (discNumber == null || writtenDiscNumber == discNumber) &&
+          (discTotal == null || writtenDiscTotal == discTotal) &&
           (values[10].trim().isEmpty || writtenLyrics == values[10]);
       if (!titleMatches ||
           !artistMatches ||
