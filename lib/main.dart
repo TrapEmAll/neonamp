@@ -17,6 +17,7 @@ import 'dsp_local_player.dart';
 import 'video_player_page.dart';
 import 'asf_metadata.dart';
 import 'podcast_opml.dart';
+import 'cue_sheet.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -1669,6 +1670,8 @@ class Track {
     this.favorite = false,
     this.artwork,
     this.replayGainDb,
+    this.cueStartMs,
+    this.cueEndMs,
   });
   final String path;
   final String name;
@@ -1686,6 +1689,15 @@ class Track {
   final bool favorite;
   final Uint8List? artwork;
   final double? replayGainDb;
+  final int? cueStartMs;
+  final int? cueEndMs;
+
+  Duration get cueStart => Duration(milliseconds: cueStartMs ?? 0);
+  Duration? get cueEnd =>
+      cueEndMs == null ? null : Duration(milliseconds: cueEndMs!);
+  String get identityKey => cueStartMs == null
+      ? path
+      : jsonEncode([path, cueStartMs, cueEndMs, trackNumber]);
 
   Track copyWith({
     String? path,
@@ -1704,6 +1716,8 @@ class Track {
     bool? favorite,
     Uint8List? artwork,
     double? replayGainDb,
+    int? cueStartMs,
+    int? cueEndMs,
   }) => Track(
     path: path ?? this.path,
     name: name ?? this.name,
@@ -1721,6 +1735,8 @@ class Track {
     favorite: favorite ?? this.favorite,
     artwork: artwork ?? this.artwork,
     replayGainDb: replayGainDb ?? this.replayGainDb,
+    cueStartMs: cueStartMs ?? this.cueStartMs,
+    cueEndMs: cueEndMs ?? this.cueEndMs,
   );
 
   Map<String, dynamic> toJson() => {
@@ -1740,6 +1756,8 @@ class Track {
     'favorite': favorite,
     if (artwork != null) 'artwork': base64Encode(artwork!),
     if (replayGainDb != null) 'replayGainDb': replayGainDb,
+    if (cueStartMs != null) 'cueStartMs': cueStartMs,
+    if (cueEndMs != null) 'cueEndMs': cueEndMs,
   };
 
   static Track fromJson(Map<String, dynamic> json) => Track(
@@ -1761,6 +1779,20 @@ class Track {
         ? base64Decode(json['artwork'] as String)
         : null,
     replayGainDb: (json['replayGainDb'] as num?)?.toDouble(),
+    cueStartMs: (json['cueStartMs'] as num?)?.toInt(),
+    cueEndMs: (json['cueEndMs'] as num?)?.toInt(),
+  );
+}
+
+Duration _cueRelativePosition(Track? track, Duration sourcePosition) {
+  return cueRelativePosition(sourcePosition, track?.cueStart ?? Duration.zero);
+}
+
+Duration _cueRelativeDuration(Track? track, Duration sourceDuration) {
+  return cueSegmentDuration(
+    sourceDuration,
+    start: track?.cueStart ?? Duration.zero,
+    end: track?.cueEnd,
   );
 }
 
@@ -1946,14 +1978,19 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
   double _playbackSpeed = 1.0;
+  Duration _trackStart = Duration.zero;
+  Duration? _trackEnd;
 
   void _bindPlayerStreams() {
     _positionSubscription = player.onPositionChanged.listen(
-      (position) => _broadcast(position: position),
+      (position) => _broadcast(position: _relativePosition(position)),
     );
     _durationSubscription = player.onDurationChanged.listen((duration) {
       final current = mediaItem.value;
-      if (current != null) mediaItem.add(current.copyWith(duration: duration));
+      final trackDuration = _relativeDuration(duration);
+      if (current != null) {
+        mediaItem.add(current.copyWith(duration: trackDuration));
+      }
       _broadcast();
     });
     _stateSubscription = player.onPlayerStateChanged.listen(
@@ -1971,10 +2008,15 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   Future<void> playTrack(Track track) async {
-    final duration = mediaItem.value?.duration;
+    await player.stop();
+    _trackStart = track.cueStart;
+    _trackEnd = track.cueEnd;
+    final duration = track.cueEnd == null
+        ? null
+        : track.cueEnd! - track.cueStart;
     mediaItem.add(
       MediaItem(
-        id: track.path,
+        id: track.identityKey,
         title: track.name,
         artist: track.artist,
         album: track.album,
@@ -1982,7 +2024,6 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         duration: duration,
       ),
     );
-    await player.stop();
     await player.play(
       track.path.startsWith('http')
           ? UrlSource(track.path)
@@ -1998,15 +2039,27 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   void publishTrack(Track track) {
+    _trackStart = track.cueStart;
+    _trackEnd = track.cueEnd;
     mediaItem.add(
       MediaItem(
-        id: track.path,
+        id: track.identityKey,
         title: track.name,
         artist: track.artist,
         album: track.album,
         artUri: null,
       ),
     );
+  }
+
+  Duration _relativePosition(Duration source) {
+    final relative = source - _trackStart;
+    return relative.isNegative ? Duration.zero : relative;
+  }
+
+  Duration _relativeDuration(Duration source) {
+    final relative = (_trackEnd ?? source) - _trackStart;
+    return relative.isNegative ? Duration.zero : relative;
   }
 
   void syncExternalState({
@@ -2231,6 +2284,8 @@ class _PlayerPageState extends State<PlayerPage>
   final List<double> _eqBands = List<double>.filled(10, 0);
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
+  bool _cueTransitioning = false;
+  bool _selectionInProgress = false;
   AudioPlayer? _crossfadeAudioPlayer;
   DspLocalPlayer? _crossfadeDspPlayer;
   bool _dspActive = false;
@@ -2328,20 +2383,33 @@ class _PlayerPageState extends State<PlayerPage>
     _dspStateSub?.cancel();
     _dspCompleteSub?.cancel();
     _positionSub = _player.onPositionChanged.listen((value) {
-      if (!mounted) return;
-      setState(() => _position = value);
-      _rememberResumePosition(value);
-      if (_crossfade && !_crossfadeInProgress && _isPlaying) {
-        final remaining = _duration - value;
+      if (!mounted || _selectionInProgress) return;
+      final track = _current;
+      final cueEnd = track?.cueEnd;
+      if (cueEnd != null && value >= cueEnd && !_cueTransitioning) {
+        _cueTransitioning = true;
+        unawaited(_advanceCueBoundary());
+        return;
+      }
+      final relative = _cueRelativePosition(track, value);
+      setState(() => _position = relative);
+      _rememberResumePosition(relative);
+      if (track?.cueStartMs == null &&
+          _crossfade &&
+          !_crossfadeInProgress &&
+          _isPlaying) {
+        final remaining = _duration - relative;
         if (remaining <= Duration(seconds: _crossfadeSeconds) &&
             remaining > Duration.zero) {
           unawaited(_crossfadeToNext());
         }
       }
     });
-    _durationSub = _player.onDurationChanged.listen(
-      (value) => setState(() => _duration = value),
-    );
+    _durationSub = _player.onDurationChanged.listen((value) {
+      final duration = _cueRelativeDuration(_current, value);
+      setState(() => _duration = duration);
+      _audioHandler?.syncExternalState(duration: duration, state: _playerState);
+    });
     _stateSub = _player.onPlayerStateChanged.listen((value) {
       setState(() => _playerState = value);
       unawaited(_syncWindowsMediaSession());
@@ -2355,25 +2423,37 @@ class _PlayerPageState extends State<PlayerPage>
     _dspStateSub?.cancel();
     _dspCompleteSub?.cancel();
     _dspPositionSub = _dspPlayer.onPositionChanged.listen((value) {
-      if (!mounted || !_dspActive) return;
-      setState(() => _position = value);
-      _rememberResumePosition(value);
-      if (_crossfade && !_crossfadeInProgress && _isPlaying) {
-        final remaining = _duration - value;
+      if (!mounted || !_dspActive || _selectionInProgress) return;
+      final track = _current;
+      final cueEnd = track?.cueEnd;
+      if (cueEnd != null && value >= cueEnd && !_cueTransitioning) {
+        _cueTransitioning = true;
+        unawaited(_advanceCueBoundary());
+        return;
+      }
+      final relative = _cueRelativePosition(track, value);
+      setState(() => _position = relative);
+      _rememberResumePosition(relative);
+      if (track?.cueStartMs == null &&
+          _crossfade &&
+          !_crossfadeInProgress &&
+          _isPlaying) {
+        final remaining = _duration - relative;
         if (remaining <= Duration(seconds: _crossfadeSeconds) &&
             remaining > Duration.zero) {
           unawaited(_crossfadeToNext());
         }
       }
       _audioHandler?.syncExternalState(
-        position: value,
+        position: relative,
         state: PlayerState.playing,
       );
     });
     _dspDurationSub = _dspPlayer.onDurationChanged.listen((value) {
       if (!mounted || !_dspActive) return;
-      setState(() => _duration = value);
-      _audioHandler?.syncExternalState(duration: value, state: _playerState);
+      final duration = _cueRelativeDuration(_current, value);
+      setState(() => _duration = duration);
+      _audioHandler?.syncExternalState(duration: duration, state: _playerState);
     });
     _dspStateSub = _dspPlayer.onPlayerStateChanged.listen((value) {
       if (!mounted || !_dspActive) return;
@@ -2430,10 +2510,13 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _seekCurrent(Duration position) async {
+    final sourcePosition = _current == null
+        ? position
+        : position + _current!.cueStart;
     if (_dspActive) {
-      await _dspPlayer.seek(position);
+      await _dspPlayer.seek(sourcePosition);
     } else {
-      await _player.seek(position);
+      await _player.seek(sourcePosition);
     }
   }
 
@@ -2482,9 +2565,9 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _handleComplete() async {
     if (_crossfadeInProgress) return;
-    final path = _current?.path;
-    if (path != null) {
-      _resumePositions.remove(path);
+    final identity = _current?.identityKey;
+    if (identity != null) {
+      _resumePositions.remove(identity);
       unawaited(_saveQueue());
     }
     if (_repeatOne) {
@@ -2493,6 +2576,20 @@ class _PlayerPageState extends State<PlayerPage>
     } else if (_queue.isNotEmpty &&
         (_repeat || _shuffle || _selected < _queue.length - 1)) {
       await _next();
+    } else {
+      await _stopCurrent();
+    }
+  }
+
+  Future<void> _advanceCueBoundary() async {
+    if (_repeatOne) {
+      _cueTransitioning = false;
+      await _seekCurrent(Duration.zero);
+      return;
+    }
+    if (_queue.isNotEmpty &&
+        (_repeat || _shuffle || _selected < _queue.length - 1)) {
+      await _next(useCrossfade: false);
     } else {
       await _stopCurrent();
     }
@@ -2551,6 +2648,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _loadQueue() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('queue') ?? [];
+    final savedQueueTracks = prefs.getString('queueTracks');
     final savedLibrary = prefs.getStringList('library') ?? [];
     final savedPlayHistory = prefs.getStringList('playHistory') ?? [];
     final savedResumePositions = prefs.getString('resumePositions');
@@ -2562,16 +2660,29 @@ class _PlayerPageState extends State<PlayerPage>
     final savedSettings = prefs.getString('settings');
     if (!mounted) return;
     setState(() {
-      _queue.addAll(
-        saved.map(
-          (path) => Track(path: path, name: path.split(RegExp(r'[/\\]')).last),
-        ),
-      );
       _library.addAll(
         savedLibrary.map(
           (value) => Track.fromJson(jsonDecode(value) as Map<String, dynamic>),
         ),
       );
+      if (savedQueueTracks != null) {
+        final decodedQueue = jsonDecode(savedQueueTracks) as List;
+        _queue.addAll(
+          decodedQueue.map(
+            (value) => Track.fromJson(value as Map<String, dynamic>),
+          ),
+        );
+      } else {
+        _queue.addAll(
+          saved.map((path) {
+            return _library.firstWhere(
+              (track) => track.path == path,
+              orElse: () =>
+                  Track(path: path, name: path.split(RegExp(r'[/\\]')).last),
+            );
+          }),
+        );
+      }
       _playHistory.addAll(savedPlayHistory);
       if (savedResumePositions != null) {
         final decoded =
@@ -2644,6 +2755,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _saveQueue() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'queueTracks',
+      jsonEncode(_queue.map((track) => track.toJson()).toList()),
+    );
     await prefs.setStringList(
       'queue',
       _queue.map((track) => track.path).toList(),
@@ -2818,6 +2933,120 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _importCueSheet() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      dialogTitle: 'Select a CUE sheet and its audio file(s)',
+      allowedExtensions: [
+        'cue',
+        'mp3',
+        'flac',
+        'm4a',
+        'mp4',
+        'aac',
+        'ape',
+        'ogg',
+        'opus',
+        'wav',
+        'wma',
+        'aif',
+        'aiff',
+        'aifc',
+        'webm',
+        'mkv',
+        'mka',
+        'mov',
+      ],
+    );
+    final cueInfo = picked
+        .where((file) => file.extension?.toLowerCase() == 'cue')
+        .firstOrNull;
+    if (cueInfo?.path == null) return;
+    try {
+      final cueFile = File(cueInfo!.path!);
+      final text = utf8.decode(
+        await cueFile.readAsBytes(),
+        allowMalformed: true,
+      );
+      final entries = parseCueSheet(text, cueFile.path);
+      final selectedAudio = picked
+          .where(
+            (file) =>
+                file.path != null && file.extension?.toLowerCase() != 'cue',
+          )
+          .toList();
+      final tracks = <Track>[];
+      final sourceTracks = <String, Track>{};
+      for (final entry in entries) {
+        var audioPath = entry.filePath;
+        if (!await File(audioPath).exists()) {
+          final expectedName = entry.sourceFileName.toLowerCase();
+          audioPath =
+              selectedAudio
+                  .where((file) => file.name.toLowerCase() == expectedName)
+                  .firstOrNull
+                  ?.path ??
+              audioPath;
+        }
+        final audioFile = File(audioPath);
+        if (!await audioFile.exists() ||
+            !isSupportedLibraryAudioPath(audioFile.path)) {
+          continue;
+        }
+        final metadata = await _readTrack(
+          audioPath,
+          audioFile.uri.pathSegments.last,
+        );
+        sourceTracks.putIfAbsent(audioPath, () => metadata);
+        final fallbackName =
+            '${metadata.name} · ${entry.trackNumber.toString().padLeft(2, '0')}';
+        tracks.add(
+          metadata.copyWith(
+            name: entry.title?.trim().isNotEmpty == true
+                ? entry.title!.trim()
+                : fallbackName,
+            artist: entry.performer?.trim().isNotEmpty == true
+                ? entry.performer!.trim()
+                : metadata.artist,
+            album: entry.album?.trim().isNotEmpty == true
+                ? entry.album!.trim()
+                : metadata.album,
+            trackNumber: entry.trackNumber,
+            cueStartMs: entry.start.inMilliseconds,
+            cueEndMs: entry.end?.inMilliseconds,
+          ),
+        );
+      }
+      var added = 0;
+      setState(() {
+        for (final track in tracks) {
+          if (_queue.any((item) => item.identityKey == track.identityKey)) {
+            continue;
+          }
+          _queue.add(track);
+          added++;
+        }
+        for (final source in sourceTracks.values) {
+          if (!_library.any((item) => item.path == source.path)) {
+            _library.add(source);
+          }
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Imported $added CUE track(s)')));
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import CUE sheet: $error')),
+        );
+      }
+    }
+  }
+
   Future<Track> _readTrack(String path, String fileName) async {
     final fallback = fileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
     try {
@@ -2870,64 +3099,76 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
-    setState(() {
-      _selected = index;
-      _position = Duration.zero;
-      final track = _queue[index];
-      _playHistory
-        ..clear()
-        ..addAll(addToPlayHistory(_playHistory, track.path));
-      final libraryIndex = _library.indexWhere(
-        (item) => item.path == track.path,
-      );
-      if (libraryIndex >= 0)
-        _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
-    });
-    final track = _queue[index];
-    final resumePosition = restoreResumePosition(_resumePositions[track.path]);
-    final trackVolume = _volumeFor(track);
-    final shouldUseDsp = _equalizerEnabled && !track.path.startsWith('http');
-    if (shouldUseDsp) {
-      if (!_dspActive) {
-        await _player.stop();
-        _dspActive = true;
-      }
-      await _dspPlayer.play(
-        track.path,
-        volume: trackVolume,
-        playbackSpeed: _playbackSpeed,
-        equalizerEnabled: true,
-        bands: _eqBands,
-        balance: _balance,
-      );
-      _audioHandler?.publishTrack(track);
-    } else {
-      if (_dspActive) {
-        await _dspPlayer.stop();
-        _dspActive = false;
-      }
-      await _player.setBalance(_balance);
-      await _player.setVolume(trackVolume);
-      if (_audioHandler != null) {
-        await _audioHandler!.playTrack(track);
-      } else {
-        await _player.stop();
-        await _player.play(
-          track.path.startsWith('http')
-              ? UrlSource(track.path)
-              : DeviceFileSource(track.path),
+    _selectionInProgress = true;
+    try {
+      setState(() {
+        _selected = index;
+        _position = Duration.zero;
+        _cueTransitioning = false;
+        final track = _queue[index];
+        _playHistory
+          ..clear()
+          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        final libraryIndex = _library.indexWhere(
+          (item) => item.identityKey == track.identityKey,
         );
-        await _player.setPlaybackRate(_playbackSpeed);
+        if (libraryIndex >= 0)
+          _library[libraryIndex] = track.copyWith(
+            playCount: track.playCount + 1,
+          );
+      });
+      final track = _queue[index];
+      final resumePosition = restoreResumePosition(
+        _resumePositions[track.identityKey],
+      );
+      final trackVolume = _volumeFor(track);
+      final shouldUseDsp = _equalizerEnabled && !track.path.startsWith('http');
+      if (shouldUseDsp) {
+        if (!_dspActive) {
+          await _player.stop();
+          _dspActive = true;
+        }
+        await _dspPlayer.play(
+          track.path,
+          volume: trackVolume,
+          playbackSpeed: _playbackSpeed,
+          equalizerEnabled: true,
+          bands: _eqBands,
+          balance: _balance,
+        );
+        _audioHandler?.publishTrack(track);
+      } else {
+        if (_dspActive) {
+          await _dspPlayer.stop();
+          _dspActive = false;
+        }
+        await _player.setBalance(_balance);
+        await _player.setVolume(trackVolume);
+        if (_audioHandler != null) {
+          await _audioHandler!.playTrack(track);
+        } else {
+          await _player.stop();
+          await _player.play(
+            track.path.startsWith('http')
+                ? UrlSource(track.path)
+                : DeviceFileSource(track.path),
+          );
+          await _player.setPlaybackRate(_playbackSpeed);
+        }
       }
+      if (resumePosition != null || track.cueStartMs != null) {
+        await _seekCurrent(resumePosition ?? Duration.zero);
+      }
+      await _saveQueue();
+    } finally {
+      _selectionInProgress = false;
     }
-    if (resumePosition != null) await _seekCurrent(resumePosition);
-    await _saveQueue();
   }
 
   void _rememberResumePosition(Duration position) {
-    final path = _current?.path;
-    if (path == null || position <= Duration.zero) return;
-    _resumePositions[path] = position.inMilliseconds;
+    final identity = _current?.identityKey;
+    if (identity == null || position <= Duration.zero) return;
+    _resumePositions[identity] = position.inMilliseconds;
     _resumeSaveTimer?.cancel();
     _resumeSaveTimer = Timer(const Duration(seconds: 2), () {
       unawaited(_saveQueue());
@@ -2948,39 +3189,43 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _next() async {
+  Future<void> _next({bool useCrossfade = true}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
-    if (_crossfade && _isPlaying && !_crossfadeInProgress) {
-      await _crossfadeToNext();
+    final next = _targetNextIndex();
+    final cueTransition =
+        _current?.cueStartMs != null || _queue[next].cueStartMs != null;
+    if (useCrossfade &&
+        !cueTransition &&
+        _crossfade &&
+        _isPlaying &&
+        !_crossfadeInProgress) {
+      await _crossfadeToNext(targetIndex: next);
       return;
     }
-    final next = nextQueueIndex(
-      selected: _selected,
-      length: _queue.length,
-      shuffle: _shuffle,
-      shuffledOffset: _shuffle && _queue.length > 1
-          ? math.Random().nextInt(_queue.length - 1)
-          : null,
-    );
     await _select(next);
   }
 
-  Future<void> _crossfadeToNext() async {
+  int _targetNextIndex() => nextQueueIndex(
+    selected: _selected,
+    length: _queue.length,
+    shuffle: _shuffle,
+    shuffledOffset: _shuffle && _queue.length > 1
+        ? math.Random().nextInt(_queue.length - 1)
+        : null,
+  );
+
+  Future<void> _crossfadeToNext({int? targetIndex}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
+    final next = targetIndex ?? _targetNextIndex();
+    if (_current?.cueStartMs != null || _queue[next].cueStartMs != null) {
+      return;
+    }
     if (_dspActive) {
-      await _crossfadeDspToNext();
+      await _crossfadeDspToNext(next);
       return;
     }
     _crossfadeInProgress = true;
     final previousPlayer = _player;
-    final next = nextQueueIndex(
-      selected: _selected,
-      length: _queue.length,
-      shuffle: _shuffle,
-      shuffledOffset: _shuffle && _queue.length > 1
-          ? math.Random().nextInt(_queue.length - 1)
-          : null,
-    );
     final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = AudioPlayer();
@@ -3040,18 +3285,10 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _crossfadeDspToNext() async {
+  Future<void> _crossfadeDspToNext(int next) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
     _crossfadeInProgress = true;
     final previousPlayer = _dspPlayer;
-    final next = nextQueueIndex(
-      selected: _selected,
-      length: _queue.length,
-      shuffle: _shuffle,
-      shuffledOffset: _shuffle && _queue.length > 1
-          ? math.Random().nextInt(_queue.length - 1)
-          : null,
-    );
     final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = DspLocalPlayer();
@@ -5830,6 +6067,11 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
           ),
           IconButton(
+            tooltip: 'Import CUE sheet',
+            onPressed: _importCueSheet,
+            icon: const Icon(Icons.album_outlined, color: Colors.white60),
+          ),
+          IconButton(
             tooltip: 'Play videos',
             onPressed: _openVideoPicker,
             icon: const Icon(
@@ -5846,6 +6088,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'settings') _showSettings();
               if (value == 'rescan') _rescanFolders();
               if (value == 'import') _importPlaylist();
+              if (value == 'importCue') _importCueSheet();
               if (value == 'stream') _addStream();
               if (value == 'radio') _searchRadioDirectory();
               if (value == 'podcast') _addPodcastFeed();
@@ -5876,6 +6119,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'import',
                 child: Text('Import M3U or PLS playlist'),
+              ),
+              PopupMenuItem(
+                value: 'importCue',
+                child: Text('Import CUE sheet'),
               ),
               PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
               PopupMenuItem(value: 'radio', child: Text('Find internet radio')),
@@ -6270,11 +6517,32 @@ class _PlayerPageState extends State<PlayerPage>
             padding: const EdgeInsets.only(bottom: 12),
             itemCount: _playHistory.length,
             itemBuilder: (_, index) {
-              final path = _playHistory[index];
-              final track = _library.firstWhere(
-                (item) => item.path == path,
-                orElse: () =>
-                    Track(path: path, name: path.split(RegExp(r'[/\\]')).last),
+              final identity = _playHistory[index];
+              final track = _queue.firstWhere(
+                (item) => item.identityKey == identity,
+                orElse: () => _library.firstWhere(
+                  (item) => item.identityKey == identity,
+                  orElse: () {
+                    try {
+                      final cue = jsonDecode(identity) as List;
+                      final path = cue[0] as String;
+                      final number = (cue[3] as num?)?.toInt();
+                      return Track(
+                        path: path,
+                        name:
+                            '${path.split(RegExp(r'[/\\]')).last} · ${number ?? ''}',
+                        trackNumber: number,
+                        cueStartMs: (cue[1] as num?)?.toInt(),
+                        cueEndMs: (cue[2] as num?)?.toInt(),
+                      );
+                    } on Object {
+                      return Track(
+                        path: identity,
+                        name: identity.split(RegExp(r'[/\\]')).last,
+                      );
+                    }
+                  },
+                ),
               );
               return ListTile(
                 dense: true,
