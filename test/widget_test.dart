@@ -193,6 +193,14 @@ void main() {
     expect(nextQueueIndex(selected: 0, length: 1, shuffle: true), 0);
   });
 
+  test('stereo balance clamps and labels both channel extremes', () {
+    expect(normalizeStereoBalance(-2), -1);
+    expect(normalizeStereoBalance(2), 1);
+    expect(stereoBalanceLabel(-1), 'Left 100%');
+    expect(stereoBalanceLabel(0), 'Center');
+    expect(stereoBalanceLabel(.5), 'Right 50%');
+  });
+
   test('normalizes SHOUTcast station records for the shared radio UI', () {
     final station = normalizeShoutcastStation({
       'ID': 42,
@@ -857,5 +865,34 @@ void main() {
     await tester.pump();
     expect(find.text('NEONAMP'), findsOneWidget);
     expect(find.text('Your library is quiet.'), findsOneWidget);
+  });
+
+  testWidgets('equalizer exposes stereo balance on the wide layout', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NeonAmpApp());
+    await tester.pump();
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Equalizer'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Stereo balance · Center'), findsOneWidget);
+    expect(find.text('L'), findsOneWidget);
+    expect(find.text('R'), findsOneWidget);
+    final balanceSlider = find.byWidgetPredicate(
+      (widget) => widget is Slider && widget.min == -1 && widget.max == 1,
+    );
+    expect(balanceSlider, findsOneWidget);
+    await tester.drag(balanceSlider, const Offset(1000, 0));
+    await tester.pump();
+    expect(find.text('Stereo balance · Right 100%'), findsOneWidget);
   });
 }
