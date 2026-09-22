@@ -114,6 +114,63 @@ Uint8List buildAiffId3Tag(List<String> values) {
   ]);
 }
 
+String? readAiffId3Lyrics(Uint8List source) {
+  if (source.length < 12 || ascii.decode(source.sublist(0, 4)) != 'FORM') {
+    return null;
+  }
+  var offset = 12;
+  while (offset + 8 <= source.length) {
+    final chunkId = ascii.decode(source.sublist(offset, offset + 4));
+    final chunkSize =
+        (source[offset + 4] << 24) |
+        (source[offset + 5] << 16) |
+        (source[offset + 6] << 8) |
+        source[offset + 7];
+    final payloadStart = offset + 8;
+    final payloadEnd = payloadStart + chunkSize;
+    if (chunkSize < 0 || payloadEnd > source.length) return null;
+    if (chunkId == 'ID3 ' && chunkSize >= 10) {
+      final tag = source.sublist(payloadStart, payloadEnd);
+      if (ascii.decode(tag.sublist(0, 3)) != 'ID3') return null;
+      final tagSize =
+          (tag[9] & 0x7f) |
+          ((tag[8] & 0x7f) << 7) |
+          ((tag[7] & 0x7f) << 14) |
+          ((tag[6] & 0x7f) << 21);
+      final tagEnd = math.min(tag.length, 10 + tagSize);
+      var frameOffset = 10;
+      while (frameOffset + 10 <= tagEnd) {
+        final frameId = ascii.decode(tag.sublist(frameOffset, frameOffset + 4));
+        if (frameId.trim().isEmpty) break;
+        final frameSize =
+            (tag[frameOffset + 4] << 24) |
+            (tag[frameOffset + 5] << 16) |
+            (tag[frameOffset + 6] << 8) |
+            tag[frameOffset + 7];
+        final frameStart = frameOffset + 10;
+        final frameEnd = frameStart + frameSize;
+        if (frameSize < 0 || frameEnd > tagEnd) return null;
+        if (frameId == 'USLT' && frameSize >= 5) {
+          final frame = tag.sublist(frameStart, frameEnd);
+          final encoding = frame[0];
+          if (encoding != 3) return null;
+          final descriptionStart = 4;
+          final descriptionEnd = frame.indexOf(0, descriptionStart);
+          if (descriptionEnd < 0) return null;
+          return utf8.decode(
+            frame.sublist(descriptionEnd + 1),
+            allowMalformed: true,
+          );
+        }
+        frameOffset = frameEnd;
+      }
+      return null;
+    }
+    offset = payloadEnd + (chunkSize.isOdd ? 1 : 0);
+  }
+  return null;
+}
+
 Future<void> writeAiffTags(File file, List<String> values) async {
   final source = await file.readAsBytes();
   if (source.length < 12 || ascii.decode(source.sublist(0, 4)) != 'FORM') {
@@ -1647,7 +1704,11 @@ class _PlayerPageState extends State<PlayerPage>
         trackTotal: metadata.trackTotal,
         discNumber: metadata.discNumber,
         discTotal: metadata.totalDisc,
-        lyrics: metadata.lyrics,
+        lyrics:
+            metadata.lyrics ??
+            (isAiffAudioPath(path)
+                ? readAiffId3Lyrics(await File(path).readAsBytes())
+                : null),
         artwork: metadata.pictures.isNotEmpty
             ? metadata.pictures.first.bytes
             : null,

@@ -180,6 +180,7 @@ void main() {
       expect(updated.sublist(12, 12 + chunks.length), chunks);
       expect(readMetadata(file, getImage: false).title, 'Title');
       expect(readMetadata(file, getImage: false).artist, 'Artist');
+      expect(readAiffId3Lyrics(updated), 'Lyrics');
     },
   );
 
