@@ -32,6 +32,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 - Persistent Bookmarks view for quick access to local tracks, CUE tracks, and radio streams.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
+- Play tracker/module music (including MOD, IT, XM, S3M, and other libxmp-supported formats) on Windows and Android.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - View embedded lyrics directly from library tracks.
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.
