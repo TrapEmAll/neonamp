@@ -27,11 +27,13 @@ class DspLocalPlayer {
   Timer? _pollTimer;
   bool _completionSent = false;
   bool _disposed = false;
+  Duration _duration = Duration.zero;
 
   Stream<Duration> get onPositionChanged => _positionController.stream;
   Stream<Duration> get onDurationChanged => _durationController.stream;
   Stream<PlayerState> get onPlayerStateChanged => _stateController.stream;
   Stream<void> get onPlayerComplete => _completeController.stream;
+  Duration get duration => _duration;
   PlayerState get state {
     final handle = _handle;
     if (handle == null ||
@@ -110,7 +112,8 @@ class DspLocalPlayer {
         : null;
     _handle = handle;
     _completionSent = false;
-    _durationController.add(soloud.SoLoud.instance.getLength(source));
+    _duration = soloud.SoLoud.instance.getLength(source);
+    _durationController.add(_duration);
     _stateController.add(PlayerState.playing);
     _startPolling();
   }

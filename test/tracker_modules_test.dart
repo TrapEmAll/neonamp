@@ -23,6 +23,32 @@ void main() {
     expect(isMidiFilePath('C:/Music/song.mp3'), isFalse);
   });
 
+  test('crossfade picks the incoming track playback backend', () {
+    expect(
+      trackRequiresDspPlayback('C:/Music/song.mp3', equalizerEnabled: false),
+      isFalse,
+    );
+    expect(
+      trackRequiresDspPlayback('C:/Music/song.mp3', equalizerEnabled: true),
+      isTrue,
+    );
+    expect(
+      trackRequiresDspPlayback('C:/Music/song.mod', equalizerEnabled: false),
+      isTrue,
+    );
+    expect(
+      trackRequiresDspPlayback(
+        'https://radio.example/stream.mp3',
+        equalizerEnabled: true,
+      ),
+      isFalse,
+    );
+    expect(
+      trackRequiresDspPlayback('C:/Music/song.mid', equalizerEnabled: true),
+      isFalse,
+    );
+  });
+
   test('module metadata remains distinct from ordinary file tags', () {
     final info = TrackerModuleInfo.fromMap({
       'title': 'Space Journey',

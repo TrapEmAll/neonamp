@@ -103,6 +103,11 @@ bool isSupportedLibraryAudioPath(String path) {
           midiFileExtensions.contains(lowerPath.substring(dot + 1)));
 }
 
+bool trackRequiresDspPlayback(String path, {required bool equalizerEnabled}) =>
+    !path.startsWith('http') &&
+    !isMidiFilePath(path) &&
+    (equalizerEnabled || isTrackerModulePath(path));
+
 int nextQueueIndex({
   required int selected,
   required int length,
@@ -3769,9 +3774,10 @@ class _PlayerPageState extends State<PlayerPage>
       }
       final shouldUseDsp =
           renderedMidiPath != null ||
-          (!track.path.startsWith('http') &&
-              !isMidiFilePath(track.path) &&
-              (_equalizerEnabled || isTrackerModulePath(track.path)));
+          trackRequiresDspPlayback(
+            track.path,
+            equalizerEnabled: _equalizerEnabled,
+          );
       if (Platform.isWindows &&
           isMidiFilePath(track.path) &&
           renderedMidiPath == null) {
@@ -3889,7 +3895,24 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _crossfadeToNext({int? targetIndex}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
     final next = targetIndex ?? _targetNextIndex();
-    if (_current?.cueStartMs != null || _queue[next].cueStartMs != null) {
+    final track = _queue[next];
+    if (_current?.cueStartMs != null || track.cueStartMs != null) {
+      return;
+    }
+    if (_midiActive || isMidiFilePath(track.path)) {
+      await _select(next);
+      return;
+    }
+    final targetUsesDsp = trackRequiresDspPlayback(
+      track.path,
+      equalizerEnabled: _equalizerEnabled,
+    );
+    if (_dspActive && !targetUsesDsp) {
+      await _crossfadeDspToAudio(next);
+      return;
+    }
+    if (!_dspActive && targetUsesDsp) {
+      await _crossfadeAudioToDsp(next);
       return;
     }
     if (_dspActive) {
@@ -3899,26 +3922,10 @@ class _PlayerPageState extends State<PlayerPage>
     _crossfadeInProgress = true;
     final previousPlayer = _player;
     final previousTrack = _queue[_selected];
-    final track = _queue[next];
     final incomingPlayer = AudioPlayer();
     _crossfadeAudioPlayer = incomingPlayer;
     try {
       await incomingPlayer.setBalance(_balance);
-      setState(() {
-        _selected = next;
-        _position = Duration.zero;
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.path));
-        final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
-        );
-        if (libraryIndex >= 0) {
-          _library[libraryIndex] = track.copyWith(
-            playCount: track.playCount + 1,
-          );
-        }
-      });
       await incomingPlayer.setVolume(0);
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
@@ -3926,22 +3933,126 @@ class _PlayerPageState extends State<PlayerPage>
             ? UrlSource(track.path)
             : DeviceFileSource(track.path),
       );
-      final steps = math.max(1, _crossfadeSeconds * 10);
-      for (var step = 1; step <= steps; step++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        final progress = step / steps;
-        await previousPlayer.setVolume(
-          _volumeFor(previousTrack) * (1 - progress),
-        );
-        await incomingPlayer.setVolume(_volumeFor(track) * progress);
-      }
+      final incomingDuration =
+          await incomingPlayer.getDuration() ?? Duration.zero;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
       await previousPlayer.stop();
       await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
       _activePlayer = incomingPlayer;
       _bindPlayerStreams();
       await _audioHandler?.switchPlayer(incomingPlayer);
       await _saveQueue();
     } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      if (identical(_crossfadeAudioPlayer, incomingPlayer)) {
+        _crossfadeAudioPlayer = null;
+      }
+      _crossfadeInProgress = false;
+    }
+  }
+
+  Future<void> _crossfadeAudioToDsp(int next) async {
+    _crossfadeInProgress = true;
+    final previousPlayer = _player;
+    final previousTrack = _queue[_selected];
+    final track = _queue[next];
+    final incomingPlayer = DspLocalPlayer();
+    _crossfadeDspPlayer = incomingPlayer;
+    try {
+      await incomingPlayer.play(
+        track.path,
+        volume: 0,
+        playbackSpeed: _playbackSpeed,
+        equalizerEnabled: _equalizerEnabled,
+        bands: _eqBands,
+        balance: _balance,
+      );
+      final incomingDuration = incomingPlayer.duration;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
+      await previousPlayer.stop();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
+      _dspPlayer = incomingPlayer;
+      _dspActive = true;
+      _midiActive = false;
+      _bindDspStreams();
+      _audioHandler?.publishTrack(track);
+      await _saveQueue();
+    } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      if (identical(_crossfadeDspPlayer, incomingPlayer)) {
+        _crossfadeDspPlayer = null;
+      }
+      _crossfadeInProgress = false;
+    }
+  }
+
+  Future<void> _crossfadeDspToAudio(int next) async {
+    _crossfadeInProgress = true;
+    final previousPlayer = _dspPlayer;
+    final previousTrack = _queue[_selected];
+    final track = _queue[next];
+    final incomingPlayer = AudioPlayer();
+    _crossfadeAudioPlayer = incomingPlayer;
+    try {
+      await incomingPlayer.setBalance(_balance);
+      await incomingPlayer.setVolume(0);
+      await incomingPlayer.setPlaybackRate(_playbackSpeed);
+      await incomingPlayer.play(
+        track.path.startsWith('http')
+            ? UrlSource(track.path)
+            : DeviceFileSource(track.path),
+      );
+      final incomingDuration =
+          await incomingPlayer.getDuration() ?? Duration.zero;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
+      await previousPlayer.stop();
+      await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
+      final replacedAudioPlayer = _activePlayer;
+      _activePlayer = incomingPlayer;
+      _dspActive = false;
+      _bindPlayerStreams();
+      await _audioHandler?.switchPlayer(incomingPlayer);
+      if (!identical(replacedAudioPlayer, incomingPlayer)) {
+        await replacedAudioPlayer.dispose();
+      }
+      await _saveQueue();
+    } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
       await incomingPlayer.dispose();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3967,21 +4078,6 @@ class _PlayerPageState extends State<PlayerPage>
     final incomingPlayer = DspLocalPlayer();
     _crossfadeDspPlayer = incomingPlayer;
     try {
-      setState(() {
-        _selected = next;
-        _position = Duration.zero;
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.path));
-        final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
-        );
-        if (libraryIndex >= 0) {
-          _library[libraryIndex] = track.copyWith(
-            playCount: track.playCount + 1,
-          );
-        }
-      });
       await incomingPlayer.play(
         track.path,
         volume: 0,
@@ -3990,22 +4086,22 @@ class _PlayerPageState extends State<PlayerPage>
         bands: _eqBands,
         balance: _balance,
       );
-      final steps = math.max(1, _crossfadeSeconds * 10);
-      for (var step = 1; step <= steps; step++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        final progress = step / steps;
-        await previousPlayer.setVolume(
-          _volumeFor(previousTrack) * (1 - progress),
-        );
-        await incomingPlayer.setVolume(_volumeFor(track) * progress);
-      }
+      final incomingDuration = incomingPlayer.duration;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
       await previousPlayer.stop();
       await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
       _dspPlayer = incomingPlayer;
       _bindDspStreams();
       _audioHandler?.publishTrack(track);
       await _saveQueue();
     } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
       await incomingPlayer.dispose();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4020,6 +4116,43 @@ class _PlayerPageState extends State<PlayerPage>
       }
       _crossfadeInProgress = false;
     }
+  }
+
+  Future<void> _fadeBetweenTracks({
+    required Track outgoing,
+    required Track incoming,
+    required Future<void> Function(double volume) setOutgoingVolume,
+    required Future<void> Function(double volume) setIncomingVolume,
+  }) async {
+    final steps = math.max(1, _crossfadeSeconds * 10);
+    for (var step = 1; step <= steps; step++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final progress = step / steps;
+      await setOutgoingVolume(_volumeFor(outgoing) * (1 - progress));
+      await setIncomingVolume(_volumeFor(incoming) * progress);
+    }
+  }
+
+  void _recordCrossfadeTrack(
+    int index,
+    Track track, {
+    required Duration duration,
+  }) {
+    setState(() {
+      _selected = index;
+      _position = Duration.zero;
+      _duration = duration;
+      _playerState = PlayerState.playing;
+      _playHistory
+        ..clear()
+        ..addAll(addToPlayHistory(_playHistory, track.path));
+      final libraryIndex = _library.indexWhere(
+        (item) => item.path == track.path,
+      );
+      if (libraryIndex >= 0) {
+        _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
+      }
+    });
   }
 
   Future<void> _previous() async {
