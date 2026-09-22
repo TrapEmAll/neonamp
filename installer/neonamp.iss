@@ -1,5 +1,7 @@
 #define AppName "NeonAmp"
-#define AppVersion "0.1.0"
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 #define AppPublisher "NeonAmp"
 #define AppExeName "neonamp.exe"
 
@@ -11,7 +13,7 @@ AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\NeonAmp
 DefaultGroupName=NeonAmp
 OutputDir=..\release
-OutputBaseFilename=NeonAmp-Setup-0.1.0
+OutputBaseFilename=NeonAmp-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64

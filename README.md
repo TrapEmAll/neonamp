@@ -4,8 +4,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 
 ## Install
 
-- Windows: run `release/NeonAmp-Setup-0.1.0.exe`.
-- Android: install `build/app/outputs/flutter-apk/app-release.apk` on an Android device. Android may require enabling installation from the source used to open the APK.
+Download the ready-to-install Windows setup program or Android APK from the [latest GitHub Release](https://github.com/TrapEmAll/neonamp/releases/latest). No source build is required. On Android, you may need to allow installation from the app used to open the downloaded APK.
 
 ## Current slice
 
