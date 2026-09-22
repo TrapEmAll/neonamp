@@ -31,7 +31,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - iTunes-compatible XML library import/export with track metadata and named playlists
 - CUE sheet import with virtual per-track queue entries backed by the original continuous audio file and segment-aware seek/progress on Windows and Android
 - HTTP audio stream / internet radio URL playback
-- DLNA/UPnP renderer discovery and casting of HTTP(S) streams and local audio files on Windows and Android, with receiver transport controls and byte-range file serving
+- DLNA/UPnP renderer discovery and casting of HTTP(S) streams, local audio files, and segment-aware CUE virtual tracks on Windows and Android, with receiver transport controls, relative seek/progress, segment-boundary advancement, and byte-range file serving
 - Local video queue for Windows and Android with play/pause, seeking, volume, speed, and fullscreen controls; supported video codecs depend on the platform's native decoder
 - Internet-radio station discovery through Radio Browser and SHOUTcast with normalized metadata, duplicate-stream merging, listener sorting, saved station favorites, and lazy stream resolution
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
@@ -67,7 +67,6 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
 - Hardware-specific CD ripping beyond the native Windows CD-ROM path
 - Google Cast-only receivers and other non-DLNA casting protocols
-- Casting CUE virtual segments (local tracks and regular stream URLs are supported)
 - Per-track volume and equalizer processing for Windows MIDI/KAR playback (the built-in Windows MIDI sequencer does not expose per-stream audio gain)
 
 The release is not feature-complete Winamp parity until the next-milestone items have native implementations and platform-specific verification.

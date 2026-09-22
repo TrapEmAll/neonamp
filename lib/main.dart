@@ -2329,6 +2329,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _replayGainEnabled = false;
   Timer? _sleepTimer;
   Timer? _resumeSaveTimer;
+  Timer? _castPositionTimer;
+  bool _castPositionPollInProgress = false;
   DateTime? _sleepDeadline;
 
   bool get _casting => _dlnaCast.isConnected;
@@ -2565,6 +2567,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       );
       if (stop == true) {
+        _castPositionTimer?.cancel();
         await _dlnaCast.stop();
         if (mounted) setState(() => _playerState = PlayerState.paused);
       }
@@ -2652,17 +2655,6 @@ class _PlayerPageState extends State<PlayerPage>
                                       );
                                   return;
                                 }
-                                if (track.cueStartMs != null) {
-                                  ScaffoldMessenger.of(this.context)
-                                      .showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Casting CUE segments is not supported yet.',
-                                          ),
-                                        ),
-                                      );
-                                  return;
-                                }
                                 Navigator.pop(dialogContext);
                                 try {
                                   await _dlnaCast.play(
@@ -2671,7 +2663,9 @@ class _PlayerPageState extends State<PlayerPage>
                                     title: track.name,
                                     artist: track.artist,
                                     album: track.album,
-                                    duration: _duration,
+                                    duration: track.cueStart + _duration,
+                                    segmentStart: track.cueStart,
+                                    segmentEnd: track.cueEnd,
                                   );
                                   if (_dspActive) {
                                     await _dspPlayer.pause();
@@ -2684,6 +2678,7 @@ class _PlayerPageState extends State<PlayerPage>
                                     setState(
                                       () => _playerState = PlayerState.playing,
                                     );
+                                    _startCastPositionPolling();
                                   }
                                 } catch (e) {
                                   if (mounted)
@@ -2748,6 +2743,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _stopCurrent() async {
     if (_casting) {
+      _castPositionTimer?.cancel();
       await _dlnaCast.stop();
       if (mounted) setState(() => _playerState = PlayerState.stopped);
     }
@@ -2842,6 +2838,48 @@ class _PlayerPageState extends State<PlayerPage>
       await _next();
     } else {
       await _stopCurrent();
+    }
+  }
+
+  void _startCastPositionPolling() {
+    _castPositionTimer?.cancel();
+    _castPositionTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_syncCastPosition()),
+    );
+  }
+
+  Future<void> _syncCastPosition() async {
+    if (!_casting || _castPositionPollInProgress || _selectionInProgress) {
+      return;
+    }
+    _castPositionPollInProgress = true;
+    try {
+      final position = await _dlnaCast.getPosition();
+      if (position == null || !mounted || !_casting) return;
+      if (_duration > Duration.zero && position >= _duration) {
+        _castPositionTimer?.cancel();
+        if (_current?.cueStartMs != null && !_cueTransitioning) {
+          _cueTransitioning = true;
+          await _advanceCueBoundary();
+        } else {
+          await _handleComplete();
+        }
+        return;
+      }
+      setState(() => _position = position);
+      _rememberResumePosition(position);
+      _audioHandler?.syncExternalState(position: position, state: _playerState);
+      unawaited(_syncWindowsMediaSession());
+    } catch (error) {
+      _castPositionTimer?.cancel();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not read cast position: $error')),
+        );
+      }
+    } finally {
+      _castPositionPollInProgress = false;
     }
   }
 
@@ -3462,6 +3500,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    _castPositionTimer?.cancel();
     if (_casting) await _dlnaCast.stop();
     _selectionInProgress = true;
     try {
@@ -6498,6 +6537,7 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void dispose() {
     unawaited(_dlnaCast.dispose());
+    _castPositionTimer?.cancel();
     _sleepTimer?.cancel();
     _resumeSaveTimer?.cancel();
     _positionSub?.cancel();
