@@ -4270,7 +4270,7 @@ class _PlayerPageState extends State<PlayerPage>
         track.path,
         volume: 0,
         playbackSpeed: _playbackSpeed,
-        equalizerEnabled: true,
+        equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
         balance: _balance,
       );

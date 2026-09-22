@@ -98,6 +98,12 @@ void main() {
     );
   });
 
+  test('DSP crossfade preserves the equalizer enabled state', () async {
+    final source = await File('lib/main.dart').readAsString();
+    expect(source, isNot(contains('equalizerEnabled: true')));
+    expect(source, contains('equalizerEnabled: _equalizerEnabled'));
+  });
+
   test('legacy and container audio use the cross-platform decoder path', () {
     for (final extension in [
       'ape',
