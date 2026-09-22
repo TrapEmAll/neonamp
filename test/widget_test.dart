@@ -407,7 +407,63 @@ void main() {
     },
   );
 
+  test('AAC ID3 metadata edits preserve encoded audio frames', () async {
+    final directory = await Directory.systemTemp.createTemp('neonamp-aac-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = File('${directory.path}/fixture.aac');
+    final audioFrames = Uint8List.fromList([
+      0xff,
+      0xf1,
+      0x50,
+      0x80,
+      0x01,
+      0x7f,
+      0xfc,
+      ...List<int>.generate(64, (index) => (index * 17) & 0xff),
+    ]);
+    await file.writeAsBytes(audioFrames);
+    const values = [
+      'AAC Title',
+      'Artist',
+      'Album',
+      'Electronic',
+      '',
+      '2026',
+      '3',
+      '12',
+      '1',
+      '2',
+      'Lyrics',
+    ];
+
+    await writeTrackMetadata(file, values);
+    var written = await file.readAsBytes();
+    var tagSize =
+        (written[6] << 21) |
+        (written[7] << 14) |
+        (written[8] << 7) |
+        written[9];
+    expect(ascii.decode(written.sublist(0, 3)), 'ID3');
+    expect(written.sublist(10 + tagSize), audioFrames);
+    var metadata = readMetadata(file);
+    expect(metadata.title, 'AAC Title');
+    expect(metadata.lyrics, 'Lyrics');
+
+    await writeTrackMetadata(file, [...values]..[0] = 'Renamed AAC');
+    written = await file.readAsBytes();
+    tagSize =
+        (written[6] << 21) |
+        (written[7] << 14) |
+        (written[8] << 7) |
+        written[9];
+    expect(written.sublist(10 + tagSize), audioFrames);
+    metadata = readMetadata(file);
+    expect(metadata.title, 'Renamed AAC');
+    expect(metadata.lyrics, 'Lyrics');
+  });
+
   test('folder scans recognize the metadata reader audio formats', () {
+    expect(isAacAudioPath('music/track.AAC'), isTrue);
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
     expect(isSupportedLibraryAudioPath('cover.jpg'), isFalse);

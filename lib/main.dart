@@ -26,6 +26,8 @@ bool isAiffAudioPath(String path) {
 
 bool isWavAudioPath(String path) => path.split('.').last.toLowerCase() == 'wav';
 
+bool isAacAudioPath(String path) => path.split('.').last.toLowerCase() == 'aac';
+
 bool isSupportedLibraryAudioPath(String path) {
   const extensions = {
     '.mp3',
@@ -895,19 +897,98 @@ Future<void> writeVorbisTags(
   }
 }
 
-Future<void> writeTrackMetadata(File file, List<String> values) async {
-  if (isWavAudioPath(file.path)) {
-    await writeWavTags(file, values);
+Future<void> writeAacTags(File file, List<String> values) async {
+  final source = await file.readAsBytes();
+  final hasLeadingId3 =
+      source.length >= 3 &&
+      source[0] == 0x49 &&
+      source[1] == 0x44 &&
+      source[2] == 0x33;
+  if (hasLeadingId3) {
+    _updateCommonTrackMetadata(file, values);
+    await _writeAacLyricsFrame(file, values[10]);
     return;
   }
-  if (isAiffAudioPath(file.path)) {
-    await writeAiffTags(file, values);
-    return;
+
+  // ID3v2 is the established metadata convention for ADTS AAC files. Keep the
+  // encoded AAC frames byte-for-byte intact and prepend an ID3 tag.
+  await _replaceFileAtomically(file, [...buildAiffId3Tag(values), ...source]);
+}
+
+Future<void> _writeAacLyricsFrame(File file, String lyrics) async {
+  final source = await file.readAsBytes();
+  if (source.length < 10 ||
+      source[0] != 0x49 ||
+      source[1] != 0x44 ||
+      source[2] != 0x33 ||
+      source[3] != 4) {
+    throw const FormatException('AAC ID3 tag is not a writable ID3v2.4 tag');
   }
-  if (isVorbisAudioPath(file.path)) {
-    await writeVorbisTags(file, values);
-    return;
+  final tagSize =
+      (source[6] << 21) | (source[7] << 14) | (source[8] << 7) | source[9];
+  final tagEnd = 10 + tagSize;
+  if (tagEnd > source.length) {
+    throw const FormatException('Truncated AAC ID3 tag');
   }
+
+  final frames = <int>[];
+  var offset = 10;
+  while (offset + 10 <= tagEnd) {
+    final id = ascii.decode(source.sublist(offset, offset + 4));
+    if (id == '\u0000\u0000\u0000\u0000') break;
+    final size =
+        (source[offset + 4] << 21) |
+        (source[offset + 5] << 14) |
+        (source[offset + 6] << 7) |
+        source[offset + 7];
+    final end = offset + 10 + size;
+    if (end > tagEnd) {
+      throw const FormatException('Malformed AAC ID3 frame');
+    }
+    if (id != 'USLT') frames.addAll(source.sublist(offset, end));
+    offset = end;
+  }
+
+  if (lyrics.trim().isNotEmpty) {
+    final payload = <int>[3, ...ascii.encode('eng'), 0, ...utf8.encode(lyrics)];
+    frames.addAll([
+      ...ascii.encode('USLT'),
+      ..._syncSafe32(payload.length),
+      0,
+      0,
+      ...payload,
+    ]);
+  }
+  final tag = <int>[
+    ...source.sublist(0, 6),
+    ..._syncSafe32(frames.length),
+    ...frames,
+  ];
+  await _replaceFileAtomically(file, [...tag, ...source.sublist(tagEnd)]);
+}
+
+Future<void> _replaceFileAtomically(File file, List<int> contents) async {
+  final suffix = '.neonamp-${DateTime.now().microsecondsSinceEpoch}';
+  final temporary = File('${file.path}$suffix.tmp');
+  final backup = File('${file.path}$suffix.bak');
+  var movedOriginal = false;
+  try {
+    await temporary.writeAsBytes(contents, flush: true);
+    await file.rename(backup.path);
+    movedOriginal = true;
+    await temporary.rename(file.path);
+    await backup.delete();
+  } catch (_) {
+    if (movedOriginal && !await file.exists() && await backup.exists()) {
+      await backup.rename(file.path);
+    }
+    rethrow;
+  } finally {
+    if (await temporary.exists()) await temporary.delete();
+  }
+}
+
+void _updateCommonTrackMetadata(File file, List<String> values) {
   updateMetadata(file, (metadata) {
     metadata.setTitle(values[0]);
     metadata.setArtist(values[1]);
@@ -924,6 +1005,26 @@ Future<void> writeTrackMetadata(File file, List<String> values) async {
     metadata.setCD(parsedDisc, parsedDiscTotal);
     metadata.setLyrics(values[10].trim().isEmpty ? null : values[10]);
   });
+}
+
+Future<void> writeTrackMetadata(File file, List<String> values) async {
+  if (isAacAudioPath(file.path)) {
+    await writeAacTags(file, values);
+    return;
+  }
+  if (isWavAudioPath(file.path)) {
+    await writeWavTags(file, values);
+    return;
+  }
+  if (isAiffAudioPath(file.path)) {
+    await writeAiffTags(file, values);
+    return;
+  }
+  if (isVorbisAudioPath(file.path)) {
+    await writeVorbisTags(file, values);
+    return;
+  }
+  _updateCommonTrackMetadata(file, values);
 }
 
 Future<void> main() async {
