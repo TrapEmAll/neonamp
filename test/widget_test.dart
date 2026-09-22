@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -137,6 +138,13 @@ void main() {
     expect(String.fromCharCodes(tag), contains('USLT'));
   });
 
+  test('AIFF ID3 tags embed cover artwork in an APIC frame', () {
+    final artwork = Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]);
+    final tag = buildAiffId3Tag(List.filled(11, ''), artwork: artwork);
+    expect(String.fromCharCodes(tag), contains('APIC'));
+    expect(tag, containsAll(artwork));
+  });
+
   test(
     'AIFF metadata write round-trips while preserving the audio chunks',
     () async {
@@ -174,12 +182,40 @@ void main() {
         '2',
         'Lyrics',
       ]);
+      final artwork = Uint8List.fromList([0xff, 0xd8, 0xff, 0xd9]);
+      await writeAiffTags(file, [
+        'Title',
+        'Artist',
+        'Album',
+        'Genre',
+        '',
+        '2026',
+        '2',
+        '9',
+        '1',
+        '2',
+        'Lyrics',
+      ], artwork: artwork);
+      await writeAiffTags(file, [
+        'Renamed',
+        'Artist',
+        'Album',
+        'Genre',
+        '',
+        '2026',
+        '2',
+        '9',
+        '1',
+        '2',
+        'Lyrics',
+      ]);
       final updated = await file.readAsBytes();
       expect(String.fromCharCodes(updated.sublist(12, 16)), 'COMM');
       expect(String.fromCharCodes(updated.sublist(38, 42)), 'SSND');
       expect(updated.sublist(12, 12 + chunks.length), chunks);
-      expect(readMetadata(file, getImage: false).title, 'Title');
+      expect(readMetadata(file, getImage: false).title, 'Renamed');
       expect(readMetadata(file, getImage: false).artist, 'Artist');
+      expect(readAiffId3Picture(updated)?.$1, artwork);
       expect(readAiffId3Lyrics(updated), 'Lyrics');
     },
   );
