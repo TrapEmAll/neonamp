@@ -1,8 +1,18 @@
 package com.neonamp.neonamp
 
 import android.Manifest
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbDeviceConnection
+import android.hardware.usb.UsbEndpoint
+import android.hardware.usb.UsbInterface
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.media.MediaCodec
 import android.media.MediaExtractor
@@ -15,6 +25,9 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.Locale
 import io.flutter.embedding.engine.FlutterEngine
@@ -29,6 +42,31 @@ class MainActivity : AudioServiceActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nearbyPermissionResult: MethodChannel.Result? = null
     private var folderPickerResult: MethodChannel.Result? = null
+    private var audioCdResult: MethodChannel.Result? = null
+    private var usbTag = 1
+
+    private val usbPermissionAction = "com.neonamp.neonamp.USB_PERMISSION"
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != usbPermissionAction) return
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            }
+            val result = audioCdResult ?: return
+            audioCdResult = null
+            if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && device != null) {
+                Thread {
+                    val response = try { listAudioCdsInternal(device) } catch (_: Throwable) { emptyList() }
+                    runOnUiThread { result.success(response) }
+                }.start()
+            } else {
+                result.error("usb_permission_denied", "USB optical-drive permission was denied.", null)
+            }
+        }
+    }
 
     private external fun nativeReadTrackerInfo(inputPath: String): Array<String>?
     private external fun nativeRenderTrackerToWav(inputPath: String, outputPath: String): Boolean
@@ -41,6 +79,13 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val filter = IntentFilter(usbPermissionAction)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(usbReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(usbReceiver, filter)
+        }
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
@@ -120,13 +165,7 @@ class MainActivity : AudioServiceActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, converterChannel)
             .setMethodCallHandler { call, result ->
                 if (call.method != "convertToM4a") {
-                    if (call.method == "listAudioCds") {
-                        result.success(emptyList<Map<String, Any>>())
-                    } else if (call.method == "ripAudioCd") {
-                        result.success(false)
-                    } else {
-                        result.notImplemented()
-                    }
+                    result.notImplemented()
                     return@setMethodCallHandler
                 }
                 val inputPath = call.argument<String>("inputPath")
@@ -148,8 +187,8 @@ class MainActivity : AudioServiceActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/system_controls")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "listAudioCds" -> result.success(emptyList<Map<String, Any>>())
-                    "ripAudioCd" -> result.success(false)
+                    "listAudioCds" -> listAudioCds(result)
+                    "ripAudioCd" -> ripAudioCd(call, result)
                     else -> result.notImplemented()
                 }
             }
@@ -372,6 +411,102 @@ class MainActivity : AudioServiceActivity() {
         return results
     }
 
+    private fun usbManager(): UsbManager =
+        getSystemService(Context.USB_SERVICE) as UsbManager
+
+    private fun opticalInterface(device: UsbDevice): UsbInterface? {
+        for (index in 0 until device.interfaceCount) {
+            val candidate = device.getInterface(index)
+            if (candidate.interfaceClass == 8 &&
+                candidate.interfaceSubclass == 6 &&
+                candidate.interfaceProtocol == 0x50
+            ) return candidate
+        }
+        return null
+    }
+
+    private fun listAudioCds(result: MethodChannel.Result) {
+        if (audioCdResult != null) {
+            result.error("usb_scan_busy", "An audio CD scan is already in progress.", null)
+            return
+        }
+        val devices = usbManager().deviceList.values.filter { opticalInterface(it) != null }
+        if (devices.isEmpty()) {
+            result.success(emptyList<Map<String, Any>>())
+            return
+        }
+        val unauthorized = devices.firstOrNull { !usbManager().hasPermission(it) }
+        if (unauthorized != null) {
+            audioCdResult = result
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            } else {
+                @Suppress("DEPRECATION")
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val permissionIntent = PendingIntent.getBroadcast(
+                this,
+                usbTag++,
+                Intent(usbPermissionAction).setPackage(packageName),
+                flags,
+            )
+            usbManager().requestPermission(unauthorized, permissionIntent)
+            return
+        }
+        Thread {
+            val values = devices.flatMap { device ->
+                try { listAudioCdsInternal(device) } catch (_: Throwable) { emptyList() }
+            }
+            runOnUiThread { result.success(values) }
+        }.start()
+    }
+
+    private fun listAudioCdsInternal(device: UsbDevice): List<Map<String, Any>> {
+        val toc = UsbCdTransport(usbManager(), device, opticalInterface(device)!!).use { it.readToc() }
+        if (toc.tracks.isEmpty()) return emptyList()
+        return listOf(
+            mapOf(
+                "drive" to device.deviceName,
+                "tracks" to toc.tracks.map { track ->
+                    mapOf(
+                        "track" to track.number,
+                        "durationSeconds" to ((track.endLba - track.startLba) / 75),
+                    )
+                },
+            ),
+        )
+    }
+
+    private fun ripAudioCd(call: MethodChannel.MethodCall, result: MethodChannel.Result) {
+        val deviceName = call.argument<String>("drive")
+        val trackNumber = call.argument<Int>("track")
+        val outputPath = call.argument<String>("outputPath")
+        if (deviceName.isNullOrBlank() || trackNumber == null || outputPath.isNullOrBlank()) {
+            result.error("invalid_arguments", "Drive, track, and output path are required.", null)
+            return
+        }
+        val device = usbManager().deviceList.values.firstOrNull {
+            it.deviceName == deviceName && opticalInterface(it) != null
+        }
+        if (device == null || !usbManager().hasPermission(device)) {
+            result.error("usb_permission_required", "Reconnect the USB optical drive and grant permission.", null)
+            return
+        }
+        Thread {
+            val success = try {
+                UsbCdTransport(usbManager(), device, opticalInterface(device)!!).use { transport ->
+                    val track = transport.readToc().tracks.first { it.number == trackNumber }
+                    transport.ripTrack(track, File(outputPath))
+                }
+                true
+            } catch (_: Throwable) {
+                File(outputPath).delete()
+                false
+            }
+            runOnUiThread { result.success(success) }
+        }.start()
+    }
+
     private fun audioExtensionForMimeType(mimeType: String): String? =
         when (mimeType.lowercase(Locale.ROOT)) {
             "audio/mpeg", "audio/mp3", "audio/x-mpeg" -> "mp3"
@@ -493,6 +628,7 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onDestroy() {
         releaseMulticastLock()
+        try { unregisterReceiver(usbReceiver) } catch (_: IllegalArgumentException) { }
         super.onDestroy()
     }
 
@@ -661,3 +797,169 @@ class MainActivity : AudioServiceActivity() {
         return -1
     }
 }
+
+private data class AudioCdTrack(
+    val number: Int,
+    val startLba: Int,
+    val endLba: Int,
+)
+
+private data class AudioCdToc(val tracks: List<AudioCdTrack>)
+
+/** Minimal USB Mass Storage Bulk-Only Transport for MMC audio CDs. */
+private class UsbCdTransport(
+    manager: UsbManager,
+    device: UsbDevice,
+    private val usbInterface: UsbInterface,
+) : AutoCloseable {
+    private val connection: UsbDeviceConnection =
+        manager.openDevice(device) ?: error("Could not open the USB optical drive")
+    private val input: UsbEndpoint = (0 until usbInterface.endpointCount)
+        .map { usbInterface.getEndpoint(it) }
+        .firstOrNull {
+            it.type == UsbConstants.USB_ENDPOINT_XFER_BULK &&
+                it.direction == UsbConstants.USB_DIR_IN
+        } ?: error("USB optical drive has no bulk input endpoint")
+    private val output: UsbEndpoint = (0 until usbInterface.endpointCount)
+        .map { usbInterface.getEndpoint(it) }
+        .firstOrNull {
+            it.type == UsbConstants.USB_ENDPOINT_XFER_BULK &&
+                it.direction == UsbConstants.USB_DIR_OUT
+        } ?: error("USB optical drive has no bulk output endpoint")
+    private var tag = 1
+
+    init {
+        check(connection.claimInterface(usbInterface, true)) {
+            "Could not claim the USB optical-drive interface"
+        }
+    }
+
+    fun readToc(): AudioCdToc {
+        val cdb = ByteArray(10)
+        cdb[0] = 0x43
+        cdb[7] = 0x04
+        cdb[8] = 0x00
+        val response = command(cdb, 1024)
+        if (response.size < 4) return AudioCdToc(emptyList())
+        val firstTrack = response[2].toInt() and 0xff
+        val lastTrack = response[3].toInt() and 0xff
+        if (firstTrack == 0 || lastTrack < firstTrack) return AudioCdToc(emptyList())
+        val starts = mutableMapOf<Int, Int>()
+        var leadOut = 0
+        var offset = 4
+        while (offset + 7 < response.size) {
+            val track = response[offset + 2].toInt() and 0xff
+            val lba = ((response[offset + 4].toInt() and 0xff) shl 24) or
+                ((response[offset + 5].toInt() and 0xff) shl 16) or
+                ((response[offset + 6].toInt() and 0xff) shl 8) or
+                (response[offset + 7].toInt() and 0xff)
+            if (track == 0xaa) leadOut = lba else if (track in firstTrack..lastTrack) starts[track] = lba
+            offset += 8
+        }
+        val tracks = starts.keys.sorted().mapNotNull { number ->
+            val start = starts[number] ?: return@mapNotNull null
+            val end = starts[number + 1] ?: leadOut
+            if (end > start) AudioCdTrack(number, start, end) else null
+        }
+        return AudioCdToc(tracks)
+    }
+
+    fun ripTrack(track: AudioCdTrack, output: File) {
+        output.parentFile?.mkdirs()
+        RandomAccessFile(output, "rw").use { file ->
+            file.setLength(0)
+            file.write(wavHeader(0))
+            var lba = track.startLba
+            var dataBytes = 0
+            while (lba < track.endLba) {
+                val sectors = minOf(4, track.endLba - lba)
+                val bytes = readCd(lba, sectors)
+                file.write(bytes)
+                dataBytes += bytes.size
+                lba += sectors
+            }
+            file.seek(4)
+            file.writeIntLE(36 + dataBytes)
+            file.seek(40)
+            file.writeIntLE(dataBytes)
+        }
+    }
+
+    private fun readCd(lba: Int, sectors: Int): ByteArray {
+        val cdb = ByteArray(12)
+        cdb[0] = 0xBE.toByte()
+        cdb[2] = (lba ushr 24).toByte()
+        cdb[3] = (lba ushr 16).toByte()
+        cdb[4] = (lba ushr 8).toByte()
+        cdb[5] = lba.toByte()
+        cdb[6] = (sectors ushr 16).toByte()
+        cdb[7] = (sectors ushr 8).toByte()
+        cdb[8] = sectors.toByte()
+        // Sync, header, subheader, and user data: 2352-byte CD-DA frames.
+        cdb[9] = 0xF8.toByte()
+        return command(cdb, sectors * 2352)
+    }
+
+    private fun command(cdb: ByteArray, expectedLength: Int): ByteArray {
+        require(cdb.size <= 16)
+        val currentTag = tag++
+        val cbw = ByteBuffer.allocate(31).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putInt(0x43425355)
+            putInt(currentTag)
+            putInt(expectedLength)
+            put(0x80.toByte())
+            put(0)
+            put(cdb.size.toByte())
+            put(cdb)
+            while (position() < 31) put(0)
+        }.array()
+        check(connection.bulkTransfer(output, cbw, 0, cbw.size, 10_000) == cbw.size) {
+            "USB command transfer failed"
+        }
+        val data = ByteArray(expectedLength)
+        var received = 0
+        while (received < expectedLength) {
+            val count = connection.bulkTransfer(input, data, received, expectedLength - received, 30_000)
+            check(count > 0) { "USB data transfer failed" }
+            received += count
+        }
+        val csw = ByteArray(13)
+        check(connection.bulkTransfer(input, csw, 0, csw.size, 10_000) == csw.size) {
+            "USB status transfer failed"
+        }
+        val status = ByteBuffer.wrap(csw).order(ByteOrder.LITTLE_ENDIAN)
+        check(status.int == 0x53425355 && status.int == currentTag) { "Invalid USB command status" }
+        check((csw[12].toInt() and 0xff) == 0) { "Optical drive rejected the command" }
+        return data
+    }
+
+    override fun close() {
+        try { connection.releaseInterface(usbInterface) } finally { connection.close() }
+    }
+
+    private fun wavHeader(dataLength: Int): ByteArray = ByteBuffer.allocate(44)
+        .order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray())
+            putInt(36 + dataLength)
+            put("WAVEfmt ".toByteArray())
+            putInt(16)
+            putShort(1)
+            putShort(2)
+            putInt(44100)
+            putInt(44100 * 2 * 2)
+            putShort(4)
+            putShort(16)
+            put("data".toByteArray())
+            putInt(dataLength)
+        }.array()
+}
+
+private fun RandomAccessFile.writeIntLE(value: Int) {
+    write(byteArrayOf(
+        value.toByte(),
+        (value ushr 8).toByte(),
+        (value ushr 16).toByte(),
+        (value ushr 24).toByte(),
+    ))
+}
+

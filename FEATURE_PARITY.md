@@ -58,7 +58,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Portable JSON plugin packages with validated manifests, persisted enablement, and plugin-provided equalizer presets on Windows and Android
 - Portable-device folder sync for local tracks with collision-safe copies and an M3U8 manifest on Windows and Android
 - Native M4A conversion using Media Foundation on Windows and MediaCodec/MediaMuxer on Android, with metadata restoration
-- Audio CD track discovery and WAV ripping through the native Windows CD-ROM API; Android provides the shared UI and safe no-drive response
+- Audio CD track discovery and WAV ripping through the native Windows CD-ROM API and Android USB-host MMC/CDDA transport, with SAF-compatible Android rip destinations
 - Responsive Windows and Android layouts
 - Android background playback with notification, lock-screen, headset, and Android Auto media controls
 - Windows global media keys for play/pause, stop, previous, and next
@@ -67,7 +67,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 ## Next parity milestones
 
 - Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests and host-provided capabilities
-- Hardware-specific CD ripping beyond the native Windows CD-ROM path
+- Hardware-specific CD ripping for optical drives that do not expose USB Mass Storage Bulk-Only Transport with MMC/SCSI commands
 - AirPlay receiver-specific codec and pairing coverage beyond the bundled HTTP media path, plus other non-DLNA/non-Chromecast casting protocols
 
 The release is not feature-complete Winamp parity until the remaining next-milestone items have native implementations and platform-specific verification.

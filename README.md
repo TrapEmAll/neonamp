@@ -24,7 +24,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Import portable JSON plugin packages on Windows or Android; enablement and plugin-provided 10-band equalizer presets persist across launches.
 - Sync local library tracks to a user-selected device folder on Windows or Android with collision-safe names and an M3U8 manifest.
 - Convert local tracks to M4A using native Media Foundation on Windows or MediaCodec on Android, with source metadata restored when supported.
-- Import audio CD tracks to standard WAV on Windows; Android exposes the same flow and reports when no optical drive is available.
+- Import audio CD tracks to standard WAV on Windows and Android USB-host devices; Android requests optical-drive permission, reads the disc TOC, and rips CDDA tracks to a selected SAF folder.
 - Import CUE sheets as segment-aware virtual tracks without splitting or altering the original audio file.
 - Subscribe to podcast RSS feeds, add playable episode enclosures, and download episodes locally.
 - Import and export podcast subscriptions as OPML files to move feeds between players and devices.

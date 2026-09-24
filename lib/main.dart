@@ -5393,9 +5393,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       );
       if (selection == null) return;
-      final destination = await FilePicker.getDirectoryPath(
-        dialogTitle: 'Choose a CD rip folder',
-      );
+      final destination = await _pickFolderLocation('Choose a CD rip folder');
       if (destination == null) return;
       final drive = selection['drive'] as String;
       final trackNumber = selection['track'] as int;
@@ -5403,14 +5401,21 @@ class _PlayerPageState extends State<PlayerPage>
         'CD ${drive.replaceAll(':', '')} Track $trackNumber.wav',
         <String>{},
       );
-      final output = '$destination${Platform.pathSeparator}$outputName';
+      final output = Platform.isAndroid
+          ? '${(await getApplicationSupportDirectory()).path}'
+                '${Platform.pathSeparator}cd-rips${Platform.pathSeparator}$outputName'
+          : '$destination${Platform.pathSeparator}$outputName';
+      if (Platform.isAndroid) await Directory(output).parent.create(recursive: true);
       final ripped = await const MethodChannel('neonamp/system_controls')
           .invokeMethod<bool>('ripAudioCd', {
             'drive': drive,
             'track': trackNumber,
             'outputPath': output,
-          });
+      });
       if (ripped != true) throw const FormatException('CD rip failed.');
+      if (Platform.isAndroid) {
+        await _copyFileToFolder(destination, output, outputName);
+      }
       final track = await _readTrack(output, outputName);
       if (!mounted) return;
       setState(() {
