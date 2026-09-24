@@ -7,6 +7,7 @@ class AudioAuditEntry {
     this.extension = '',
     this.sizeBytes = 0,
     this.bitrateKbps,
+    this.peakDb,
   });
 
   final String path;
@@ -16,6 +17,9 @@ class AudioAuditEntry {
   final String extension;
   final int sizeBytes;
   final int? bitrateKbps;
+  final double? peakDb;
+
+  bool get isClipped => peakDb != null && peakDb! >= -0.1;
 
   bool get hasCoreTags =>
       title.trim().isNotEmpty &&
@@ -59,6 +63,10 @@ List<DuplicateAudioGroup> findDuplicateAudioGroups(
       .map(DuplicateAudioGroup.new)
       .toList();
 }
+
+List<AudioAuditEntry> findClippedTracks(
+  Iterable<AudioAuditEntry> entries,
+) => entries.where((entry) => entry.isClipped).toList();
 
 List<AudioAuditEntry> findMissingCoreTags(Iterable<AudioAuditEntry> entries) =>
     entries.where((entry) => !entry.hasCoreTags).toList();
