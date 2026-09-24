@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 class AudioFormatInfo {
@@ -6,12 +7,14 @@ class AudioFormatInfo {
     this.sampleRate,
     this.bitDepth,
     this.channels,
+    this.peakDb,
   });
 
   final String codec;
   final int? sampleRate;
   final int? bitDepth;
   final int? channels;
+  final double? peakDb;
 
   String get summary {
     final rate = sampleRate == null ? 'unknown rate' : '${sampleRate} Hz';
@@ -39,6 +42,42 @@ int _u16(Uint8List bytes, int offset, Endian endian) =>
 
 int _u32(Uint8List bytes, int offset, Endian endian) =>
     ByteData.sublistView(bytes, offset, offset + 4).getUint32(0, endian);
+
+double? _pcmPeakDb(
+  Uint8List bytes,
+  int start,
+  int length,
+  int bitDepth,
+) {
+  if (length <= 0 || start < 0 || start >= bytes.length) return null;
+  final end = math.min(bytes.length, start + length);
+  double peak = 0;
+  if (bitDepth == 8) {
+    for (var i = start; i < end; i++) {
+      peak = math.max(peak, ((bytes[i] - 128).abs() / 128));
+    }
+  } else if (bitDepth == 16) {
+    for (var i = start; i + 1 < end; i += 2) {
+      final sample = ByteData.sublistView(bytes, i, i + 2).getInt16(0, Endian.little);
+      peak = math.max(peak, sample.abs() / 32768);
+    }
+  } else if (bitDepth == 24) {
+    for (var i = start; i + 2 < end; i += 3) {
+      var sample = bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16);
+      if ((sample & 0x800000) != 0) sample -= 0x1000000;
+      peak = math.max(peak, sample.abs() / 8388608);
+    }
+  } else if (bitDepth == 32) {
+    for (var i = start; i + 3 < end; i += 4) {
+      final sample = ByteData.sublistView(bytes, i, i + 4).getInt32(0, Endian.little);
+      peak = math.max(peak, sample.abs() / 2147483648);
+    }
+  } else {
+    return null;
+  }
+  if (peak <= 0) return null;
+  return 20 * math.log(peak) / math.ln10;
+}
 
 AudioFormatInfo? parseAudioFormat(
   Uint8List bytes, {
@@ -80,11 +119,33 @@ AudioFormatInfo? parseAudioFormat(
       final start = offset + 8;
       if (start + size > bytes.length) break;
       if (chunk == 'fmt ' && size >= 16) {
+        final channels = _u16(bytes, start + 2, Endian.little);
+        final sampleRate = _u32(bytes, start + 4, Endian.little);
+        final bitDepth = _u16(bytes, start + 14, Endian.little);
+        double? peakDb;
+        var dataOffset = start + size;
+        while (dataOffset + 8 <= bytes.length) {
+          final dataChunk = String.fromCharCodes(
+            bytes.sublist(dataOffset, dataOffset + 4),
+          );
+          final dataSize = _u32(bytes, dataOffset + 4, Endian.little);
+          if (dataChunk == 'data') {
+            peakDb = _pcmPeakDb(
+              bytes,
+              dataOffset + 8,
+              dataSize,
+              bitDepth,
+            );
+            break;
+          }
+          dataOffset += 8 + dataSize + (dataSize.isOdd ? 1 : 0);
+        }
         return AudioFormatInfo(
           codec: 'WAV',
-          channels: _u16(bytes, start + 2, Endian.little),
-          sampleRate: _u32(bytes, start + 4, Endian.little),
-          bitDepth: _u16(bytes, start + 14, Endian.little),
+          channels: channels,
+          sampleRate: sampleRate,
+          bitDepth: bitDepth,
+          peakDb: peakDb,
         );
       }
       offset = start + size + (size.isOdd ? 1 : 0);
