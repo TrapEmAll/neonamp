@@ -34,6 +34,7 @@ class DspLocalPlayer {
   Duration _duration = Duration.zero;
   double _volume = 1;
   double _preamp = 0;
+  bool _truePeakLimiterEnabled = true;
 
   Stream<Duration> get onPositionChanged => _positionController.stream;
   Stream<Duration> get onDurationChanged => _durationController.stream;
@@ -64,6 +65,7 @@ class DspLocalPlayer {
     required bool equalizerEnabled,
     required List<double> bands,
     double preamp = 0,
+    bool truePeakLimiterEnabled = true,
     List<PortableAudioEffect> effects = const [],
     double balance = 0,
     bool deleteSourceOnStop = false,
@@ -111,7 +113,8 @@ class DspLocalPlayer {
       rethrow;
     }
     final equalizer = source.filters.parametricEqFilter..activate();
-    final limiter = source.filters.limiterFilter..activate();
+    final limiter = source.filters.limiterFilter;
+    _truePeakLimiterEnabled = truePeakLimiterEnabled;
     _volume = volume.clamp(0.0, 1.0).toDouble();
     _preamp = preamp.clamp(-12.0, 12.0).toDouble();
     final handle = soloud.SoLoud.instance.play(
@@ -119,12 +122,15 @@ class DspLocalPlayer {
       volume: _effectiveVolume,
       pan: balance.clamp(-1.0, 1.0),
     );
-    limiter.wet(soundHandle: handle).value = 1.0;
-    limiter.threshold(soundHandle: handle).value = -3.0;
-    limiter.outputCeiling(soundHandle: handle).value = defaultTruePeakCeilingDb;
-    limiter.attackTime(soundHandle: handle).value = 1.0;
-    limiter.releaseTime(soundHandle: handle).value = 100.0;
-    limiter.kneeWidth(soundHandle: handle).value = 2.0;
+    if (truePeakLimiterEnabled) {
+      limiter.activate();
+      limiter.wet(soundHandle: handle).value = 1.0;
+      limiter.threshold(soundHandle: handle).value = -3.0;
+      limiter.outputCeiling(soundHandle: handle).value = defaultTruePeakCeilingDb;
+      limiter.attackTime(soundHandle: handle).value = 1.0;
+      limiter.releaseTime(soundHandle: handle).value = 100.0;
+      limiter.kneeWidth(soundHandle: handle).value = 2.0;
+    }
     equalizer.numBands(soundHandle: handle).value = bands.length.toDouble();
     for (var index = 0; index < bands.length; index++) {
       final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
@@ -257,6 +263,30 @@ class DspLocalPlayer {
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
       soloud.SoLoud.instance.setVolume(handle, _effectiveVolume);
     }
+  }
+
+  void setTruePeakLimiter(bool enabled) {
+    _truePeakLimiterEnabled = enabled;
+    final source = _source;
+    final handle = _handle;
+    if (source == null ||
+        handle == null ||
+        !soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      return;
+    }
+    final limiter = source.filters.limiterFilter;
+    if (!enabled) {
+      limiter.deactivate();
+      return;
+    }
+    limiter
+      ..activate()
+      ..wet(soundHandle: handle).value = 1.0
+      ..threshold(soundHandle: handle).value = -3.0
+      ..outputCeiling(soundHandle: handle).value = defaultTruePeakCeilingDb
+      ..attackTime(soundHandle: handle).value = 1.0
+      ..releaseTime(soundHandle: handle).value = 100.0
+      ..kneeWidth(soundHandle: handle).value = 2.0;
   }
 
   void setBalance(double balance) {

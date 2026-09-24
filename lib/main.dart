@@ -2459,6 +2459,7 @@ class _PlayerPageState extends State<PlayerPage>
   String? _midiSoundFontPath;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
+  bool _truePeakLimiterEnabled = true;
   Timer? _sleepTimer;
   Timer? _resumeSaveTimer;
   Timer? _castPositionTimer;
@@ -3171,6 +3172,13 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _setTruePeakLimiter(bool enabled) async {
+    setState(() => _truePeakLimiterEnabled = enabled);
+    _dspPlayer.setTruePeakLimiter(enabled);
+    _crossfadeDspPlayer?.setTruePeakLimiter(enabled);
+    await _saveQueue();
+  }
+
   Future<void> _handleComplete() async {
     if (_crossfadeInProgress) return;
     final identity = _current?.identityKey;
@@ -3409,6 +3417,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
+        _truePeakLimiterEnabled = settings['truePeakLimiterEnabled'] as bool? ?? true;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
             ? null
@@ -3482,6 +3491,7 @@ class _PlayerPageState extends State<PlayerPage>
         'customEqPresets': _customEqPresets,
         'playbackSpeed': _playbackSpeed,
         'replayGainEnabled': _replayGainEnabled,
+        'truePeakLimiterEnabled': _truePeakLimiterEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
@@ -4206,6 +4216,7 @@ class _PlayerPageState extends State<PlayerPage>
           bands: _eqBands,
 
           preamp: _eqPreamp,
+          truePeakLimiterEnabled: _truePeakLimiterEnabled,
           effects: _enabledPluginEffects,
           balance: _balance,
           deleteSourceOnStop: renderedMidiPath != null,
@@ -4404,6 +4415,7 @@ class _PlayerPageState extends State<PlayerPage>
         bands: _eqBands,
 
         preamp: _eqPreamp,
+        truePeakLimiterEnabled: _truePeakLimiterEnabled,
         effects: _enabledPluginEffects,
         balance: _balance,
       );
@@ -4511,6 +4523,7 @@ class _PlayerPageState extends State<PlayerPage>
         bands: _eqBands,
 
         preamp: _eqPreamp,
+        truePeakLimiterEnabled: _truePeakLimiterEnabled,
         effects: _enabledPluginEffects,
         balance: _balance,
       );
@@ -7248,6 +7261,16 @@ class _PlayerPageState extends State<PlayerPage>
                 value: _replayGainEnabled,
                 onChanged: (value) {
                   unawaited(_setReplayGainEnabled(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('True-peak limiter'),
+                subtitle: const Text('Keep local playback below -1 dBFS'),
+                value: _truePeakLimiterEnabled,
+                onChanged: (value) {
+                  unawaited(_setTruePeakLimiter(value));
                   setDialogState(() {});
                 },
               ),
