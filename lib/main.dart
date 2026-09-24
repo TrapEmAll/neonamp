@@ -2438,6 +2438,10 @@ class _PlayerPageState extends State<PlayerPage>
   final Map<String, NeonAmpPlugin> _plugins = {};
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _controllerFocusNode = FocusNode();
+  Map<ControllerAction, int> _controllerBindings =
+      Map<ControllerAction, int>.from(defaultControllerBindings);
+  ControllerAction? _bindingAction;
+  StateSetter? _controllerDialogState;
   late final AnimationController _pulse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 950),
@@ -3632,6 +3636,7 @@ class _PlayerPageState extends State<PlayerPage>
           _libreFmSharedSecret = profile.libreFmSharedSecret;
           _scrobblingEnabled = profile.enabled && _hasScrobbleCredentials(profile);
         }
+        _controllerBindings = controllerBindingsFromJson(settings['controllerBindings']);
         _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
@@ -3729,6 +3734,7 @@ class _PlayerPageState extends State<PlayerPage>
           libreFmSessionKey: _libreFmSessionKey,
           libreFmSharedSecret: _libreFmSharedSecret,
         ).toJson(),
+        'controllerBindings': controllerBindingsToJson(_controllerBindings),
         'remoteEnabled': _remoteEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
@@ -8924,6 +8930,71 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _showControllerSettings() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          _controllerDialogState = setDialogState;
+          return AlertDialog(
+            title: const Text('Controller bindings'),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Choose Assign, then press the desired gamepad button. '
+                    'Bindings are saved for Windows and Android.',
+                    style: TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  for (final action in ControllerAction.values)
+                    ListTile(
+                      dense: true,
+                      title: Text(controllerActionLabels[action]!),
+                      subtitle: Text(
+                        _bindingAction == action
+                            ? 'Press a controller button…'
+                            : 'Key code ${_controllerBindings[action]}',
+                      ),
+                      trailing: TextButton(
+                        onPressed: () {
+                          setDialogState(() => _bindingAction = action);
+                          _controllerFocusNode.requestFocus();
+                        },
+                        child: Text(_bindingAction == action ? 'Listening' : 'Assign'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _controllerBindings =
+                        Map<ControllerAction, int>.from(defaultControllerBindings);
+                    _bindingAction = null;
+                  });
+                  setDialogState(() {});
+                },
+                child: const Text('Reset defaults'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    _bindingAction = null;
+    _controllerDialogState = null;
+    await _saveQueue();
+  }
+
   Future<void> _showPlayerLayout() async {
     final draft = List<String>.from(_playerControls);
     var resetToDefault = false;
@@ -9193,7 +9264,18 @@ class _PlayerPageState extends State<PlayerPage>
 
   KeyEventResult _handleControllerKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    final action = controllerActionForKeyId(event.logicalKey.keyId);
+    if (_bindingAction != null) {
+      setState(() {
+        _controllerBindings[_bindingAction!] = event.logicalKey.keyId;
+        _bindingAction = null;
+      });
+      _controllerDialogState?.call(() {});
+      return KeyEventResult.handled;
+    }
+    final action = controllerActionForKeyId(
+      event.logicalKey.keyId,
+      bindings: _controllerBindings,
+    );
     if (action == null) return KeyEventResult.ignored;
     switch (action) {
       case ControllerAction.playPause:
@@ -9624,6 +9706,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'audit') _auditLibrary();
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'layout') _showPlayerLayout();
+              if (value == 'controller') _showControllerSettings();
               if (value == 'theme') _showThemePicker();
               if (value == 'importSkin') _importSkin();
               if (value == 'midiSoundFont') _importMidiSoundFont();
@@ -9696,6 +9779,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'layout',
                 child: Text('Customize player controls'),
+              ),
+              PopupMenuItem(
+                value: 'controller',
+                child: Text('Configure gamepad bindings'),
               ),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
               PopupMenuItem(
