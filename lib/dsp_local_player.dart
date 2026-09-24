@@ -63,6 +63,7 @@ class DspLocalPlayer {
     required double playbackSpeed,
     required bool equalizerEnabled,
     required List<double> bands,
+    List<double> frequencies = const [],
     double preamp = 0,
     bool truePeakLimiterEnabled = true,
     List<PortableAudioEffect> effects = const [],
@@ -131,6 +132,12 @@ class DspLocalPlayer {
     }
     equalizer.numBands(soundHandle: handle).value = bands.length.toDouble();
     for (var index = 0; index < bands.length; index++) {
+      if (index < frequencies.length && frequencies[index].isFinite) {
+        equalizer.bandFrequency(index, soundHandle: handle).value = frequencies[index];
+      }
+      if (index < frequencies.length && frequencies[index].isFinite) {
+        equalizer.bandFrequency(index, soundHandle: handle).value = frequencies[index];
+      }
       final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
       equalizer.bandGain(index, soundHandle: handle).value = gain;
     }
@@ -312,7 +319,11 @@ class DspLocalPlayer {
     );
   }
 
-  void applyEqualizer({required bool enabled, required List<double> bands}) {
+  void applyEqualizer({
+    required bool enabled,
+    required List<double> bands,
+    List<double> frequencies = const [],
+  }) {
     final source = _source;
     final handle = _handle;
     if (source == null ||

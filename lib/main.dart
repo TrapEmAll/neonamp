@@ -2459,6 +2459,7 @@ class _PlayerPageState extends State<PlayerPage>
   final SpectrumPeakHold _visualizerPeakHold = SpectrumPeakHold();
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
+  final List<double> _eqFrequencies = List<double>.from(autoEqCenterFrequencies);
   double _eqPreamp = 0;
   final Map<String, List<double>> _customEqPresets = {};
   String _eqPreset = 'Flat';
@@ -3592,6 +3593,12 @@ class _PlayerPageState extends State<PlayerPage>
           _playerLayoutCustomized = true;
         }
         final savedBands = (settings['eqBands'] as List?)?.cast<num>();
+        final savedFrequencies = (settings['eqFrequencies'] as List?)?.cast<num>();
+        if (savedFrequencies != null && savedFrequencies.length == _eqFrequencies.length) {
+          for (var i = 0; i < _eqFrequencies.length; i++) {
+            _eqFrequencies[i] = savedFrequencies[i].toDouble();
+          }
+        }
         if (savedBands != null && savedBands.length == _eqBands.length) {
           for (var i = 0; i < _eqBands.length; i++) {
             _eqBands[i] = savedBands[i].toDouble();
@@ -3646,6 +3653,7 @@ class _PlayerPageState extends State<PlayerPage>
         'midiSoundFontPath': _midiSoundFontPath,
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
+        'eqFrequencies': _eqFrequencies,
         'customEqPresets': _customEqPresets,
         'playbackSpeed': _playbackSpeed,
         'replayGainEnabled': _replayGainEnabled,
@@ -4375,6 +4383,7 @@ class _PlayerPageState extends State<PlayerPage>
           playbackSpeed: _playbackSpeed,
           equalizerEnabled: _equalizerEnabled,
           bands: _eqBands,
+          frequencies: _eqFrequencies,
 
           preamp: _eqPreamp,
           truePeakLimiterEnabled: _truePeakLimiterEnabled,
@@ -6957,11 +6966,18 @@ class _PlayerPageState extends State<PlayerPage>
         _customEqPresets[name] = profile.gains;
         _eqPreset = name;
         _eqBands.setAll(0, profile.gains);
+        _eqFrequencies
+          ..clear()
+          ..addAll(profile.frequencies);
       });
       if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
         await _setEqualizerEnabled(true);
       } else if (_dspActive) {
-        _dspPlayer.applyEqualizer(enabled: true, bands: _eqBands);
+        _dspPlayer.applyEqualizer(
+          enabled: true,
+          bands: _eqBands,
+          frequencies: _eqFrequencies,
+        );
       }
       await _saveQueue();
       if (!mounted) return;
@@ -7697,6 +7713,9 @@ class _PlayerPageState extends State<PlayerPage>
                             if (value == null) return;
                             setState(() {
                               _eqPreset = value;
+                              _eqFrequencies
+                                ..clear()
+                                ..addAll(autoEqCenterFrequencies);
                               _eqBands.setAll(
                                 0,
                                 equalizerPresetBands(
@@ -7712,6 +7731,7 @@ class _PlayerPageState extends State<PlayerPage>
                               _dspPlayer.applyEqualizer(
                                 enabled: _equalizerEnabled,
                                 bands: _eqBands,
+                                frequencies: _eqFrequencies,
                               );
                             }
                             setDialogState(() {});

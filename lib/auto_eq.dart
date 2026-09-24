@@ -6,9 +6,14 @@ const autoEqCenterFrequencies = <double>[
 ];
 
 class AutoEqProfile {
-  const AutoEqProfile({required this.name, required this.gains});
+  const AutoEqProfile({
+    required this.name,
+    required this.gains,
+    this.frequencies = autoEqCenterFrequencies,
+  });
   final String name;
   final List<double> gains;
+  final List<double> frequencies;
 }
 
 AutoEqProfile parseAutoEqProfile(String source, {String fallbackName = 'AutoEQ profile'}) {
@@ -24,9 +29,15 @@ AutoEqProfile parseAutoEqProfile(String source, {String fallbackName = 'AutoEQ p
     final frequency = _numbers(map['frequency'] ?? map['frequencies']);
     final gain = _numbers(map['equalization'] ?? map['gains'] ?? map['gain']);
     if (frequency != null && gain != null && frequency.length == gain.length) {
-      return AutoEqProfile(name: name, gains: _resamplePoints([
-        for (var i = 0; i < frequency.length; i++) [frequency[i], gain[i]]
-      ]));
+      return AutoEqProfile(
+        name: name,
+        gains: _resamplePoints([
+          for (var i = 0; i < frequency.length; i++) [frequency[i], gain[i]]
+        ]),
+        frequencies: frequency.length == 10
+            ? frequency.map((value) => value.clamp(20, 20000).toDouble()).toList()
+            : autoEqCenterFrequencies,
+      );
     }
     if (gain != null && gain.isNotEmpty) {
       return AutoEqProfile(name: name, gains: _resampleValues(gain));
@@ -41,7 +52,13 @@ AutoEqProfile parseAutoEqProfile(String source, {String fallbackName = 'AutoEQ p
     if (f != null && g != null && f.isFinite && g.isFinite && f > 0) points.add([f, g]);
   }
   if (points.isEmpty) throw const FormatException('AutoEQ profile has no frequency/gain data.');
-  return AutoEqProfile(name: fallbackName, gains: _resamplePoints(points));
+  return AutoEqProfile(
+    name: fallbackName,
+    gains: _resamplePoints(points),
+    frequencies: points.length == 10
+        ? points.map((point) => point[0].clamp(20, 20000).toDouble()).toList()
+        : autoEqCenterFrequencies,
+  );
 }
 
 List<double>? _numbers(Object? value) {

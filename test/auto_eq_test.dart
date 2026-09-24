@@ -11,6 +11,15 @@ void main() {
     expect(profile.gains.first, closeTo(8, 0.01));
     expect(profile.gains[5], closeTo(0, 0.01));
     expect(profile.gains.last, closeTo(-8, 0.01));
+    expect(profile.frequencies, autoEqCenterFrequencies);
+  });
+
+  test('preserves ten custom frequency centers from CSV', () {
+    final profile = parseAutoEqProfile(
+      '20,1\n50,2\n100,3\n200,4\n400,5\n800,6\n1600,7\n3200,8\n6400,9\n12800,10',
+    );
+    expect(profile.frequencies.first, 20);
+    expect(profile.frequencies.last, 12800);
   });
 
   test('accepts CSV and clamps unsafe gains', () {
