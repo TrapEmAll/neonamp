@@ -7826,8 +7826,7 @@ class _PlayerPageState extends State<PlayerPage>
                 subtitle: const Text('Use FFmpeg silence detection for local tracks'),
                 value: _silenceAwareCrossfade,
                 onChanged: (value) {
-                  setState(() => _silenceAwareCrossfade = value);
-                  unawaited(_saveQueue());
+                  unawaited(_setSilenceAwareCrossfade(value));
                   setDialogState(() {});
                 },
               ),
