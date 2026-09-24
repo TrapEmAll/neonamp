@@ -170,7 +170,7 @@ List<CueTrackEntry> parseEmbeddedChapters(
     title = null;
   }
 
-  for (final raw in contents.split(RegExp(r'\\r?\\n'))) {
+  for (final raw in contents.split(RegExp(r'\r?\n'))) {
     final line = raw.trim();
     if (line == '[CHAPTER]') {
       flush();
