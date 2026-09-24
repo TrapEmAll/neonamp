@@ -7956,6 +7956,8 @@ class _PlayerPageState extends State<PlayerPage>
       userId.dispose();
       query.dispose();
     }
+  }
+
   Future<void> _showSettings() async {
     await showDialog<void>(
       context: context,
