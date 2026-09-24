@@ -9058,6 +9058,8 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(value: 'video', child: Text('Play videos')),
               PopupMenuItem(value: 'trim', child: Text('Trim/export audio snippet')),
+              PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),
+              PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
             ],
           ),
       ],
