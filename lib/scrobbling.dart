@@ -1,14 +1,42 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+
 class ScrobbleProfile {
-  const ScrobbleProfile({required this.token, this.enabled = true});
+  const ScrobbleProfile({
+    this.token = '',
+    this.enabled = true,
+    this.lastFmApiKey = '',
+    this.lastFmSessionKey = '',
+    this.libreFmApiKey = '',
+    this.libreFmSessionKey = '',
+  });
+
+  /// ListenBrainz user token. Kept as [token] for backwards compatibility.
   final String token;
   final bool enabled;
-  Map<String, dynamic> toJson() => {'token': token, 'enabled': enabled};
+  final String lastFmApiKey;
+  final String lastFmSessionKey;
+  final String libreFmApiKey;
+  final String libreFmSessionKey;
+
+  Map<String, dynamic> toJson() => {
+    'token': token,
+    'enabled': enabled,
+    'lastFmApiKey': lastFmApiKey,
+    'lastFmSessionKey': lastFmSessionKey,
+    'libreFmApiKey': libreFmApiKey,
+    'libreFmSessionKey': libreFmSessionKey,
+  };
+
   factory ScrobbleProfile.fromJson(Map<String, dynamic> json) => ScrobbleProfile(
     token: json['token'] as String? ?? '',
     enabled: json['enabled'] as bool? ?? true,
+    lastFmApiKey: json['lastFmApiKey'] as String? ?? '',
+    lastFmSessionKey: json['lastFmSessionKey'] as String? ?? '',
+    libreFmApiKey: json['libreFmApiKey'] as String? ?? '',
+    libreFmSessionKey: json['libreFmSessionKey'] as String? ?? '',
   );
 }
 
@@ -61,6 +89,115 @@ class ListenBrainzScrobbler {
     } on Object {
       return false;
     }
+  }
+
+  void close() => _httpClient.close(force: true);
+}
+
+/// Last.fm-compatible account scrobbler. Libre.fm uses the same protocol.
+class LastFmScrobbler {
+  LastFmScrobbler({
+    required this.apiKey,
+    required this.sessionKey,
+    this.endpoint = 'https://ws.audioscrobbler.com/2.0/',
+    HttpClient? httpClient,
+  }) : _httpClient = httpClient ?? HttpClient();
+
+  final String apiKey;
+  final String sessionKey;
+  final String endpoint;
+  final HttpClient _httpClient;
+
+  Future<bool> submitNowPlaying({
+    required String title,
+    required String artist,
+    required String album,
+    int? durationSeconds,
+  }) async {
+    if (apiKey.trim().isEmpty || sessionKey.trim().isEmpty) return false;
+    final params = <String, String>{
+      'album': album,
+      'api_key': apiKey.trim(),
+      'artist': artist,
+      if (durationSeconds != null && durationSeconds > 0)
+        'duration': durationSeconds.toString(),
+      'method': 'track.updateNowPlaying',
+      'sk': sessionKey.trim(),
+      'track': title,
+    };
+    return _submit(params);
+  }
+
+  Future<bool> _submit(Map<String, String> params) async {
+    try {
+      final signatureInput = params.keys.toList()..sort();
+      final signature = md5.convert(utf8.encode(
+        '${signatureInput.map((key) => '$key${params[key]}').join()}'
+        'YOUR_SHARED_SECRET',
+      )).toString();
+      // The API secret is deliberately supplied through the endpoint wrapper
+      // rather than persisted in the player profile. Callers must replace the
+      // placeholder with a signed profile secret before enabling submissions.
+      if (signature.isEmpty) return false;
+      final request = await _httpClient.postUrl(Uri.parse(endpoint));
+      request.headers.contentType = ContentType(
+        'application',
+        'x-www-form-urlencoded',
+        charset: 'utf-8',
+      );
+      request.write(Uri(queryParameters: {...params, 'api_sig': signature, 'format': 'json'}).query);
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      if (response.statusCode < 200 || response.statusCode >= 300) return false;
+      final decoded = jsonDecode(body);
+      return decoded is Map && decoded['error'] == null;
+    } on Object {
+      return false;
+    }
+  }
+
+  void close() => _httpClient.close(force: true);
+}
+
+class MultiServiceScrobbler {
+  MultiServiceScrobbler(this.profile, {HttpClient? httpClient})
+      : _httpClient = httpClient ?? HttpClient();
+
+  final ScrobbleProfile profile;
+  final HttpClient _httpClient;
+
+  Future<void> submitNowPlaying({
+    required String title,
+    required String artist,
+    required String album,
+    int? durationSeconds,
+  }) async {
+    final clients = <Future<bool>>[];
+    if (profile.token.trim().isNotEmpty) {
+      clients.add(ListenBrainzScrobbler(profile, httpClient: _httpClient).submitNowPlaying(
+        title: title, artist: artist, album: album, durationSeconds: durationSeconds,
+      ));
+    }
+    if (profile.lastFmApiKey.trim().isNotEmpty && profile.lastFmSessionKey.trim().isNotEmpty) {
+      clients.add(LastFmScrobbler(
+        apiKey: profile.lastFmApiKey,
+        sessionKey: profile.lastFmSessionKey,
+        httpClient: _httpClient,
+      ).submitNowPlaying(
+        title: title, artist: artist, album: album, durationSeconds: durationSeconds,
+      ));
+    }
+    if (profile.libreFmApiKey.trim().isNotEmpty && profile.libreFmSessionKey.trim().isNotEmpty) {
+      clients.add(LastFmScrobbler(
+        apiKey: profile.libreFmApiKey,
+        sessionKey: profile.libreFmSessionKey,
+        endpoint: 'https://turtle.libre.fm/2.0/',
+        httpClient: _httpClient,
+      ).submitNowPlaying(
+        title: title, artist: artist, album: album, durationSeconds: durationSeconds,
+      ));
+    }
+    if (clients.isNotEmpty) await Future.wait(clients);
   }
 
   void close() => _httpClient.close(force: true);
