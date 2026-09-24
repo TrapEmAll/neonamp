@@ -48,6 +48,7 @@ import 'audio_loudness.dart';
 import 'loudness_scan.dart';
 import 'custom_metadata.dart';
 import 'remote_command_server.dart';
+import 'abx_test.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -6940,6 +6941,144 @@ class _PlayerPageState extends State<PlayerPage>
     return target.path;
   }
 
+  Future<void> _showAbxTest() async {
+    final result = await FilePicker.pickFiles(
+      allowMultiple: true,
+      type: FileType.custom,
+      allowedExtensions: supportedLibraryAudioExtensions.toList(),
+    );
+    final paths = result?.files.map((file) => file.path).whereType<String>().toList() ?? [];
+    if (paths.length != 2) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select exactly two local audio files.')),
+        );
+      }
+      return;
+    }
+    final player = DspLocalPlayer();
+    final session = AbxSession(roundCount: 10);
+    var selected = -1;
+    var message = 'Listen to A, B, and X, then decide whether X is A or B.';
+    Future<void> playPath(int index) async {
+      selected = index;
+      await player.play(
+        paths[index],
+        volume: _volume,
+        playbackSpeed: 1,
+        equalizerEnabled: false,
+        bands: _eqBands,
+        truePeakLimiterEnabled: _truePeakLimiterEnabled,
+        balance: _balance,
+      );
+    }
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            final complete = session.isComplete;
+            return AlertDialog(
+              title: const Text('ABX blind listening test'),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      complete
+                          ? 'Finished: ${session.correctAnswers}/${session.roundCount} correct '
+                              '(${(session.score * 100).round()}%)'
+                          : 'Round ${session.currentRound + 1} of ${session.roundCount}',
+                    ),
+                    const SizedBox(height: 10),
+                    Text(message),
+                    const SizedBox(height: 16),
+                    if (!complete)
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 8,
+                        children: [
+                          OutlinedButton(
+                            onPressed: () async {
+                              await playPath(0);
+                              setDialogState(() {});
+                            },
+                            child: const Text('Play A'),
+                          ),
+                          OutlinedButton(
+                            onPressed: () async {
+                              await playPath(1);
+                              setDialogState(() {});
+                            },
+                            child: const Text('Play B'),
+                          ),
+                          FilledButton(
+                            onPressed: () async {
+                              await playPath(session.current.x);
+                              setDialogState(() {});
+                            },
+                            child: const Text('Play X'),
+                          ),
+                        ],
+                      ),
+                    if (!complete) ...[
+                      const SizedBox(height: 12),
+                      const Text('Your answer'),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          FilledButton.tonal(
+                            onPressed: () async {
+                              final correct = session.submit(xIsA: true);
+                              message = correct ? 'Correct.' : 'Incorrect.';
+                              if (!session.isComplete) {
+                                await playPath(session.current.x);
+                              }
+                              setDialogState(() {});
+                            },
+                            child: const Text('X = A'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.tonal(
+                            onPressed: () async {
+                              final correct = session.submit(xIsA: false);
+                              message = correct ? 'Correct.' : 'Incorrect.';
+                              if (!session.isComplete) {
+                                await playPath(session.current.x);
+                              }
+                              setDialogState(() {});
+                            },
+                            child: const Text('X = B'),
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (selected >= 0 && !complete)
+                      Text(
+                        'Playing ' +
+                            (selected == 0 ? 'A' : selected == 1 ? 'B' : 'X'),
+                        style: const TextStyle(color: Colors.white54),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(complete ? 'Done' : 'Stop'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    } finally {
+      await player.dispose();
+    }
+  }
+
   Future<void> _importAutoEqProfile() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -8591,6 +8730,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'managePodcasts') _managePodcastSubscriptions();
               if (value == 'eq') _showEqualizer();
               if (value == 'autoEq') _importAutoEqProfile();
+              if (value == 'abx') _showAbxTest();
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'layout') _showPlayerLayout();
               if (value == 'theme') _showThemePicker();
@@ -8655,6 +8795,7 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Manage podcast subscriptions'),
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
+              PopupMenuItem(value: 'abx', child: Text('ABX blind listening test')),
               PopupMenuItem(
                 value: 'autoEq',
                 child: Text('Import AutoEQ headphone profile'),
