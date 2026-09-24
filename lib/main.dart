@@ -9088,14 +9088,26 @@ class _PlayerPageState extends State<PlayerPage>
       info = null;
     }
     if (!mounted) return;
+    final outputStatus = AudioOutputStatus(
+      backend: _casting
+          ? 'Network cast'
+          : _midiActive
+          ? 'MIDI backend'
+          : _dspActive
+          ? 'NeonAmp DSP backend'
+          : 'Native audio backend',
+      bitPerfectRequested: _bitPerfectMode,
+      softwareDspActive: _dspActive,
+      sourceFormat: info,
+    );
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Audio format diagnostics'),
         content: Text(
           info == null
-              ? 'The active decoder did not expose format details for this file.'
-              : '${info.summary}\n\nThis reports the source container. It does not prove hardware-exclusive output or DAC sample-rate lock.',
+              ? 'The active decoder did not expose format details for this file.\n\n${outputStatus.summary}'
+              : '${info.summary}\n\n${outputStatus.summary}\n\nSource metadata does not prove hardware-exclusive output or DAC sample-rate lock.',
         ),
         actions: [
           TextButton(
