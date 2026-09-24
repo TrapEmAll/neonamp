@@ -6990,10 +6990,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _showVisualizer() async {
     final canVisualize = _dspActive && soloud.SoLoud.instance.isInitialized;
-    if (canVisualize) _dspPlayer.setVisualizationEnabled(
-      true,
-      channel: soloud.VisualizationChannel.all,
-    );
+    if (canVisualize) _dspPlayer.setVisualizationEnabled(true);
     try {
       await showDialog<void>(
         context: context,
@@ -9463,9 +9460,32 @@ class VisualizerPainter extends CustomPainter {
       _paintWaveform(canvas, size, wave!, filled: false);
     } else if (mode == 'meter' && wave != null && wave!.isNotEmpty) {
       _paintMeter(canvas, size, wave!);
-    } else if (mode == 'goniometer' && waves != null && waves!.length >= 2) {
-      _paintGoniometer(canvas, size, waves![0], waves![1]);
+    } else if (mode == 'goniometer') {
+      if (waves != null && waves.length >= 2) {
+        _paintGoniometer(canvas, size, waves[0], waves[1]);
+      } else {
+        _paintUnavailable(
+          canvas,
+          size,
+          'Stereo channel data is unavailable from the active audio backend.',
+        );
+      }
     }
+  }
+
+  void _paintUnavailable(Canvas canvas, Size size, String message) {
+    final label = TextPainter(
+      text: TextSpan(
+        text: message,
+        style: const TextStyle(color: Colors.white60, fontSize: 12),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    )..layout(maxWidth: size.width - 24);
+    label.paint(
+      canvas,
+      Offset((size.width - label.width) / 2, (size.height - label.height) / 2),
+    );
   }
 
   void _paintSpectrum(Canvas canvas, Size size, Float32List bins) {
