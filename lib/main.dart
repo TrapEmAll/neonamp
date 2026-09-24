@@ -8981,7 +8981,8 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'importCue',
                 child: Text('Import CUE sheet'),
               ),
-              PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),\n              PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
+              PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),
+              PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
               PopupMenuItem(value: 'radio', child: Text('Find internet radio')),
               PopupMenuItem(
                 value: 'podcast',
