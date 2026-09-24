@@ -48,6 +48,16 @@ class ScrobbleProfile {
   );
 }
 
+String buildLastFmApiSignature(
+  Map<String, String> params,
+  String sharedSecret,
+) {
+  final keys = params.keys.toList()..sort();
+  return md5.convert(utf8.encode(
+    '${keys.map((key) => '$key${params[key]}').join()}${sharedSecret.trim()}',
+  )).toString();
+}
+
 Map<String, dynamic> buildListenBrainzPayload({
   required String title,
   required String artist,
@@ -140,11 +150,7 @@ class LastFmScrobbler {
 
   Future<bool> _submit(Map<String, String> params) async {
     try {
-      final signatureInput = params.keys.toList()..sort();
-      final signature = md5.convert(utf8.encode(
-        '${signatureInput.map((key) => '$key${params[key]}').join()}'
-        sharedSecret.trim(),
-      )).toString();
+      final signature = buildLastFmApiSignature(params, sharedSecret);
       if (signature.isEmpty) return false;
       final request = await _httpClient.postUrl(Uri.parse(endpoint));
       request.headers.contentType = ContentType(
@@ -179,6 +185,7 @@ class MultiServiceScrobbler {
     required String album,
     int? durationSeconds,
   }) async {
+    if (!profile.enabled) return;
     final clients = <Future<bool>>[];
     if (profile.token.trim().isNotEmpty) {
       clients.add(ListenBrainzScrobbler(profile, httpClient: _httpClient).submitNowPlaying(
