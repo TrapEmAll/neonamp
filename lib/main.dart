@@ -47,6 +47,7 @@ import 'audio_effects.dart';
 import 'audio_loudness.dart';
 import 'loudness_scan.dart';
 import 'custom_metadata.dart';
+import 'remote_command_server.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -2474,6 +2475,9 @@ class _PlayerPageState extends State<PlayerPage>
   bool _r128NormalizationEnabled = false;
   final Map<String, double?> _measuredLufs = <String, double?>{};
   bool _truePeakLimiterEnabled = true;
+  bool _remoteEnabled = false;
+  int _remotePort = 8765;
+  RemoteCommandServer? _remoteServer;
   Timer? _sleepTimer;
   Timer? _resumeSaveTimer;
   Timer? _castPositionTimer;
@@ -3229,6 +3233,100 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Map<String, dynamic> _remoteState() => {
+    'playing': _isPlaying,
+    'positionMs': _position.inMilliseconds,
+    'durationMs': _duration.inMilliseconds,
+    'volume': _volume,
+    'current': _current == null
+        ? null
+        : {
+            'title': _current!.name,
+            'artist': _current!.artist,
+            'album': _current!.album,
+          },
+    'queue': [
+      for (final track in _queue)
+        {'title': track.name, 'artist': track.artist},
+    ],
+  };
+
+  Future<Map<String, dynamic>> _handleRemoteCommand(
+    Map<String, dynamic> command,
+  ) async {
+    switch (command['type']) {
+      case 'play':
+        await _playCurrent();
+      case 'pause':
+        await _pauseCurrent();
+      case 'toggle':
+        await _togglePlay();
+      case 'next':
+        await _next(useCrossfade: false);
+      case 'previous':
+        await _previous();
+      case 'seek':
+        final position = (command['positionMs'] as num?)?.toInt();
+        if (position == null) throw const FormatException('positionMs is required');
+        await _seekCurrent(Duration(milliseconds: position));
+      case 'volume':
+        final volume = (command['value'] as num?)?.toDouble();
+        if (volume == null || !volume.isFinite) {
+          throw const FormatException('value is required');
+        }
+        final next = volume.clamp(0.0, 1.0).toDouble();
+        setState(() => _volume = next);
+        if (_dspActive) {
+          await _dspPlayer.setVolume(_volumeFor(_current));
+        } else {
+          await _player.setVolume(_volumeFor(_current));
+        }
+        await _saveQueue();
+      default:
+        throw FormatException(
+          'Unknown remote command: ' + command['type'].toString(),
+        );
+    }
+    return _remoteState();
+  }
+
+  Future<void> _setRemoteEnabled(bool enabled) async {
+    if (!enabled) {
+      await _remoteServer?.stop();
+      _remoteServer = null;
+      if (mounted) setState(() => _remoteEnabled = false);
+      await _saveQueue();
+      return;
+    }
+    final server = RemoteCommandServer();
+    try {
+      final port = await server.start(
+        port: _remotePort,
+        state: _remoteState,
+        command: _handleRemoteCommand,
+      );
+      _remoteServer = server;
+      if (mounted) {
+        setState(() {
+          _remoteEnabled = true;
+          _remotePort = port;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Remote control listening on port ' + port.toString())),
+        );
+      }
+      await _saveQueue();
+    } on Object catch (error) {
+      await server.stop();
+      if (mounted) {
+        setState(() => _remoteEnabled = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start remote control: ' + error.toString())),
+        );
+      }
+    }
+  }
+
   Future<void> _setTruePeakLimiter(bool enabled) async {
     setState(() => _truePeakLimiterEnabled = enabled);
     _dspPlayer.setTruePeakLimiter(enabled);
@@ -3476,6 +3574,7 @@ class _PlayerPageState extends State<PlayerPage>
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         _r128NormalizationEnabled = settings['r128NormalizationEnabled'] as bool? ?? false;
         _truePeakLimiterEnabled = settings['truePeakLimiterEnabled'] as bool? ?? true;
+        _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
             ? null
@@ -3501,6 +3600,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _armSleepTimer();
+    if (_remoteEnabled) unawaited(_setRemoteEnabled(true));
   }
 
   Future<void> _saveQueue() async {
@@ -3551,6 +3651,7 @@ class _PlayerPageState extends State<PlayerPage>
         'replayGainEnabled': _replayGainEnabled,
         'r128NormalizationEnabled': _r128NormalizationEnabled,
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
+        'remoteEnabled': _remoteEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
@@ -7369,6 +7470,16 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
+                title: const Text('Local web remote'),
+                subtitle: Text('Phone controls on port ' + _remotePort.toString()),
+                value: _remoteEnabled,
+                onChanged: (value) {
+                  unawaited(_setRemoteEnabled(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
                 title: const Text('True-peak limiter'),
                 subtitle: const Text('Keep local playback below -1 dBFS'),
                 value: _truePeakLimiterEnabled,
@@ -7690,6 +7801,16 @@ class _PlayerPageState extends State<PlayerPage>
                     value: _r128NormalizationEnabled,
                     onChanged: (value) {
                       unawaited(_setR128NormalizationEnabled(value));
+                      setDialogState(() {});
+                    },
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Local web remote'),
+                    subtitle: Text('Phone controls on port ' + _remotePort.toString()),
+                    value: _remoteEnabled,
+                    onChanged: (value) {
+                      unawaited(_setRemoteEnabled(value));
                       setDialogState(() {});
                     },
                   ),
@@ -8102,6 +8223,7 @@ class _PlayerPageState extends State<PlayerPage>
     _stateSub?.cancel();
     _completeSub?.cancel();
     _searchController.dispose();
+    unawaited(_remoteServer?.stop());
     _pulse.dispose();
     _player.dispose();
     unawaited(_midiPlayer.dispose());
