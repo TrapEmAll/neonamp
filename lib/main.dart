@@ -6943,11 +6943,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _showAbxTest() async {
     final result = await FilePicker.pickFiles(
-      allowMultiple: true,
       type: FileType.custom,
       allowedExtensions: supportedLibraryAudioExtensions.toList(),
     );
-    final paths = result?.files.map((file) => file.path).whereType<String>().toList() ?? [];
+    final paths = result.map((file) => file.path).whereType<String>().toList();
     if (paths.length != 2) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
