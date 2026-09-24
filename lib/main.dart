@@ -1479,6 +1479,14 @@ Future<void> writeTrackMetadata(File file, List<String> values) async {
   _updateCommonTrackMetadata(file, values);
 }
 
+Future<void> _syncAndroidLibraryCache(File file) async {
+  if (!Platform.isAndroid) return;
+  await const MethodChannel('neonamp/library').invokeMethod<bool>(
+    'replaceCachedFile',
+    {'sourcePath': file.path},
+  );
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const NeonAmpApp());
@@ -5750,6 +5758,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (values == null || values.length != 11) return;
     try {
       await writeTrackMetadata(File(track.path), values);
+      await _syncAndroidLibraryCache(File(track.path));
       final written = readTrackMetadata(File(track.path));
       final titleMatches =
           values[0].isEmpty || written.title?.trim() == values[0];
@@ -5936,6 +5945,7 @@ class _PlayerPageState extends State<PlayerPage>
       ];
       try {
         await writeTrackMetadata(File(track.path), metadataValues);
+        await _syncAndroidLibraryCache(File(track.path));
         updatedTracks[track.path] = updated;
         updatedCount++;
       } catch (_) {
@@ -6073,6 +6083,7 @@ class _PlayerPageState extends State<PlayerPage>
           ]);
         });
       }
+      await _syncAndroidLibraryCache(File(track.path));
       final updated = track.copyWith(artwork: bytes);
       setState(() {
         final libraryIndex = _library.indexWhere(

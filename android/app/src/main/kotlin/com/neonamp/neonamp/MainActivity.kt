@@ -45,6 +45,9 @@ class MainActivity : AudioServiceActivity() {
     private var folderPickerResult: MethodChannel.Result? = null
     private var audioCdResult: MethodChannel.Result? = null
     private var usbTag = 1
+    private val libraryCachePreferences by lazy {
+        getSharedPreferences("neonamp-library-cache", Context.MODE_PRIVATE)
+    }
 
     private val usbPermissionAction = "com.neonamp.neonamp.USB_PERMISSION"
     private val usbReceiver = object : BroadcastReceiver() {
@@ -155,6 +158,23 @@ class MainActivity : AudioServiceActivity() {
                                 } catch (error: Throwable) {
                                     runOnUiThread {
                                         result.error("folder_write_failed", error.message, null)
+                                    }
+                                }
+                            }.start()
+                        }
+                    }
+                    "replaceCachedFile" -> {
+                        val sourcePath = call.argument<String>("sourcePath")
+                        if (sourcePath.isNullOrBlank()) {
+                            result.error("invalid_arguments", "A cached source file is required.", null)
+                        } else {
+                            Thread {
+                                try {
+                                    val replaced = replaceCachedFile(sourcePath)
+                                    runOnUiThread { result.success(replaced) }
+                                } catch (error: Throwable) {
+                                    runOnUiThread {
+                                        result.error("library_write_failed", error.message, null)
                                     }
                                 }
                             }.start()
@@ -395,6 +415,9 @@ class MainActivity : AudioServiceActivity() {
                         }
                         if (sourceModified > 0) cachedFile.setLastModified(sourceModified)
                     }
+                    libraryCachePreferences.edit()
+                        .putString(cachedFile.canonicalPath, documentUri.toString())
+                        .apply()
                     val relativePath = if (documentId.startsWith("$rootDocumentId/")) {
                         documentId.removePrefix("$rootDocumentId/")
                     } else {
@@ -411,6 +434,21 @@ class MainActivity : AudioServiceActivity() {
             } ?: throw IllegalStateException("Android could not read this folder. Re-add it to restore access.")
         }
         return results
+    }
+
+    private fun replaceCachedFile(sourcePath: String): Boolean {
+        val cacheRoot = File(filesDir, "neonamp-library-cache").canonicalFile
+        val source = File(sourcePath).canonicalFile
+        val cachePrefix = cacheRoot.path + File.separator
+        if (!source.path.startsWith(cachePrefix)) {
+            throw IllegalArgumentException("The source file is outside the NeonAmp cache.")
+        }
+        val uriString = libraryCachePreferences.getString(source.path, null) ?: return false
+        val destination = Uri.parse(uriString)
+        contentResolver.openOutputStream(destination, "wt")?.use { output ->
+            source.inputStream().use { input -> input.copyTo(output) }
+        } ?: throw IllegalStateException("Android could not open the selected file for writing.")
+        return true
     }
 
     private fun usbManager(): UsbManager =
