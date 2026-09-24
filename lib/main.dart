@@ -7938,11 +7938,10 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'sync',
                 child: Text('Sync music to device folder'),
               ),
-              if (!Platform.isAndroid)
-                const PopupMenuItem(
-                  value: 'cd',
-                  child: Text('Import audio CD'),
-                ),
+              const PopupMenuItem(
+                value: 'cd',
+                child: Text('Import audio CD'),
+              ),
               PopupMenuItem(value: 'sleep', child: Text('Sleep timer')),
               PopupMenuItem(
                 value: 'exportPls',
