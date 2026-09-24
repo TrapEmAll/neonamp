@@ -2466,6 +2466,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _repeatOne = false;
   bool _crossfade = false;
   bool _silenceAwareCrossfade = false;
+  bool _bitPerfectMode = false;
   int _crossfadeSeconds = 3;
   bool _equalizerEnabled = false;
   List<String> _playerControls = List<String>.from(defaultPlayerControls);
@@ -3371,6 +3372,20 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _setBitPerfectMode(bool enabled) async {
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _bitPerfectMode = enabled);
+    if (_current != null && (wasPlaying || _dspActive)) {
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
+  }
+
   Future<void> _setSilenceAwareCrossfade(bool enabled) async {
     setState(() => _silenceAwareCrossfade = enabled);
     await _saveQueue();
@@ -3611,6 +3626,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
         _crossfade = settings['crossfade'] as bool? ?? false;
         _silenceAwareCrossfade = settings['silenceAwareCrossfade'] as bool? ?? false;
+        _bitPerfectMode = settings['bitPerfectMode'] as bool? ?? false;
         _crossfadeSeconds =
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
@@ -3723,6 +3739,7 @@ class _PlayerPageState extends State<PlayerPage>
         'balance': _balance,
         'crossfade': _crossfade,
         'silenceAwareCrossfade': _silenceAwareCrossfade,
+        'bitPerfectMode': _bitPerfectMode,
         'crossfadeSeconds': _crossfadeSeconds,
         'equalizerEnabled': _equalizerEnabled,
         'eqPreamp': _eqPreamp,
@@ -4511,6 +4528,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
       }
       final shouldUseDsp =
+          !_bitPerfectMode &&
           renderedMidiPath != null ||
           trackRequiresDspPlayback(
             track.path,
@@ -4572,7 +4590,7 @@ class _PlayerPageState extends State<PlayerPage>
                 ? UrlSource(track.path)
                 : DeviceFileSource(track.path),
           );
-          await _player.setPlaybackRate(_playbackSpeed);
+          await _player.setPlaybackRate(_bitPerfectMode ? 1.0 : _playbackSpeed);
         }
       }
       if (resumePosition != null || track.cueStartMs != null) {
@@ -4704,7 +4722,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _select(next);
       return;
     }
-    final targetUsesDsp = trackRequiresDspPlayback(
+    final targetUsesDsp = !_bitPerfectMode && trackRequiresDspPlayback(
       track.path,
       equalizerEnabled: _equalizerEnabled,
       preamp: _eqPreamp,
@@ -8438,6 +8456,19 @@ class _PlayerPageState extends State<PlayerPage>
                 value: _silenceAwareCrossfade,
                 onChanged: (value) {
                   unawaited(_setSilenceAwareCrossfade(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Bit-perfect best-effort mode'),
+                subtitle: const Text(
+                  'Bypass NeonAmp DSP, resampling controls, and crossfade; '
+                  'exclusive hardware output is not guaranteed by the backend.',
+                ),
+                value: _bitPerfectMode,
+                onChanged: (value) {
+                  unawaited(_setBitPerfectMode(value));
                   setDialogState(() {});
                 },
               ),
