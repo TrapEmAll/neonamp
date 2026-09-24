@@ -2491,6 +2491,12 @@ class _PlayerPageState extends State<PlayerPage>
   String? _convolutionImpulsePath;
   final List<MediaServerProfile> _mediaServerProfiles = [];
   String _listenBrainzToken = '';
+  String _lastFmApiKey = '';
+  String _lastFmSessionKey = '';
+  String _lastFmSharedSecret = '';
+  String _libreFmApiKey = '';
+  String _libreFmSessionKey = '';
+  String _libreFmSharedSecret = '';
   bool _scrobblingEnabled = false;
   bool _remoteEnabled = false;
   int _remotePort = 8765;
@@ -3614,7 +3620,13 @@ class _PlayerPageState extends State<PlayerPage>
         if (savedScrobble is Map) {
           final profile = ScrobbleProfile.fromJson(Map<String, dynamic>.from(savedScrobble));
           _listenBrainzToken = profile.token;
-          _scrobblingEnabled = profile.enabled && profile.token.isNotEmpty;
+          _lastFmApiKey = profile.lastFmApiKey;
+          _lastFmSessionKey = profile.lastFmSessionKey;
+          _lastFmSharedSecret = profile.lastFmSharedSecret;
+          _libreFmApiKey = profile.libreFmApiKey;
+          _libreFmSessionKey = profile.libreFmSessionKey;
+          _libreFmSharedSecret = profile.libreFmSharedSecret;
+          _scrobblingEnabled = profile.enabled && _hasScrobbleCredentials(profile);
         }
         _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
@@ -3703,7 +3715,16 @@ class _PlayerPageState extends State<PlayerPage>
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
-        'scrobbleProfile': ScrobbleProfile(token: _listenBrainzToken, enabled: _scrobblingEnabled).toJson(),
+        'scrobbleProfile': ScrobbleProfile(
+          token: _listenBrainzToken,
+          enabled: _scrobblingEnabled,
+          lastFmApiKey: _lastFmApiKey,
+          lastFmSessionKey: _lastFmSessionKey,
+          lastFmSharedSecret: _lastFmSharedSecret,
+          libreFmApiKey: _libreFmApiKey,
+          libreFmSessionKey: _libreFmSessionKey,
+          libreFmSharedSecret: _libreFmSharedSecret,
+        ).toJson(),
         'remoteEnabled': _remoteEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
@@ -7977,32 +7998,77 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  bool _hasScrobbleCredentials(ScrobbleProfile profile) =>
+      profile.token.trim().isNotEmpty ||
+      (profile.lastFmApiKey.trim().isNotEmpty &&
+          profile.lastFmSessionKey.trim().isNotEmpty &&
+          profile.lastFmSharedSecret.trim().isNotEmpty) ||
+      (profile.libreFmApiKey.trim().isNotEmpty &&
+          profile.libreFmSessionKey.trim().isNotEmpty &&
+          profile.libreFmSharedSecret.trim().isNotEmpty);
+
   Future<void> _showScrobblingSettings() async {
-    final token = TextEditingController(text: _listenBrainzToken);
+    final listenBrainzToken = TextEditingController(text: _listenBrainzToken);
+    final lastFmApiKey = TextEditingController(text: _lastFmApiKey);
+    final lastFmSessionKey = TextEditingController(text: _lastFmSessionKey);
+    final lastFmSharedSecret = TextEditingController(text: _lastFmSharedSecret);
+    final libreFmApiKey = TextEditingController(text: _libreFmApiKey);
+    final libreFmSessionKey = TextEditingController(text: _libreFmSessionKey);
+    final libreFmSharedSecret = TextEditingController(text: _libreFmSharedSecret);
     var enabled = _scrobblingEnabled;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('ListenBrainz scrobbling'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Enable scrobbling'),
-                value: enabled,
-                onChanged: (value) => setDialogState(() => enabled = value),
-              ),
-              TextField(
-                controller: token,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'ListenBrainz user token',
-                  helperText: 'Create one at listenbrainz.org/profile/',
+          title: const Text('Scrobbling services'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Enable scrobbling'),
+                  value: enabled,
+                  onChanged: (value) => setDialogState(() => enabled = value),
                 ),
-              ),
-            ],
+                TextField(
+                  controller: listenBrainzToken,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'ListenBrainz user token',
+                    helperText: 'Create one at listenbrainz.org/profile/',
+                  ),
+                ),
+                TextField(
+                  controller: lastFmApiKey,
+                  decoration: const InputDecoration(labelText: 'Last.fm API key'),
+                ),
+                TextField(
+                  controller: lastFmSessionKey,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Last.fm session key'),
+                ),
+                TextField(
+                  controller: lastFmSharedSecret,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Last.fm shared secret'),
+                ),
+                TextField(
+                  controller: libreFmApiKey,
+                  decoration: const InputDecoration(labelText: 'Libre.fm API key'),
+                ),
+                TextField(
+                  controller: libreFmSessionKey,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Libre.fm session key'),
+                ),
+                TextField(
+                  controller: libreFmSharedSecret,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Libre.fm shared secret'),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -8011,9 +8077,25 @@ class _PlayerPageState extends State<PlayerPage>
             ),
             FilledButton(
               onPressed: () {
+                final profile = ScrobbleProfile(
+                  token: listenBrainzToken.text.trim(),
+                  enabled: enabled,
+                  lastFmApiKey: lastFmApiKey.text.trim(),
+                  lastFmSessionKey: lastFmSessionKey.text.trim(),
+                  lastFmSharedSecret: lastFmSharedSecret.text.trim(),
+                  libreFmApiKey: libreFmApiKey.text.trim(),
+                  libreFmSessionKey: libreFmSessionKey.text.trim(),
+                  libreFmSharedSecret: libreFmSharedSecret.text.trim(),
+                );
                 setState(() {
-                  _listenBrainzToken = token.text.trim();
-                  _scrobblingEnabled = enabled && _listenBrainzToken.isNotEmpty;
+                  _listenBrainzToken = profile.token;
+                  _lastFmApiKey = profile.lastFmApiKey;
+                  _lastFmSessionKey = profile.lastFmSessionKey;
+                  _lastFmSharedSecret = profile.lastFmSharedSecret;
+                  _libreFmApiKey = profile.libreFmApiKey;
+                  _libreFmSessionKey = profile.libreFmSessionKey;
+                  _libreFmSharedSecret = profile.libreFmSharedSecret;
+                  _scrobblingEnabled = profile.enabled && _hasScrobbleCredentials(profile);
                 });
                 unawaited(_saveQueue());
                 Navigator.pop(dialogContext);
@@ -8024,13 +8106,32 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
-    token.dispose();
+    for (final controller in [
+      listenBrainzToken,
+      lastFmApiKey,
+      lastFmSessionKey,
+      lastFmSharedSecret,
+      libreFmApiKey,
+      libreFmSessionKey,
+      libreFmSharedSecret,
+    ]) {
+      controller.dispose();
+    }
   }
 
   Future<void> _submitNowPlaying(Track track) async {
-    if (!_scrobblingEnabled || _listenBrainzToken.isEmpty) return;
-    final client = ListenBrainzScrobbler(
-      ScrobbleProfile(token: _listenBrainzToken),
+    if (!_scrobblingEnabled) return;
+    final client = MultiServiceScrobbler(
+      ScrobbleProfile(
+        token: _listenBrainzToken,
+        enabled: true,
+        lastFmApiKey: _lastFmApiKey,
+        lastFmSessionKey: _lastFmSessionKey,
+        lastFmSharedSecret: _lastFmSharedSecret,
+        libreFmApiKey: _libreFmApiKey,
+        libreFmSessionKey: _libreFmSessionKey,
+        libreFmSharedSecret: _libreFmSharedSecret,
+      ),
     );
     try {
       await client.submitNowPlaying(
