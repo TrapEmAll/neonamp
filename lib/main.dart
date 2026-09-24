@@ -47,6 +47,7 @@ import 'audio_effects.dart';
 import 'audio_loudness.dart';
 import 'convolution.dart';
 import 'silence_detection.dart';
+import 'media_server.dart';
 import 'loudness_scan.dart';
 import 'custom_metadata.dart';
 import 'remote_command_server.dart';
@@ -2482,6 +2483,7 @@ class _PlayerPageState extends State<PlayerPage>
   final Map<String, double?> _measuredLufs = <String, double?>{};
   bool _truePeakLimiterEnabled = true;
   String? _convolutionImpulsePath;
+  final List<MediaServerProfile> _mediaServerProfiles = [];
   bool _remoteEnabled = false;
   int _remotePort = 8765;
   RemoteCommandServer? _remoteServer;
@@ -3592,6 +3594,14 @@ class _PlayerPageState extends State<PlayerPage>
                 isSupportedImpulseResponsePath(savedImpulse)
             ? savedImpulse
             : null;
+        final savedServers = settings['mediaServerProfiles'];
+        if (savedServers is List) {
+          _mediaServerProfiles.addAll(
+            savedServers.whereType<Map>().map(
+              (item) => MediaServerProfile.fromJson(Map<String, dynamic>.from(item)),
+            ),
+          );
+        }
         _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
@@ -3678,6 +3688,7 @@ class _PlayerPageState extends State<PlayerPage>
         'r128NormalizationEnabled': _r128NormalizationEnabled,
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
         'convolutionImpulsePath': _convolutionImpulsePath,
+        'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
         'remoteEnabled': _remoteEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
@@ -7780,6 +7791,172 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _showMediaServers() async {
+    final saved = _mediaServerProfiles.firstOrNull;
+    var kind = saved?.kind ?? 'subsonic';
+    final baseUrl = TextEditingController(text: saved?.baseUrl ?? '');
+    final username = TextEditingController(text: saved?.username ?? '');
+    final secret = TextEditingController(text: saved?.secret ?? '');
+    final userId = TextEditingController(text: saved?.userId ?? '');
+    final query = TextEditingController();
+    var results = <MediaServerTrack>[];
+    var loading = false;
+    var error = '';
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Remote media servers'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: kind,
+                    decoration: const InputDecoration(labelText: 'Server type'),
+                    items: const [
+                      DropdownMenuItem(value: 'subsonic', child: Text('Subsonic / Navidrome')),
+                      DropdownMenuItem(value: 'jellyfin', child: Text('Jellyfin')),
+                    ],
+                    onChanged: (value) => setDialogState(() => kind = value ?? kind),
+                  ),
+                  TextField(
+                    controller: baseUrl,
+                    decoration: const InputDecoration(labelText: 'Server URL (HTTPS recommended)'),
+                    keyboardType: TextInputType.url,
+                  ),
+                  TextField(
+                    controller: username,
+                    decoration: const InputDecoration(labelText: 'Username'),
+                  ),
+                  TextField(
+                    controller: secret,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password or API token'),
+                  ),
+                  if (kind == 'jellyfin')
+                    TextField(
+                      controller: userId,
+                      decoration: const InputDecoration(labelText: 'Jellyfin user ID'),
+                    ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: query,
+                          decoration: const InputDecoration(labelText: 'Search remote library'),
+                          onSubmitted: (_) => _search(),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Search',
+                        onPressed: loading ? null : _search,
+                        icon: const Icon(Icons.search),
+                      ),
+                    ],
+                  ),
+                  if (loading) const LinearProgressIndicator(),
+                  if (error.isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(error, style: const TextStyle(color: Colors.redAccent)),
+                    ),
+                  if (results.isNotEmpty)
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final result in results)
+                            ListTile(
+                              dense: true,
+                              title: Text(result.name),
+                              subtitle: Text('${result.artist} · ${result.album}'),
+                              trailing: IconButton(
+                                tooltip: 'Add to queue',
+                                icon: const Icon(Icons.playlist_add),
+                                onPressed: () {
+                                  final track = Track(
+                                    path: result.streamUrl,
+                                    name: result.name,
+                                    artist: result.artist,
+                                    album: result.album,
+                                    year: result.year,
+                                  );
+                                  setState(() {
+                                    _queue.add(track);
+                                    if (!_library.any((item) => item.path == track.path)) {
+                                      _library.add(track);
+                                    }
+                                  });
+                                  unawaited(_saveQueue());
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      baseUrl.dispose();
+      username.dispose();
+      secret.dispose();
+      userId.dispose();
+      query.dispose();
+    }
+
+    Future<void> _search() async {
+      final profile = MediaServerProfile(
+        kind: kind,
+        baseUrl: baseUrl.text.trim(),
+        username: username.text.trim(),
+        secret: secret.text,
+        userId: kind == 'jellyfin' ? userId.text.trim() : null,
+      );
+      if (profile.baseUrl.isEmpty || profile.username.isEmpty || profile.secret.isEmpty) {
+        setDialogState(() => error = 'Enter the server URL, username, and password/token.');
+        return;
+      }
+      if (profile.isJellyfin && (profile.userId == null || profile.userId!.isEmpty)) {
+        setDialogState(() => error = 'Enter the Jellyfin user ID.');
+        return;
+      }
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      final client = MediaServerClient(profile);
+      try {
+        final found = await client.search(query.text);
+        setState(() {
+          _mediaServerProfiles
+            ..clear()
+            ..add(profile);
+        });
+        await _saveQueue();
+        setDialogState(() => results = found);
+      } on Object catch (caught) {
+        setDialogState(() => error = caught.toString());
+      } finally {
+        client.close();
+        setDialogState(() => loading = false);
+      }
+    }
+  }
+
   Future<void> _showSettings() async {
     await showDialog<void>(
       context: context,
@@ -8990,6 +9167,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'managePodcasts') _managePodcastSubscriptions();
               if (value == 'eq') _showEqualizer();
               if (value == 'convolution') _chooseConvolutionImpulse();
+              if (value == 'servers') _showMediaServers();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
               if (value == 'audit') _auditLibrary();
@@ -9111,6 +9289,7 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'trim', child: Text('Trim/export audio snippet')),
               PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),
               PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
+              PopupMenuItem(value: 'servers', child: Text('Remote media servers')),
             ],
           ),
       ],
