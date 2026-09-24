@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 78652)
-Total output lines: 8970
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -1905,7 +1902,5506 @@ class ThemeSkin {
   });
 
   final String name;
-  final Color seedColo…48652 tokens truncated…gicalKeyboardKey.arrowRight, control: true):
+  final Color seedColor;
+  final Color backgroundColor;
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'seedColor': _colorToHex(seedColor),
+    'backgroundColor': _colorToHex(backgroundColor),
+  };
+
+  static ThemeSkin fromJson(Map<String, dynamic> json) {
+    final name = (json['name'] as String?)?.trim() ?? '';
+    if (name.isEmpty || name.length > 40) {
+      throw const FormatException(
+        'Skin name must be between 1 and 40 characters.',
+      );
+    }
+    return ThemeSkin(
+      name: name,
+      seedColor: _colorFromJson(json['seedColor'], 'seedColor'),
+      backgroundColor: _colorFromJson(
+        json['backgroundColor'],
+        'backgroundColor',
+      ),
+    );
+  }
+}
+
+String _colorToHex(Color color) =>
+    '#${color.value.toRadixString(16).padLeft(8, '0').substring(2)}';
+
+Color _colorFromJson(Object? value, String field) {
+  if (value is! String || !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) {
+    throw FormatException('$field must be a six-digit hex color.');
+  }
+  return Color(int.parse('ff${value.substring(1)}', radix: 16));
+}
+
+List<ThemeSkin> builtInSkins() => const [
+  ThemeSkin(
+    name: 'Neon',
+    seedColor: Color(0xffef4bff),
+    backgroundColor: Color(0xff090a10),
+  ),
+  ThemeSkin(
+    name: 'Aurora',
+    seedColor: Color(0xff35e6ff),
+    backgroundColor: Color(0xff071015),
+  ),
+  ThemeSkin(
+    name: 'Amber',
+    seedColor: Color(0xffffa62b),
+    backgroundColor: Color(0xff120d07),
+  ),
+  ThemeSkin(
+    name: 'Classic',
+    seedColor: Color(0xff7dff55),
+    backgroundColor: Color(0xff081008),
+  ),
+];
+
+class SmartCriterion {
+  const SmartCriterion({required this.rule, this.value = ''});
+
+  final String rule;
+  final String value;
+
+  Map<String, dynamic> toJson() => {'rule': rule, 'value': value};
+
+  static SmartCriterion fromJson(Map<String, dynamic> json) => SmartCriterion(
+    rule: json['rule'] as String? ?? 'Favorites',
+    value: json['value'] as String? ?? '',
+  );
+}
+
+class SmartPlaylist {
+  const SmartPlaylist({
+    required this.name,
+    required this.rule,
+    this.value = '',
+    this.sortBy = 'Added',
+    this.descending = false,
+    this.limit = 0,
+    this.criteria,
+    this.matchAll = true,
+  });
+
+  final String name;
+  final String rule;
+  final String value;
+  final String sortBy;
+  final bool descending;
+  final int limit;
+  final List<SmartCriterion>? criteria;
+  final bool matchAll;
+
+  List<SmartCriterion> get effectiveCriteria =>
+      criteria == null || criteria!.isEmpty
+      ? [SmartCriterion(rule: rule, value: value)]
+      : criteria!;
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'rule': rule,
+    'value': value,
+    'sortBy': sortBy,
+    'descending': descending,
+    'limit': limit,
+    'matchAll': matchAll,
+    'criteria': effectiveCriteria
+        .map((criterion) => criterion.toJson())
+        .toList(),
+  };
+
+  static SmartPlaylist fromJson(Map<String, dynamic> json) {
+    final rawCriteria = json['criteria'];
+    final criteria = rawCriteria is List
+        ? rawCriteria
+              .whereType<Map>()
+              .map(
+                (item) =>
+                    SmartCriterion.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .toList()
+        : null;
+    return SmartPlaylist(
+      name: json['name'] as String? ?? 'Smart playlist',
+      rule: json['rule'] as String? ?? 'Favorites',
+      value: json['value'] as String? ?? '',
+      sortBy: json['sortBy'] as String? ?? 'Added',
+      descending: json['descending'] as bool? ?? false,
+      limit: (json['limit'] as num?)?.toInt() ?? 0,
+      criteria: criteria,
+      matchAll: json['matchAll'] as bool? ?? true,
+    );
+  }
+}
+
+class _TogglePlayIntent extends Intent {
+  const _TogglePlayIntent();
+}
+
+class _NextTrackIntent extends Intent {
+  const _NextTrackIntent();
+}
+
+class _PreviousTrackIntent extends Intent {
+  const _PreviousTrackIntent();
+}
+
+class _SeekIntent extends Intent {
+  const _SeekIntent(this.amount);
+  final Duration amount;
+}
+
+class _MuteIntent extends Intent {
+  const _MuteIntent();
+}
+
+class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
+  NeonAudioHandler(this.player) {
+    _bindPlayerStreams();
+  }
+
+  AudioPlayer player;
+  Future<void> Function()? onNext;
+  Future<void> Function()? onPrevious;
+  Future<void> Function()? onPlayRequested;
+  Future<void> Function()? onPauseRequested;
+  Future<void> Function()? onStopRequested;
+  Future<void> Function(Duration position)? onSeekRequested;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  StreamSubscription<PlayerState>? _stateSubscription;
+  double _playbackSpeed = 1.0;
+  Duration _trackStart = Duration.zero;
+  Duration? _trackEnd;
+  Duration _lastPosition = Duration.zero;
+
+  void _bindPlayerStreams() {
+    _positionSubscription = player.onPositionChanged.listen(
+      (position) => _broadcast(position: _relativePosition(position)),
+    );
+    _durationSubscription = player.onDurationChanged.listen((duration) {
+      final current = mediaItem.value;
+      final trackDuration = _relativeDuration(duration);
+      if (current != null) {
+        mediaItem.add(current.copyWith(duration: trackDuration));
+      }
+      _broadcast();
+    });
+    _stateSubscription = player.onPlayerStateChanged.listen(
+      (state) => _broadcast(state: state),
+    );
+  }
+
+  Future<void> switchPlayer(AudioPlayer nextPlayer) async {
+    await _positionSubscription?.cancel();
+    await _durationSubscription?.cancel();
+    await _stateSubscription?.cancel();
+    player = nextPlayer;
+    _bindPlayerStreams();
+    _broadcast();
+  }
+
+  Future<void> playTrack(Track track) async {
+    await player.stop();
+    _trackStart = track.cueStart;
+    _trackEnd = track.cueEnd;
+    final duration = track.cueEnd == null
+        ? null
+        : track.cueEnd! - track.cueStart;
+    final artworkUri = await _artworkUri(track);
+    mediaItem.add(
+      MediaItem(
+        id: track.identityKey,
+        title: track.name,
+        artist: track.artist,
+        album: track.album,
+        artUri: artworkUri,
+        duration: duration,
+      ),
+    );
+    await player.play(
+      track.path.startsWith('http')
+          ? UrlSource(track.path)
+          : DeviceFileSource(track.path),
+    );
+    await player.setPlaybackRate(_playbackSpeed);
+  }
+
+  Future<void> setPlaybackSpeed(double speed) async {
+    _playbackSpeed = speed;
+    await player.setPlaybackRate(speed);
+    _broadcast();
+  }
+
+  Future<void> publishTrack(Track track) async {
+    _trackStart = track.cueStart;
+    _trackEnd = track.cueEnd;
+    final artworkUri = await _artworkUri(track);
+    mediaItem.add(
+      MediaItem(
+        id: track.identityKey,
+        title: track.name,
+        artist: track.artist,
+        album: track.album,
+        artUri: artworkUri,
+      ),
+    );
+  }
+
+  Future<Uri?> _artworkUri(Track track) async {
+    try {
+      return await cacheMediaArtwork(
+        track.artwork,
+        directory: await getTemporaryDirectory(),
+      );
+    } on Object catch (error) {
+      debugPrint('Could not cache notification artwork: $error');
+      return null;
+    }
+  }
+
+  Duration _relativePosition(Duration source) {
+    final relative = source - _trackStart;
+    return relative.isNegative ? Duration.zero : relative;
+  }
+
+  Duration _relativeDuration(Duration source) {
+    final relative = (_trackEnd ?? source) - _trackStart;
+    return relative.isNegative ? Duration.zero : relative;
+  }
+
+  void syncExternalState({
+    Duration? position,
+    Duration? duration,
+    required PlayerState state,
+  }) {
+    if (position != null) _lastPosition = position;
+    final current = mediaItem.value;
+    if (current != null && duration != null) {
+      mediaItem.add(current.copyWith(duration: duration));
+    }
+    _broadcast(position: position, state: state);
+  }
+
+  @override
+  Future<void> play() => onPlayRequested?.call() ?? player.resume();
+
+  @override
+  Future<void> pause() => onPauseRequested?.call() ?? player.pause();
+
+  @override
+  Future<void> stop() => onStopRequested?.call() ?? player.stop();
+
+  @override
+  Future<void> seek(Duration position) =>
+      onSeekRequested?.call(position) ?? player.seek(position);
+
+  @override
+  Future<void> skipToNext() async {
+    await onNext?.call();
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    await onPrevious?.call();
+  }
+
+  void _broadcast({Duration? position, PlayerState? state}) {
+    if (position != null) _lastPosition = position;
+    final currentState = state ?? player.state;
+    playbackState.add(
+      PlaybackState(
+        controls: [
+          MediaControl.skipToPrevious,
+          currentState == PlayerState.playing
+              ? MediaControl.pause
+              : MediaControl.play,
+          MediaControl.stop,
+          MediaControl.skipToNext,
+        ],
+        systemActions: const {
+          MediaAction.seek,
+          MediaAction.seekForward,
+          MediaAction.seekBackward,
+        },
+        androidCompactActionIndices: const [0, 1, 3],
+        processingState: currentState == PlayerState.completed
+            ? AudioProcessingState.completed
+            : AudioProcessingState.ready,
+        playing: currentState == PlayerState.playing,
+        updatePosition: _lastPosition,
+        speed: _playbackSpeed,
+      ),
+    );
+  }
+}
+
+class NeonAmpApp extends StatefulWidget {
+  const NeonAmpApp({super.key});
+
+  @override
+  State<NeonAmpApp> createState() => _NeonAmpAppState();
+}
+
+class _NeonAmpAppState extends State<NeonAmpApp> {
+  String _themeName = 'Neon';
+  final Map<String, ThemeSkin> _customSkins = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedSkins = prefs.getString('customSkins');
+    if (savedSkins != null) {
+      try {
+        final decoded = jsonDecode(savedSkins) as List;
+        for (final value in decoded) {
+          final skin = ThemeSkin.fromJson(value as Map<String, dynamic>);
+          if (builtInSkins().every((builtin) => builtin.name != skin.name)) {
+            _customSkins[skin.name] = skin;
+          }
+        }
+      } on Object {
+        _customSkins.clear();
+      }
+    }
+    if (!mounted) return;
+    setState(() => _themeName = prefs.getString('themeName') ?? 'Neon');
+  }
+
+  Future<void> _setTheme(String themeName) async {
+    setState(() => _themeName = themeName);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('themeName', themeName);
+  }
+
+  Future<void> _addCustomSkin(ThemeSkin skin) async {
+    if (builtInSkins().any((builtin) => builtin.name == skin.name)) {
+      throw const FormatException('Built-in skin names cannot be replaced.');
+    }
+    setState(() {
+      _customSkins[skin.name] = skin;
+      _themeName = skin.name;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'customSkins',
+      jsonEncode(_customSkins.values.map((value) => value.toJson()).toList()),
+    );
+    await prefs.setString('themeName', skin.name);
+  }
+
+  List<ThemeSkin> get _skins => [...builtInSkins(), ..._customSkins.values];
+
+  ThemeData _themeData() {
+    final skin = _skins.firstWhere(
+      (value) => value.name == _themeName,
+      orElse: () => builtInSkins().first,
+    );
+    return ThemeData(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: skin.backgroundColor,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: skin.seedColor,
+        brightness: Brightness.dark,
+      ),
+      fontFamily: 'Segoe UI',
+      useMaterial3: true,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'NeonAmp',
+    debugShowCheckedModeBanner: false,
+    theme: _themeData(),
+    home: PlayerPage(
+      themeName: _themeName,
+      skins: _skins,
+      onThemeChanged: _setTheme,
+      onSkinImported: _addCustomSkin,
+    ),
+  );
+}
+
+class PlayerPage extends StatefulWidget {
+  const PlayerPage({
+    super.key,
+    this.themeName = 'Neon',
+    this.skins = const [],
+    this.onThemeChanged,
+    this.onSkinImported,
+  });
+
+  final String themeName;
+  final List<ThemeSkin> skins;
+  final ValueChanged<String>? onThemeChanged;
+  final Future<void> Function(ThemeSkin skin)? onSkinImported;
+
+  @override
+  State<PlayerPage> createState() => _PlayerPageState();
+}
+
+class _PlayerPageState extends State<PlayerPage>
+    with SingleTickerProviderStateMixin {
+  AudioPlayer _activePlayer = AudioPlayer();
+  final DlnaCast _dlnaCast = DlnaCast();
+  final ChromecastCast _chromecastCast = ChromecastCast();
+  DspLocalPlayer _dspPlayer = DspLocalPlayer();
+  final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
+  NeonAudioHandler? _audioHandler;
+  final List<Track> _queue = [];
+  final List<Track> _library = [];
+  final List<Track> _bookmarks = [];
+  final List<String> _playHistory = [];
+  final Map<String, int> _resumePositions = {};
+  final List<String> _libraryFolders = [];
+  final Map<String, String> _libraryRelativePaths = {};
+  final List<String> _podcastFeeds = [];
+  final Map<String, List<String>> _playlists = {};
+  final List<SmartPlaylist> _smartPlaylists = [];
+  final Map<String, NeonAmpPlugin> _plugins = {};
+  final TextEditingController _searchController = TextEditingController();
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 950),
+  )..repeat();
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration>? _durationSub;
+  StreamSubscription<PlayerState>? _stateSub;
+  StreamSubscription<void>? _completeSub;
+  StreamSubscription<Duration>? _dspPositionSub;
+  StreamSubscription<Duration>? _dspDurationSub;
+  StreamSubscription<PlayerState>? _dspStateSub;
+  StreamSubscription<void>? _dspCompleteSub;
+  Duration _position = Duration.zero;
+  Duration _duration = const Duration(minutes: 4, seconds: 12);
+  PlayerState _playerState = PlayerState.stopped;
+  int _selected = 0;
+  double _volume = .82;
+  double _balance = 0;
+  bool _shuffle = false;
+  bool _repeat = false;
+  bool _repeatOne = false;
+  bool _crossfade = false;
+  int _crossfadeSeconds = 3;
+  bool _equalizerEnabled = false;
+  List<String> _playerControls = List<String>.from(defaultPlayerControls);
+  bool _playerLayoutCustomized = false;
+  String _activeView = 'queue';
+  String _searchQuery = '';
+  String _libraryFilter = 'All';
+  String _librarySort = 'Added';
+  bool _librarySortDescending = false;
+  final Set<String> _selectedLibraryPaths = <String>{};
+  final List<double> _eqBands = List<double>.filled(10, 0);
+  final Map<String, List<double>> _customEqPresets = {};
+  String _eqPreset = 'Flat';
+  bool _crossfadeInProgress = false;
+  bool _cueTransitioning = false;
+  bool _selectionInProgress = false;
+  AudioPlayer? _crossfadeAudioPlayer;
+  DspLocalPlayer? _crossfadeDspPlayer;
+  bool _dspActive = false;
+  bool _midiActive = false;
+  String? _midiSoundFontPath;
+  double _playbackSpeed = 1.0;
+  bool _replayGainEnabled = false;
+  Timer? _sleepTimer;
+  Timer? _resumeSaveTimer;
+  Timer? _castPositionTimer;
+  bool _castPositionPollInProgress = false;
+  String? _castRenderedMidiPath;
+  DateTime? _sleepDeadline;
+
+  bool get _casting => _dlnaCast.isConnected || _chromecastCast.isConnected;
+  String? get _castDeviceName =>
+      _chromecastCast.deviceName ?? _dlnaCast.rendererName;
+
+  Future<void> _stopCasting() async {
+    if (_chromecastCast.isConnected) {
+      await _chromecastCast.stop();
+    } else {
+      await _dlnaCast.stop();
+    }
+    await _deleteCastMidiRender();
+  }
+
+  Future<void> _deleteCastMidiRender() async {
+    final renderedPath = _castRenderedMidiPath;
+    _castRenderedMidiPath = null;
+    if (renderedPath == null) return;
+    final renderedFile = File(renderedPath);
+    if (await renderedFile.exists()) await renderedFile.delete();
+  }
+
+  Future<void> _castTrack(
+    Track track, {
+    CastDevice? chromecastDevice,
+    MediaRenderer? dlnaRenderer,
+  }) async {
+    var mediaPath = track.path;
+    String? generatedMidiPath;
+    if (isMidiFilePath(track.path)) {
+      final soundFontPath = await _ensureMidiSoundFont();
+      if (soundFontPath == null) {
+        throw StateError('The bundled MIDI SoundFont could not be prepared.');
+      }
+      generatedMidiPath =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'neonamp-cast-midi-${DateTime.now().microsecondsSinceEpoch}.wav';
+      try {
+        mediaPath = await renderMidiToWav(
+          midiPath: track.path,
+          soundFontPath: soundFontPath,
+          outputPath: generatedMidiPath,
+        );
+      } on Object {
+        final partialFile = File(generatedMidiPath);
+        if (await partialFile.exists()) await partialFile.delete();
+        rethrow;
+      }
+    }
+    try {
+      if (chromecastDevice != null) {
+        await _chromecastCast.play(
+          device: chromecastDevice,
+          path: mediaPath,
+          title: track.name,
+          duration: _duration,
+          segmentStart: track.cueStart,
+          startPosition: _position,
+        );
+      } else if (dlnaRenderer != null) {
+        await _dlnaCast.play(
+          renderer: dlnaRenderer,
+          path: mediaPath,
+          title: track.name,
+          artist: track.artist,
+          album: track.album,
+          duration: track.cueStart + _duration,
+          segmentStart: track.cueStart,
+          segmentEnd: track.cueEnd,
+        );
+      } else {
+        throw StateError('The network player is no longer available.');
+      }
+    } catch (_) {
+      if (generatedMidiPath != null) {
+        final generatedFile = File(generatedMidiPath);
+        if (await generatedFile.exists()) await generatedFile.delete();
+      }
+      rethrow;
+    }
+    _castRenderedMidiPath = generatedMidiPath;
+
+    if (_dspActive) {
+      await _dspPlayer.pause();
+    } else if (_midiActive) {
+      await _midiPlayer.pause();
+    } else {
+      await _player.pause();
+    }
+    if (mounted) {
+      setState(() => _playerState = PlayerState.playing);
+      _startCastPositionPolling();
+    }
+  }
+
+  AudioPlayer get _player => _activePlayer;
+
+  Track? get _current =>
+      _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
+  bool get _isPlaying => _playerState == PlayerState.playing;
+
+  double _volumeFor(Track? track) => playbackVolume(
+    volume: _volume,
+    replayGainDb: track?.replayGainDb,
+    replayGainEnabled: _replayGainEnabled,
+  );
+
+  bool get _midiEqualizerUnavailable =>
+      _current != null &&
+      isMidiFilePath(_current!.path) &&
+      (_midiSoundFontPath == null ||
+          !FileSystemEntity.isFileSync(_midiSoundFontPath!));
+
+  void _applyBalance(double value) {
+    final balance = normalizeStereoBalance(value);
+    if (_current == null) return;
+    if (_dspActive) {
+      _dspPlayer.setBalance(balance);
+      _crossfadeDspPlayer?.setBalance(balance);
+    } else {
+      unawaited(_player.setBalance(balance));
+      final incoming = _crossfadeAudioPlayer;
+      if (incoming != null) unawaited(incoming.setBalance(balance));
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _bindPlayerStreams();
+    _bindDspStreams();
+    _bindMidiStreams();
+    _initializeWindowsMediaKeys();
+    _initializeAudioService();
+    _loadQueue();
+  }
+
+  Future<void> _initializeWindowsMediaKeys() async {
+    if (!Platform.isWindows) return;
+    const channel = MethodChannel('neonamp/system_controls');
+    channel.setMethodCallHandler((call) async {
+      if (call.method != 'mediaKey') return null;
+      switch (call.arguments as String?) {
+        case 'playPause':
+          await _togglePlay();
+          break;
+        case 'play':
+          if (!_isPlaying) await _togglePlay();
+          break;
+        case 'pause':
+          if (_isPlaying) await _pauseCurrent();
+          break;
+        case 'next':
+          await _next();
+          break;
+        case 'previous':
+          await _previous();
+          break;
+        case 'stop':
+          await _stopCurrent();
+          break;
+      }
+      return null;
+    });
+  }
+
+  Future<void> _syncWindowsMediaSession() async {
+    if (!Platform.isWindows) return;
+    final track = _current;
+    if (track == null) return;
+    const channel = MethodChannel('neonamp/system_controls');
+    await channel.invokeMethod<void>('setMediaSession', {
+      'title': track.name,
+      'artist': track.artist,
+      'album': track.album,
+      'isPlaying': _isPlaying,
+      'durationMs': _duration.inMilliseconds,
+    });
+  }
+
+  void _bindPlayerStreams() {
+    _positionSub?.cancel();
+    _durationSub?.cancel();
+    _stateSub?.cancel();
+    _completeSub?.cancel();
+    _dspPositionSub?.cancel();
+    _dspDurationSub?.cancel();
+    _dspStateSub?.cancel();
+    _dspCompleteSub?.cancel();
+    _positionSub = _player.onPositionChanged.listen((value) {
+      if (!mounted || _selectionInProgress) return;
+      final track = _current;
+      final cueEnd = track?.cueEnd;
+      if (cueEnd != null && value >= cueEnd && !_cueTransitioning) {
+        _cueTransitioning = true;
+        unawaited(_advanceCueBoundary());
+        return;
+      }
+      final relative = _cueRelativePosition(track, value);
+      setState(() => _position = relative);
+      _rememberResumePosition(relative);
+      if (track?.cueStartMs == null &&
+          !_casting &&
+          _crossfade &&
+          !_crossfadeInProgress &&
+          _isPlaying) {
+        final remaining = _duration - relative;
+        if (remaining <= Duration(seconds: _crossfadeSeconds) &&
+            remaining > Duration.zero) {
+          unawaited(_crossfadeToNext());
+        }
+      }
+    });
+    _durationSub = _player.onDurationChanged.listen((value) {
+      final duration = _cueRelativeDuration(_current, value);
+      setState(() => _duration = duration);
+      _audioHandler?.syncExternalState(duration: duration, state: _playerState);
+    });
+    _stateSub = _player.onPlayerStateChanged.listen((value) {
+      setState(() => _playerState = value);
+      unawaited(_syncWindowsMediaSession());
+    });
+    _completeSub = _player.onPlayerComplete.listen((_) => _handleComplete());
+  }
+
+  void _bindDspStreams() {
+    _dspPositionSub?.cancel();
+    _dspDurationSub?.cancel();
+    _dspStateSub?.cancel();
+    _dspCompleteSub?.cancel();
+    _dspPositionSub = _dspPlayer.onPositionChanged.listen((value) {
+      if (!mounted || !_dspActive || _selectionInProgress) return;
+      final track = _current;
+      final cueEnd = track?.cueEnd;
+      if (cueEnd != null && value >= cueEnd && !_cueTransitioning) {
+        _cueTransitioning = true;
+        unawaited(_advanceCueBoundary());
+        return;
+      }
+      final relative = _cueRelativePosition(track, value);
+      setState(() => _position = relative);
+      _rememberResumePosition(relative);
+      if (track?.cueStartMs == null &&
+          !_casting &&
+          _crossfade &&
+          !_crossfadeInProgress &&
+          _isPlaying) {
+        final remaining = _duration - relative;
+        if (remaining <= Duration(seconds: _crossfadeSeconds) &&
+            remaining > Duration.zero) {
+          unawaited(_crossfadeToNext());
+        }
+      }
+      _audioHandler?.syncExternalState(
+        position: relative,
+        state: PlayerState.playing,
+      );
+    });
+    _dspDurationSub = _dspPlayer.onDurationChanged.listen((value) {
+      if (!mounted || !_dspActive) return;
+      final duration = _cueRelativeDuration(_current, value);
+      setState(() => _duration = duration);
+      _audioHandler?.syncExternalState(duration: duration, state: _playerState);
+    });
+    _dspStateSub = _dspPlayer.onPlayerStateChanged.listen((value) {
+      if (!mounted || !_dspActive) return;
+      setState(() => _playerState = value);
+      _audioHandler?.syncExternalState(position: _position, state: value);
+      unawaited(_syncWindowsMediaSession());
+    });
+    _dspCompleteSub = _dspPlayer.onPlayerComplete.listen((_) {
+      if (_dspActive) unawaited(_handleComplete());
+    });
+  }
+
+  void _bindMidiStreams() {
+    _midiPlayer.onPositionChanged.listen((value) {
+      if (!mounted || !_midiActive || _selectionInProgress) return;
+      setState(() => _position = value);
+      _rememberResumePosition(value);
+    });
+    _midiPlayer.onDurationChanged.listen((value) {
+      if (!mounted || !_midiActive) return;
+      setState(() => _duration = value);
+      unawaited(_syncWindowsMediaSession());
+    });
+    _midiPlayer.onPlayerStateChanged.listen((value) {
+      if (!mounted || !_midiActive) return;
+      setState(() => _playerState = value);
+      unawaited(_syncWindowsMediaSession());
+    });
+    _midiPlayer.onPlayerComplete.listen((_) {
+      if (_midiActive) unawaited(_handleComplete());
+    });
+  }
+
+  Future<void> _initializeAudioService() async {
+    if (!Platform.isAndroid) return;
+    _audioHandler = await AudioService.init(
+      builder: () => NeonAudioHandler(_player),
+      config: AudioServiceConfig(
+        androidNotificationChannelId: 'com.neonamp.audio',
+        androidNotificationChannelName: 'NeonAmp playback',
+        androidNotificationOngoing: true,
+        androidStopForegroundOnPause: false,
+      ),
+    );
+    _audioHandler!.onNext = _next;
+    _audioHandler!.onPrevious = _previous;
+    _audioHandler!.onPlayRequested = _playCurrent;
+    _audioHandler!.onPauseRequested = _pauseCurrent;
+    _audioHandler!.onStopRequested = _stopCurrent;
+    _audioHandler!.onSeekRequested = _seekCurrent;
+  }
+
+  Future<void> _showCastDevices() async {
+    if (_casting) {
+      final stop = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Casting to ${_castDeviceName ?? 'device'}'),
+          content: const Text('Audio is playing on your network device.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Keep playing'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Stop casting'),
+            ),
+          ],
+        ),
+      );
+      if (stop == true) {
+        _castPositionTimer?.cancel();
+        await _stopCasting();
+        if (mounted) setState(() => _playerState = PlayerState.paused);
+      }
+      return;
+    }
+    List<MediaRenderer> devices = [];
+    List<CastDevice> chromecastDevices = [];
+    var scanning = true;
+    var scanStarted = false;
+    String? error;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, updateDialog) {
+          Future<void> scan() async {
+            if (scanStarted) return;
+            scanStarted = true;
+            if (!dialogContext.mounted) return;
+            updateDialog(() {
+              scanning = true;
+              error = null;
+            });
+            try {
+              // Both Android discovery paths share a non-reference-counted
+              // multicast lock. Scan serially so the first scan cannot release
+              // it while the second is still listening for mDNS/SSDP.
+              try {
+                devices = await _dlnaCast.discover();
+              } catch (_) {
+                devices = [];
+              }
+              try {
+                chromecastDevices = await _chromecastCast.discover();
+              } catch (_) {
+                chromecastDevices = [];
+              }
+            } catch (e) {
+              error = 'Could not scan the local network: $e';
+            } finally {
+              scanning = false;
+              scanStarted = false;
+              if (dialogContext.mounted) updateDialog(() {});
+            }
+          }
+
+          if (scanning && devices.isEmpty && error == null && !scanStarted) {
+            scanStarted = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              scanStarted = false;
+              if (dialogContext.mounted) scan();
+            });
+          }
+          return AlertDialog(
+            title: const Text('Cast to a device'),
+            content: SizedBox(
+              width: 360,
+              child: scanning
+                  ? const Row(
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(width: 16),
+                        Text('Searching your network…'),
+                      ],
+                    )
+                  : error != null
+                  ? Text(error!)
+                  : devices.isEmpty && chromecastDevices.isEmpty
+                  ? const Text(
+                      'No compatible network players found. Make sure your device is on the same Wi-Fi network.',
+                    )
+                  : ListView(
+                      shrinkWrap: true,
+                      children: [
+                        ...chromecastDevices.map(
+                          (device) => ListTile(
+                            leading: const Icon(Icons.cast_rounded),
+                            title: Text(device.name),
+                            subtitle: const Text('Chromecast audio'),
+                            onTap: () async {
+                              final track = _current;
+                              if (track == null) return;
+                              Navigator.pop(dialogContext);
+                              try {
+                                await _castTrack(
+                                  track,
+                                  chromecastDevice: device,
+                                );
+                              } catch (e) {
+                                if (mounted)
+                                  ScaffoldMessenger.of(this.context)
+                                      .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Could not start casting: $e',
+                                          ),
+                                        ),
+                                      );
+                              }
+                            },
+                          ),
+                        ),
+                        ...devices
+                            .map(
+                              (device) => ListTile(
+                                leading: const Icon(Icons.speaker_rounded),
+                                title: Text(
+                                  device.description?.friendlyName ??
+                                      'Network player',
+                                ),
+                                subtitle: Text(
+                                  device.avTransport == null
+                                      ? 'Playback not supported'
+                                      : 'DLNA / UPnP',
+                                ),
+                                enabled: device.avTransport != null,
+                                onTap: () async {
+                                  final track = _current;
+                                  if (track == null) return;
+                                  Navigator.pop(dialogContext);
+                                  try {
+                                    await _castTrack(
+                                      track,
+                                      dlnaRenderer: device,
+                                    );
+                                  } catch (e) {
+                                    if (mounted)
+                                      ScaffoldMessenger.of(this.context)
+                                          .showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Could not start casting: $e',
+                                              ),
+                                            ),
+                                          );
+                                  }
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ],
+                    ),
+            ),
+            actions: [
+              if (!scanning)
+                TextButton(onPressed: scan, child: const Text('Scan again')),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _playCurrent() async {
+    if (_casting) {
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.resume();
+      } else {
+        await _dlnaCast.resume();
+      }
+      if (mounted) setState(() => _playerState = PlayerState.playing);
+      return;
+    }
+    if (_midiActive) {
+      await _midiPlayer.resume();
+    } else if (_dspActive) {
+      await _dspPlayer.resume();
+    } else {
+      await _player.resume();
+    }
+  }
+
+  Future<void> _pauseCurrent() async {
+    if (_casting) {
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.pause();
+      } else {
+        await _dlnaCast.pause();
+      }
+      if (mounted) setState(() => _playerState = PlayerState.paused);
+      return;
+    }
+    if (_midiActive) {
+      await _midiPlayer.pause();
+    } else if (_dspActive) {
+      await _dspPlayer.pause();
+    } else {
+      await _player.pause();
+    }
+  }
+
+  Future<void> _stopCurrent() async {
+    if (_casting) {
+      _castPositionTimer?.cancel();
+      await _stopCasting();
+      if (mounted) setState(() => _playerState = PlayerState.stopped);
+    }
+    if (_midiActive) {
+      await _midiPlayer.stop();
+    } else if (_dspActive) {
+      await _dspPlayer.stop();
+    } else {
+      await _player.stop();
+    }
+  }
+
+  Future<void> _seekCurrent(Duration position) async {
+    if (_casting) {
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.seek(position);
+      } else {
+        await _dlnaCast.seek(position);
+      }
+      if (mounted) setState(() => _position = position);
+      return;
+    }
+    final sourcePosition = _current == null
+        ? position
+        : position + _current!.cueStart;
+    if (_midiActive) {
+      await _midiPlayer.seek(position);
+    } else if (_dspActive) {
+      await _dspPlayer.seek(sourcePosition);
+    } else {
+      await _player.seek(sourcePosition);
+    }
+  }
+
+  Future<void> _skipBy(Duration offset) => _seekCurrent(
+    seekByOffset(position: _position, duration: _duration, offset: offset),
+  );
+
+  Future<void> _setPlaybackSpeed(double speed) async {
+    if (_casting) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This network player does not expose speed control.'),
+          ),
+        );
+      }
+      return;
+    }
+    final value = speed.clamp(0.5, 2.0).toDouble();
+    setState(() => _playbackSpeed = value);
+    if (_current != null) {
+      if (_dspActive) {
+        await _dspPlayer.setPlaybackSpeed(value);
+      } else if (_midiActive) {
+        await _midiPlayer.setPlaybackSpeed(value);
+      } else {
+        await _player.setPlaybackRate(value);
+      }
+      await _audioHandler?.setPlaybackSpeed(value);
+    }
+    await _saveQueue();
+  }
+
+  Future<void> _setEqualizerEnabled(bool enabled) async {
+    if (_midiEqualizerUnavailable) return;
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _equalizerEnabled = enabled);
+    if (_current != null && (wasPlaying || _dspActive)) {
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
+    unawaited(_syncWindowsMediaSession());
+  }
+
+  Future<void> _setReplayGainEnabled(bool enabled) async {
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _replayGainEnabled = enabled);
+    if (_current != null && (wasPlaying || _dspActive)) {
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
+  }
+
+  Future<void> _handleComplete() async {
+    if (_crossfadeInProgress) return;
+    final identity = _current?.identityKey;
+    if (identity != null) {
+      _resumePositions.remove(identity);
+      unawaited(_saveQueue());
+    }
+    if (_repeatOne) {
+      await _seekCurrent(Duration.zero);
+      await _playCurrent();
+    } else if (_queue.isNotEmpty &&
+        (_repeat || _shuffle || _selected < _queue.length - 1)) {
+      await _next();
+    } else {
+      await _stopCurrent();
+    }
+  }
+
+  void _startCastPositionPolling() {
+    _castPositionTimer?.cancel();
+    _castPositionTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_syncCastPosition()),
+    );
+  }
+
+  Future<void> _syncCastPosition() async {
+    if (!_casting || _castPositionPollInProgress || _selectionInProgress) {
+      return;
+    }
+    _castPositionPollInProgress = true;
+    try {
+      final position = _chromecastCast.isConnected
+          ? await _chromecastCast.getPosition()
+          : await _dlnaCast.getPosition();
+      if (position == null || !mounted || !_casting) return;
+      if (_duration > Duration.zero && position >= _duration) {
+        _castPositionTimer?.cancel();
+        if (_current?.cueStartMs != null && !_cueTransitioning) {
+          _cueTransitioning = true;
+          await _advanceCueBoundary();
+        } else {
+          await _handleComplete();
+        }
+        return;
+      }
+      setState(() => _position = position);
+      _rememberResumePosition(position);
+      _audioHandler?.syncExternalState(position: position, state: _playerState);
+      unawaited(_syncWindowsMediaSession());
+    } catch (error) {
+      _castPositionTimer?.cancel();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not read cast position: $error')),
+        );
+      }
+    } finally {
+      _castPositionPollInProgress = false;
+    }
+  }
+
+  Future<void> _advanceCueBoundary() async {
+    if (_repeatOne) {
+      _cueTransitioning = false;
+      await _seekCurrent(Duration.zero);
+      return;
+    }
+    if (_queue.isNotEmpty &&
+        (_repeat || _shuffle || _selected < _queue.length - 1)) {
+      await _next(useCrossfade: false);
+    } else {
+      await _stopCurrent();
+    }
+  }
+
+  void _armSleepTimer() {
+    _sleepTimer?.cancel();
+    final deadline = _sleepDeadline;
+    if (deadline == null) return;
+    final remaining = sleepTimerRemaining(deadline, DateTime.now())!;
+    if (remaining == Duration.zero) {
+      unawaited(_stopCurrent());
+      return;
+    }
+    _sleepTimer = Timer(remaining, () {
+      _sleepDeadline = null;
+      unawaited(_stopCurrent());
+      unawaited(_saveQueue());
+    });
+  }
+
+  Future<void> _setSleepTimer(Duration? duration) async {
+    _sleepTimer?.cancel();
+    setState(
+      () => _sleepDeadline = duration == null
+          ? null
+          : DateTime.now().add(duration),
+    );
+    _armSleepTimer();
+    await _saveQueue();
+  }
+
+  Future<void> _showSleepTimer() async {
+    final minutes = await showDialog<int>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Sleep timer'),
+        children: [
+          if (_sleepDeadline != null)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 0),
+              child: const Text('Turn off timer'),
+            ),
+          for (final value in [15, 30, 60, 90])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, value),
+              child: Text('$value minutes'),
+            ),
+        ],
+      ),
+    );
+    if (minutes == null) return;
+    await _setSleepTimer(minutes == 0 ? null : Duration(minutes: minutes));
+  }
+
+  Future<void> _loadQueue() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList('queue') ?? [];
+    final savedQueueTracks = prefs.getString('queueTracks');
+    final savedLibrary = prefs.getStringList('library') ?? [];
+    final savedBookmarks = prefs.getString('bookmarks');
+    final savedPlayHistory = prefs.getStringList('playHistory') ?? [];
+    final savedResumePositions = prefs.getString('resumePositions');
+    final savedFolders = prefs.getStringList('libraryFolders') ?? [];
+    final savedPodcastFeeds = prefs.getStringList('podcastFeeds') ?? [];
+    final savedPlaylists = prefs.getString('playlists');
+    final savedSmartPlaylists = prefs.getString('smartPlaylists');
+    final savedPlugins = prefs.getString('plugins');
+    final savedSettings = prefs.getString('settings');
+    if (!mounted) return;
+    setState(() {
+      _library.addAll(
+        savedLibrary.map(
+          (value) => Track.fromJson(jsonDecode(value) as Map<String, dynamic>),
+        ),
+      );
+      if (savedBookmarks != null) {
+        final decoded = jsonDecode(savedBookmarks) as List;
+        _bookmarks.addAll(
+          decoded.map((value) => Track.fromJson(value as Map<String, dynamic>)),
+        );
+      }
+      if (savedQueueTracks != null) {
+        final decodedQueue = jsonDecode(savedQueueTracks) as List;
+        _queue.addAll(
+          decodedQueue.map(
+            (value) => Track.fromJson(value as Map<String, dynamic>),
+          ),
+        );
+      } else {
+        _queue.addAll(
+          saved.map((path) {
+            return _library.firstWhere(
+              (track) => track.path == path,
+              orElse: () =>
+                  Track(path: path, name: path.split(RegExp(r'[/\\]')).last),
+            );
+          }),
+        );
+      }
+      _playHistory.addAll(savedPlayHistory);
+      if (savedResumePositions != null) {
+        final decoded =
+            jsonDecode(savedResumePositions) as Map<String, dynamic>;
+        for (final entry in decoded.entries) {
+          final position = (entry.value as num?)?.toInt();
+          if (position != null && position > 0) {
+            _resumePositions[entry.key] = position;
+          }
+        }
+      }
+      _libraryFolders.addAll(savedFolders);
+      _podcastFeeds.addAll(savedPodcastFeeds);
+      if (savedPlaylists != null) {
+        final decoded = jsonDecode(savedPlaylists) as Map<String, dynamic>;
+        for (final entry in decoded.entries)
+          _playlists[entry.key] = (entry.value as List).cast<String>();
+      }
+      if (savedSmartPlaylists != null) {
+        final decoded = jsonDecode(savedSmartPlaylists) as List;
+        _smartPlaylists.addAll(
+          decoded.map(
+            (entry) => SmartPlaylist.fromJson(entry as Map<String, dynamic>),
+          ),
+        );
+      }
+      if (savedPlugins != null) {
+        final decoded = jsonDecode(savedPlugins) as List;
+        for (final entry in decoded) {
+          try {
+            final plugin = NeonAmpPlugin.fromJson(
+              entry as Map<String, dynamic>,
+            );
+            _plugins[plugin.id] = plugin;
+          } on Object catch (error) {
+            debugPrint('Skipping invalid saved plugin: $error');
+          }
+        }
+      }
+      if (savedSettings != null) {
+        final settings = jsonDecode(savedSettings) as Map<String, dynamic>;
+        final savedRelativePaths = settings['libraryRelativePaths'];
+        if (savedRelativePaths is Map) {
+          _libraryRelativePaths.addAll(
+            savedRelativePaths.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ),
+          );
+        }
+        _volume = (settings['volume'] as num?)?.toDouble() ?? _volume;
+        _balance = normalizeStereoBalance(
+          (settings['balance'] as num?)?.toDouble() ?? _balance,
+        );
+        _crossfade = settings['crossfade'] as bool? ?? false;
+        _crossfadeSeconds =
+            (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
+        _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
+        _midiSoundFontPath = settings['midiSoundFontPath'] as String?;
+        _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+        _customEqPresets.addAll(
+          decodeCustomEqualizerPresets(settings['customEqPresets']),
+        );
+        _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
+        _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
+        final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
+        _sleepDeadline = sleepTimerEnd == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(sleepTimerEnd);
+        _librarySort = settings['librarySort'] as String? ?? 'Added';
+        _librarySortDescending =
+            settings['librarySortDescending'] as bool? ?? false;
+        final savedPlayerControls = settings['playerControls'];
+        if (savedPlayerControls is List) {
+          _playerControls = normalizePlayerControls(savedPlayerControls);
+          _playerLayoutCustomized = true;
+        }
+        final savedBands = (settings['eqBands'] as List?)?.cast<num>();
+        if (savedBands != null && savedBands.length == _eqBands.length) {
+          for (var i = 0; i < _eqBands.length; i++) {
+            _eqBands[i] = savedBands[i].toDouble();
+          }
+        }
+      }
+    });
+    _armSleepTimer();
+  }
+
+  Future<void> _saveQueue() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'queueTracks',
+      jsonEncode(_queue.map((track) => track.toJson()).toList()),
+    );
+    await prefs.setStringList(
+      'queue',
+      _queue.map((track) => track.path).toList(),
+    );
+    await prefs.setStringList(
+      'library',
+      _library.map((track) => jsonEncode(track.toJson())).toList(),
+    );
+    await prefs.setString(
+      'bookmarks',
+      jsonEncode(_bookmarks.map((track) => track.toJson()).toList()),
+    );
+    await prefs.setStringList('playHistory', _playHistory);
+    await prefs.setString('resumePositions', jsonEncode(_resumePositions));
+    await prefs.setStringList('libraryFolders', _libraryFolders);
+    await prefs.setStringList('podcastFeeds', _podcastFeeds);
+    await prefs.setString('playlists', jsonEncode(_playlists));
+    await prefs.setString(
+      'smartPlaylists',
+      jsonEncode(_smartPlaylists.map((playlist) => playlist.toJson()).toList()),
+    );
+    await prefs.setString(
+      'plugins',
+      jsonEncode(_plugins.values.map((plugin) => plugin.toJson()).toList()),
+    );
+    await prefs.setString(
+      'settings',
+      jsonEncode({
+        'volume': _volume,
+        'balance': _balance,
+        'crossfade': _crossfade,
+        'crossfadeSeconds': _crossfadeSeconds,
+        'equalizerEnabled': _equalizerEnabled,
+        'midiSoundFontPath': _midiSoundFontPath,
+        'eqPreset': _eqPreset,
+        'eqBands': _eqBands,
+        'customEqPresets': _customEqPresets,
+        'playbackSpeed': _playbackSpeed,
+        'replayGainEnabled': _replayGainEnabled,
+        'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
+        'librarySort': _librarySort,
+        'librarySortDescending': _librarySortDescending,
+        'libraryRelativePaths': _libraryRelativePaths,
+        if (_playerLayoutCustomized) 'playerControls': _playerControls,
+      }),
+    );
+  }
+
+  Future<void> _addFiles() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: [
+        ...supportedLibraryAudioExtensions,
+        ...midiFileExtensions,
+        ...trackerModuleExtensions,
+      ]..sort(),
+    );
+    if (result.isEmpty) return;
+    for (final file in result) {
+      final path = file.path;
+      if (path == null || _queue.any((track) => track.path == path)) continue;
+      final track = await _readTrack(path, file.name);
+      if (!mounted) return;
+      setState(() {
+        _queue.add(track);
+        if (!_library.any((item) => item.path == path)) _library.add(track);
+      });
+    }
+    await _saveQueue();
+    if (_queue.length == result.length && _queue.isNotEmpty) await _select(0);
+  }
+
+  Future<void> _addFolder() async {
+    try {
+      final directory = await _pickFolderLocation('Choose a music folder');
+      if (directory == null) return;
+      if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
+      final found = await _scanFolder(directory);
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              found == 0
+                  ? 'No supported audio files were found. Select the folder that contains the music files.'
+                  : 'Found $found supported audio file(s).',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not add music folder: $error')),
+      );
+    }
+  }
+
+  Future<String?> _pickFolderLocation(String dialogTitle) async {
+    if (Platform.isAndroid) {
+      final selection = await const MethodChannel('neonamp/library')
+          .invokeMapMethod<String, dynamic>('pickFolder');
+      return selection?['uri'] as String?;
+    }
+    return FilePicker.getDirectoryPath(dialogTitle: dialogTitle);
+  }
+
+  Future<void> _copyFileToFolder(
+    String folder,
+    String sourcePath,
+    String fileName,
+  ) async {
+    if (Platform.isAndroid) {
+      await const MethodChannel('neonamp/library').invokeMethod<bool>(
+        'copyFileToFolder',
+        {'uri': folder, 'sourcePath': sourcePath, 'fileName': fileName},
+      );
+      return;
+    }
+    await File(sourcePath).copy('$folder${Platform.pathSeparator}$fileName');
+  }
+
+  Future<void> _writeTextToFolder(
+    String folder,
+    String fileName,
+    String contents,
+  ) async {
+    if (Platform.isAndroid) {
+      await const MethodChannel('neonamp/library').invokeMethod<bool>(
+        'writeTextToFolder',
+        {'uri': folder, 'fileName': fileName, 'contents': contents},
+      );
+      return;
+    }
+    await File('$folder${Platform.pathSeparator}$fileName')
+        .writeAsString(contents);
+  }
+
+  Future<int> _scanFolder(String directory) async {
+    final List<({String path, String name, String relativePath})> files;
+    if (Platform.isAndroid) {
+      if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
+        throw StateError('Reselect this folder to grant Android media access.');
+      }
+      final results = await const MethodChannel('neonamp/library')
+          .invokeListMethod<Map<Object?, Object?>>('scanFolder', {
+            'uri': directory,
+          });
+      files = (results ?? []).map((item) {
+        final path = item['path'] as String;
+        final name = item['name'] as String? ?? path;
+        return (
+          path: path,
+          name: name,
+          relativePath: item['relativePath'] as String? ?? name,
+        );
+      }).toList();
+    } else {
+      files = Directory(directory)
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((file) => isSupportedLibraryAudioPath(file.path))
+          .map(
+            (file) => (
+              path: file.path,
+              name: file.uri.pathSegments.last,
+              relativePath: file.path
+                  .substring(directory.length)
+                  .replaceFirst(RegExp(r'^[/\\]+'), '')
+                  .replaceAll('\\', '/'),
+            ),
+          )
+          .toList();
+    }
+    for (final file in files) {
+      final alreadyQueued = _queue.any((track) => track.path == file.path);
+      final alreadyInLibrary = _library.any((track) => track.path == file.path);
+      if (alreadyQueued && alreadyInLibrary) continue;
+      final track = await _readTrack(file.path, file.name);
+      if (!mounted) return 0;
+      setState(() {
+        _libraryRelativePaths[file.path] = file.relativePath;
+        if (!alreadyQueued) _queue.add(track);
+        if (!alreadyInLibrary) _library.add(track);
+      });
+    }
+    return files.length;
+  }
+
+  Future<void> _rescanFolders() async {
+    if (_libraryFolders.isEmpty) {
+      await _addFolder();
+      return;
+    }
+    if (Platform.isAndroid) {
+      final oldFilesystemFolders = _libraryFolders
+          .where((folder) => Uri.tryParse(folder)?.scheme != 'content')
+          .toList();
+      if (oldFilesystemFolders.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Android needs you to reselect each saved music folder to restore access.',
+            ),
+          ),
+        );
+        for (final oldFolder in oldFilesystemFolders) {
+          try {
+            final directory = await _pickFolderLocation(
+              'Choose a saved music folder again',
+            );
+            if (directory == null) return;
+            final found = await _scanFolder(directory);
+            final index = _libraryFolders.indexOf(oldFolder);
+            if (index >= 0) _libraryFolders[index] = directory;
+            await _saveQueue();
+            if (mounted && found == 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('No new supported audio files were found.'),
+                ),
+              );
+            }
+          } on Object catch (error) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Could not restore folder access: $error'),
+                ),
+              );
+            }
+            return;
+          }
+        }
+        // Continue below so folders that already have valid SAF permissions
+        // are rescanned in the same operation. Previously this early return
+        // silently skipped them whenever one legacy folder needed recovery.
+      }
+    }
+    var found = 0;
+    for (final folder in List<String>.from(_libraryFolders)) {
+      try {
+        if (Platform.isAndroid || Directory(folder).existsSync()) {
+          found += await _scanFolder(folder);
+        }
+      } on Object catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not rescan a library folder: $error')),
+        );
+      }
+    }
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            found == 0
+                ? 'Folders rescanned; no supported audio files found.'
+                : 'Folders rescanned; found $found supported track(s).',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _importPlaylist() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
+    );
+    if (result.isEmpty || result.first.path == null) return;
+    final playlistPath = result.first.path!;
+    try {
+      final extension = playlistPath.split('.').last.toLowerCase();
+      final document = parsePlaylistDocument(
+        await File(playlistPath).readAsString(),
+        extension,
+      );
+      var added = 0;
+      var skipped = 0;
+      setState(() {
+        for (final entry in document.entries) {
+          var path = resolvePlaylistPath(entry.path, playlistPath);
+          if (path.isEmpty || path.startsWith('#')) continue;
+          final uri = Uri.tryParse(path);
+          final isStream = uri?.scheme == 'http' || uri?.scheme == 'https';
+          if (!isStream && Platform.isAndroid) {
+            path =
+                resolvePlaylistLibraryPath(
+                  entryPath: entry.path,
+                  resolvedPath: path,
+                  libraryRelativePaths: _libraryRelativePaths,
+                ) ??
+                path;
+            if (!File(path).existsSync()) {
+              skipped++;
+              continue;
+            }
+          }
+          if (_queue.any((track) => track.path == path)) continue;
+          final existingTrack = _library
+              .where((track) => track.path == path)
+              .firstOrNull;
+          final fallbackName = isStream
+              ? (uri?.host ?? 'Internet stream')
+              : path.split(RegExp(r'[/\\]')).last;
+          final track =
+              existingTrack?.copyWith(
+                name: entry.title?.isNotEmpty == true
+                    ? entry.title!
+                    : existingTrack.name,
+              ) ??
+              Track(
+                path: path,
+                name: entry.title?.isNotEmpty == true
+                    ? entry.title!
+                    : fallbackName.replaceFirst(RegExp(r'\.[^.]+$'), ''),
+                artist: isStream ? 'Online radio' : 'Local library',
+              );
+          _queue.add(track);
+          if (!_library.any((item) => item.path == path)) _library.add(track);
+          added++;
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Imported $added track(s) from playlist.'
+              '${skipped == 0 ? '' : ' $skipped local track(s) were not found in the library.'}',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import playlist: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importItunesLibrary() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xml'],
+      dialogTitle: 'Import an iTunes XML library',
+    );
+    final path = picked.firstOrNull?.path;
+    if (path == null) return;
+    try {
+      final imported = parseItunesLibrary(await File(path).readAsString());
+      var addedTracks = 0;
+      var addedPlaylists = 0;
+      setState(() {
+        for (final json in imported.tracks) {
+          final track = Track.fromJson(Map<String, dynamic>.from(json));
+          if (_library.any((item) => item.path == track.path)) continue;
+          _library.add(track);
+          addedTracks++;
+        }
+        for (final playlist in imported.playlists.entries) {
+          var name = playlist.key;
+          var suffix = 2;
+          while (_playlists.containsKey(name)) {
+            name = '${playlist.key} (iTunes $suffix)';
+            suffix++;
+          }
+          _playlists[name] = playlist.value;
+          addedPlaylists++;
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Imported $addedTracks tracks and $addedPlaylists playlists.',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import iTunes library: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _exportItunesLibrary() async {
+    final xml = buildItunesLibrary(
+      _library.map((track) => track.toJson()),
+      _playlists,
+    );
+    await FilePicker.saveFile(
+      fileName: 'neonamp-library.xml',
+      bytes: Uint8List.fromList(utf8.encode(xml)),
+      mimeType: 'application/xml',
+      type: FileType.custom,
+      allowedExtensions: ['xml'],
+    );
+  }
+
+  Future<void> _importCueSheet() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      dialogTitle: 'Select a CUE sheet and its audio file(s)',
+      allowedExtensions: [
+        'cue',
+        'mp3',
+        'flac',
+        'm4a',
+        'mp4',
+        'aac',
+        'ape',
+        'ogg',
+        'opus',
+        'wav',
+        'wma',
+        'aif',
+        'aiff',
+        'aifc',
+        'webm',
+        'mkv',
+        'mka',
+        'mov',
+      ],
+    );
+    final cueInfo = picked
+        .where((file) => file.extension?.toLowerCase() == 'cue')
+        .firstOrNull;
+    if (cueInfo?.path == null) return;
+    try {
+      final cueFile = File(cueInfo!.path!);
+      final text = utf8.decode(
+        await cueFile.readAsBytes(),
+        allowMalformed: true,
+      );
+      final entries = parseCueSheet(text, cueFile.path);
+      final selectedAudio = picked
+          .where(
+            (file) =>
+                file.path != null && file.extension?.toLowerCase() != 'cue',
+          )
+          .toList();
+      final tracks = <Track>[];
+      final sourceTracks = <String, Track>{};
+      for (final entry in entries) {
+        var audioPath = entry.filePath;
+        if (!await File(audioPath).exists()) {
+          final expectedName = entry.sourceFileName.toLowerCase();
+          audioPath =
+              selectedAudio
+                  .where((file) => file.name.toLowerCase() == expectedName)
+                  .firstOrNull
+                  ?.path ??
+              audioPath;
+        }
+        final audioFile = File(audioPath);
+        if (!await audioFile.exists() ||
+            !isSupportedLibraryAudioPath(audioFile.path)) {
+          continue;
+        }
+        final metadata = await _readTrack(
+          audioPath,
+          audioFile.uri.pathSegments.last,
+        );
+        sourceTracks.putIfAbsent(audioPath, () => metadata);
+        final fallbackName =
+            '${metadata.name} · ${entry.trackNumber.toString().padLeft(2, '0')}';
+        tracks.add(
+          metadata.copyWith(
+            name: entry.title?.trim().isNotEmpty == true
+                ? entry.title!.trim()
+                : fallbackName,
+            artist: entry.performer?.trim().isNotEmpty == true
+                ? entry.performer!.trim()
+                : metadata.artist,
+            album: entry.album?.trim().isNotEmpty == true
+                ? entry.album!.trim()
+                : metadata.album,
+            trackNumber: entry.trackNumber,
+            cueStartMs: entry.start.inMilliseconds,
+            cueEndMs: entry.end?.inMilliseconds,
+          ),
+        );
+      }
+      var added = 0;
+      setState(() {
+        for (final track in tracks) {
+          if (_queue.any((item) => item.identityKey == track.identityKey)) {
+            continue;
+          }
+          _queue.add(track);
+          added++;
+        }
+        for (final source in sourceTracks.values) {
+          if (!_library.any((item) => item.path == source.path)) {
+            _library.add(source);
+          }
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Imported $added CUE track(s)')));
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import CUE sheet: $error')),
+        );
+      }
+    }
+  }
+
+  Future<Track> _readTrack(String path, String fileName) async {
+    final fallback = fileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
+    try {
+      if (isMidiFilePath(path)) {
+        return Track(path: path, name: fallback, artist: 'MIDI');
+      }
+      if (isTrackerModulePath(path)) {
+        final module = await TrackerModuleDecoder.readInfo(path);
+        return Track(
+          path: path,
+          name: module.title.trim().isEmpty ? fallback : module.title.trim(),
+          artist:
+              'Tracker module${module.format.trim().isEmpty ? '' : ' · ${module.format.trim()}'}',
+          album: 'Tracker modules',
+        );
+      }
+      final metadata = readTrackMetadata(File(path), getImage: true);
+      final replayGainDb = readReplayGainDb(File(path));
+      final hasContainerId3 = isAiffAudioPath(path) || isWavAudioPath(path);
+      final containerId3 = hasContainerId3
+          ? await File(path).readAsBytes()
+          : null;
+      final id3Numbers = containerId3 == null
+          ? null
+          : readContainerId3TrackDiscNumbers(containerId3);
+      return Track(
+        path: path,
+        name: metadata.title?.trim().isNotEmpty == true
+            ? metadata.title!.trim()
+            : fallback,
+        artist: metadata.artist?.trim().isNotEmpty == true
+            ? metadata.artist!.trim()
+            : 'Local library',
+        album: metadata.album?.trim().isNotEmpty == true
+            ? metadata.album!.trim()
+            : 'Unknown album',
+        genre: metadata.genres.isNotEmpty
+            ? metadata.genres.first
+            : 'Unknown genre',
+        year: metadata.year?.year == 0 ? null : metadata.year?.year,
+        trackNumber: id3Numbers?.track ?? metadata.trackNumber,
+        trackTotal: id3Numbers?.trackTotal ?? metadata.trackTotal,
+        discNumber: id3Numbers?.disc ?? metadata.discNumber,
+        discTotal: id3Numbers?.discTotal ?? metadata.totalDisc,
+        lyrics:
+            metadata.lyrics ??
+            (isAiffAudioPath(path)
+                ? readAiffId3Lyrics(containerId3!)
+                : isWavAudioPath(path)
+                ? readWavId3Lyrics(containerId3!)
+                : null),
+        artwork: metadata.pictures.isNotEmpty
+            ? metadata.pictures.first.bytes
+            : (isAiffAudioPath(path) || isWavAudioPath(path))
+            ? readAiffId3Picture(containerId3!)?.$1
+            : null,
+        replayGainDb: replayGainDb,
+      );
+    } catch (_) {
+      return Track(path: path, name: fallback);
+    }
+  }
+
+  Future<void> _select(int index) async {
+    if (index < 0 || index >= _queue.length) return;
+    final castDevice = _chromecastCast.device;
+    final castRenderer = _dlnaCast.renderer;
+    _castPositionTimer?.cancel();
+    if (_casting) await _stopCasting();
+    _selectionInProgress = true;
+    try {
+      setState(() {
+        _selected = index;
+        _position = Duration.zero;
+        _cueTransitioning = false;
+        final track = _queue[index];
+        _playHistory
+          ..clear()
+          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        final libraryIndex = _library.indexWhere(
+          (item) => item.identityKey == track.identityKey,
+        );
+        if (libraryIndex >= 0)
+          _library[libraryIndex] = track.copyWith(
+            playCount: track.playCount + 1,
+          );
+      });
+      final track = _queue[index];
+      final resumePosition = restoreResumePosition(
+        _resumePositions[track.identityKey],
+      );
+      final trackVolume = _volumeFor(track);
+      String? renderedMidiPath;
+      var soundFontPath = _midiSoundFontPath;
+      if (isMidiFilePath(track.path) &&
+          (soundFontPath == null ||
+              !FileSystemEntity.isFileSync(soundFontPath))) {
+        try {
+          soundFontPath = await _ensureMidiSoundFont();
+        } on Object catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not prepare MIDI SoundFont: $error')),
+            );
+          }
+        }
+      }
+      if (isMidiFilePath(track.path) &&
+          soundFontPath != null &&
+          FileSystemEntity.isFileSync(soundFontPath)) {
+        if (_midiActive) {
+          await _midiPlayer.stop();
+          _midiActive = false;
+        }
+        if (_dspActive) {
+          await _dspPlayer.stop();
+          _dspActive = false;
+        }
+        await _player.stop();
+        final renderedPath =
+            '${Directory.systemTemp.path}${Platform.pathSeparator}'
+            'neonamp-midi-${DateTime.now().microsecondsSinceEpoch}.wav';
+        try {
+          renderedMidiPath = await renderMidiToWav(
+            midiPath: track.path,
+            soundFontPath: soundFontPath,
+            outputPath: renderedPath,
+          );
+        } on Object catch (error) {
+          final output = File(renderedPath);
+          if (await output.exists()) await output.delete();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'SoundFont render failed; using system MIDI: $error',
+                ),
+              ),
+            );
+          }
+        }
+      }
+      final shouldUseDsp =
+          renderedMidiPath != null ||
+          trackRequiresDspPlayback(
+            track.path,
+            equalizerEnabled: _equalizerEnabled,
+          );
+      if (Platform.isWindows &&
+          isMidiFilePath(track.path) &&
+          renderedMidiPath == null) {
+        if (_dspActive) {
+          await _dspPlayer.stop();
+          _dspActive = false;
+        }
+        if (!_midiActive) await _player.stop();
+        _midiActive = true;
+        await _midiPlayer.play(track.path, playbackSpeed: _playbackSpeed);
+        unawaited(_audioHandler?.publishTrack(track));
+      } else if (shouldUseDsp) {
+        if (_midiActive) {
+          await _midiPlayer.stop();
+          _midiActive = false;
+        }
+        if (!_dspActive) {
+          await _player.stop();
+          _dspActive = true;
+        }
+        await _dspPlayer.play(
+          renderedMidiPath ?? track.path,
+          volume: trackVolume,
+          playbackSpeed: _playbackSpeed,
+          equalizerEnabled: _equalizerEnabled,
+          bands: _eqBands,
+          balance: _balance,
+          deleteSourceOnStop: renderedMidiPath != null,
+        );
+        unawaited(_audioHandler?.publishTrack(track));
+      } else {
+        if (_midiActive) {
+          await _midiPlayer.stop();
+          _midiActive = false;
+        }
+        if (_dspActive) {
+          await _dspPlayer.stop();
+          _dspActive = false;
+        }
+        await _player.setBalance(_balance);
+        await _player.setVolume(trackVolume);
+        if (_audioHandler != null) {
+          await _audioHandler!.playTrack(track);
+        } else {
+          await _player.stop();
+          await _player.play(
+            track.path.startsWith('http')
+                ? UrlSource(track.path)
+                : DeviceFileSource(track.path),
+          );
+          await _player.setPlaybackRate(_playbackSpeed);
+        }
+      }
+      if (resumePosition != null || track.cueStartMs != null) {
+        await _seekCurrent(resumePosition ?? Duration.zero);
+      }
+      await _saveQueue();
+      if (castDevice != null || castRenderer != null) {
+        try {
+          await _castTrack(
+            track,
+            chromecastDevice: castDevice,
+            dlnaRenderer: castRenderer,
+          );
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not continue casting: $error')),
+            );
+          }
+        }
+      }
+    } finally {
+      _selectionInProgress = false;
+    }
+  }
+
+  void _rememberResumePosition(Duration position) {
+    final identity = _current?.identityKey;
+    if (identity == null || position <= Duration.zero) return;
+    _resumePositions[identity] = position.inMilliseconds;
+    _resumeSaveTimer?.cancel();
+    _resumeSaveTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_saveQueue());
+    });
+  }
+
+  Future<void> _togglePlay() async {
+    if (_current == null) {
+      await _addFiles();
+      return;
+    }
+    if (_isPlaying) {
+      await _pauseCurrent();
+    } else if (_playerState == PlayerState.paused) {
+      await _playCurrent();
+    } else {
+      await _select(_selected);
+    }
+  }
+
+  Future<void> _next({bool useCrossfade = true}) async {
+    if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_casting) useCrossfade = false;
+    final next = _targetNextIndex();
+    final cueTransition =
+        _current?.cueStartMs != null || _queue[next].cueStartMs != null;
+    if (_midiActive || isMidiFilePath(_queue[next].path)) {
+      useCrossfade = false;
+    }
+    if (useCrossfade &&
+        !cueTransition &&
+        _crossfade &&
+        _isPlaying &&
+        !_crossfadeInProgress) {
+      await _crossfadeToNext(targetIndex: next);
+      return;
+    }
+    await _select(next);
+  }
+
+  int _targetNextIndex() => nextQueueIndex(
+    selected: _selected,
+    length: _queue.length,
+    shuffle: _shuffle,
+    shuffledOffset: _shuffle && _queue.length > 1
+        ? math.Random().nextInt(_queue.length - 1)
+        : null,
+  );
+
+  Future<void> _crossfadeToNext({int? targetIndex}) async {
+    if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_casting) return;
+    final next = targetIndex ?? _targetNextIndex();
+    final track = _queue[next];
+    if (_current?.cueStartMs != null || track.cueStartMs != null) {
+      return;
+    }
+    if (_midiActive || isMidiFilePath(track.path)) {
+      await _select(next);
+      return;
+    }
+    final targetUsesDsp = trackRequiresDspPlayback(
+      track.path,
+      equalizerEnabled: _equalizerEnabled,
+    );
+    if (_dspActive && !targetUsesDsp) {
+      await _crossfadeDspToAudio(next);
+      return;
+    }
+    if (!_dspActive && targetUsesDsp) {
+      await _crossfadeAudioToDsp(next);
+      return;
+    }
+    if (_dspActive) {
+      await _crossfadeDspToNext(next);
+      return;
+    }
+    _crossfadeInProgress = true;
+    final previousPlayer = _player;
+    final previousTrack = _queue[_selected];
+    final incomingPlayer = AudioPlayer();
+    _crossfadeAudioPlayer = incomingPlayer;
+    try {
+      await incomingPlayer.setBalance(_balance);
+      await incomingPlayer.setVolume(0);
+      await incomingPlayer.setPlaybackRate(_playbackSpeed);
+      await incomingPlayer.play(
+        track.path.startsWith('http')
+            ? UrlSource(track.path)
+            : DeviceFileSource(track.path),
+      );
+      final incomingDuration =
+          await incomingPlayer.getDuration() ?? Duration.zero;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
+      await previousPlayer.stop();
+      await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
+      _activePlayer = incomingPlayer;
+      _bindPlayerStreams();
+      await _audioHandler?.switchPlayer(incomingPlayer);
+      await _saveQueue();
+    } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      if (identical(_crossfadeAudioPlayer, incomingPlayer)) {
+        _crossfadeAudioPlayer = null;
+      }
+      _crossfadeInProgress = false;
+    }
+  }
+
+  Future<void> _crossfadeAudioToDsp(int next) async {
+    _crossfadeInProgress = true;
+    final previousPlayer = _player;
+    final previousTrack = _queue[_selected];
+    final track = _queue[next];
+    final incomingPlayer = DspLocalPlayer();
+    _crossfadeDspPlayer = incomingPlayer;
+    try {
+      await incomingPlayer.play(
+        track.path,
+        volume: 0,
+        playbackSpeed: _playbackSpeed,
+        equalizerEnabled: _equalizerEnabled,
+        bands: _eqBands,
+        balance: _balance,
+      );
+      final incomingDuration = incomingPlayer.duration;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
+      await previousPlayer.stop();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
+      _dspPlayer = incomingPlayer;
+      _dspActive = true;
+      _midiActive = false;
+      _bindDspStreams();
+      unawaited(_audioHandler?.publishTrack(track));
+      await _saveQueue();
+    } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      if (identical(_crossfadeDspPlayer, incomingPlayer)) {
+        _crossfadeDspPlayer = null;
+      }
+      _crossfadeInProgress = false;
+    }
+  }
+
+  Future<void> _crossfadeDspToAudio(int next) async {
+    _crossfadeInProgress = true;
+    final previousPlayer = _dspPlayer;
+    final previousTrack = _queue[_selected];
+    final track = _queue[next];
+    final incomingPlayer = AudioPlayer();
+    _crossfadeAudioPlayer = incomingPlayer;
+    try {
+      await incomingPlayer.setBalance(_balance);
+      await incomingPlayer.setVolume(0);
+      await incomingPlayer.setPlaybackRate(_playbackSpeed);
+      await incomingPlayer.play(
+        track.path.startsWith('http')
+            ? UrlSource(track.path)
+            : DeviceFileSource(track.path),
+      );
+      final incomingDuration =
+          await incomingPlayer.getDuration() ?? Duration.zero;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
+      await previousPlayer.stop();
+      await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
+      final replacedAudioPlayer = _activePlayer;
+      _activePlayer = incomingPlayer;
+      _dspActive = false;
+      _bindPlayerStreams();
+      await _audioHandler?.switchPlayer(incomingPlayer);
+      if (!identical(replacedAudioPlayer, incomingPlayer)) {
+        await replacedAudioPlayer.dispose();
+      }
+      await _saveQueue();
+    } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      if (identical(_crossfadeAudioPlayer, incomingPlayer)) {
+        _crossfadeAudioPlayer = null;
+      }
+      _crossfadeInProgress = false;
+    }
+  }
+
+  Future<void> _crossfadeDspToNext(int next) async {
+    if (_queue.isEmpty || _crossfadeInProgress) return;
+    _crossfadeInProgress = true;
+    final previousPlayer = _dspPlayer;
+    final previousTrack = _queue[_selected];
+    final track = _queue[next];
+    final incomingPlayer = DspLocalPlayer();
+    _crossfadeDspPlayer = incomingPlayer;
+    try {
+      await incomingPlayer.play(
+        track.path,
+        volume: 0,
+        playbackSpeed: _playbackSpeed,
+        equalizerEnabled: _equalizerEnabled,
+        bands: _eqBands,
+        balance: _balance,
+      );
+      final incomingDuration = incomingPlayer.duration;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
+      await previousPlayer.stop();
+      await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
+      _dspPlayer = incomingPlayer;
+      _bindDspStreams();
+      unawaited(_audioHandler?.publishTrack(track));
+      await _saveQueue();
+    } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      if (identical(_crossfadeDspPlayer, incomingPlayer)) {
+        _crossfadeDspPlayer = null;
+      }
+      _crossfadeInProgress = false;
+    }
+  }
+
+  Future<void> _fadeBetweenTracks({
+    required Track outgoing,
+    required Track incoming,
+    required Future<void> Function(double volume) setOutgoingVolume,
+    required Future<void> Function(double volume) setIncomingVolume,
+  }) async {
+    final steps = math.max(1, _crossfadeSeconds * 10);
+    for (var step = 1; step <= steps; step++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final progress = step / steps;
+      await setOutgoingVolume(_volumeFor(outgoing) * (1 - progress));
+      await setIncomingVolume(_volumeFor(incoming) * progress);
+    }
+  }
+
+  void _recordCrossfadeTrack(
+    int index,
+    Track track, {
+    required Duration duration,
+  }) {
+    setState(() {
+      _selected = index;
+      _position = Duration.zero;
+      _duration = duration;
+      _playerState = PlayerState.playing;
+      _playHistory
+        ..clear()
+        ..addAll(addToPlayHistory(_playHistory, track.path));
+      final libraryIndex = _library.indexWhere(
+        (item) => item.path == track.path,
+      );
+      if (libraryIndex >= 0) {
+        _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
+      }
+    });
+  }
+
+  Future<void> _previous() async {
+    if (_queue.isEmpty) return;
+    if (_position.inSeconds > 3) return _seekCurrent(Duration.zero);
+    await _select((_selected - 1 + _queue.length) % _queue.length);
+  }
+
+  Future<void> _remove(int index) async {
+    setState(() {
+      _queue.removeAt(index);
+      if (_queue.isEmpty) _selected = 0;
+      if (_selected >= _queue.length) _selected = _queue.length - 1;
+    });
+    await _saveQueue();
+  }
+
+  bool _isBookmarked(Track track) =>
+      _bookmarks.any((item) => item.identityKey == track.identityKey);
+
+  Future<void> _toggleBookmark(Track track) async {
+    setState(() {
+      final updated = toggleTrackBookmark(_bookmarks, track);
+      _bookmarks
+        ..clear()
+        ..addAll(updated);
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _playBookmark(Track track) async {
+    var index = _queue.indexWhere(
+      (item) => item.identityKey == track.identityKey,
+    );
+    if (index < 0) {
+      setState(() {
+        _queue.add(track);
+        index = _queue.length - 1;
+      });
+    }
+    await _select(index);
+  }
+
+  Future<void> _reorderQueue(int oldIndex, int newIndex) async {
+    if (oldIndex == newIndex || oldIndex < 0 || newIndex < 0) return;
+    final selectedPath = _current?.path;
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final track = _queue.removeAt(oldIndex);
+      _queue.insert(newIndex.clamp(0, _queue.length), track);
+      final selectedIndex = selectedPath == null
+          ? -1
+          : _queue.indexWhere((item) => item.path == selectedPath);
+      if (selectedIndex >= 0) _selected = selectedIndex;
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _clearQueue() async {
+    await _stopCurrent();
+    if (_dspActive) await _dspPlayer.stop();
+    setState(() {
+      _midiActive = false;
+      _dspActive = false;
+      _queue.clear();
+      _selected = 0;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _playerState = PlayerState.stopped;
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _addStream() async {
+    final controller = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add stream URL'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/stream.mp3',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+    if (url == null || url.isEmpty) return;
+    setState(
+      () => _queue.add(
+        Track(
+          path: url,
+          name: Uri.tryParse(url)?.host ?? 'Internet stream',
+          artist: 'Online radio',
+        ),
+      ),
+    );
+    await _saveQueue();
+  }
+
+  Future<void> _openVideoPicker() async {
+    final selectedFiles = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: supportedVideoExtensions.toList()..sort(),
+      dialogTitle: 'Choose videos to play',
+    );
+    if (!mounted) return;
+    final files = selectedFiles
+        .where((file) => file.path != null && isSupportedVideoPath(file.path!))
+        .map((file) => File(file.path!))
+        .toList();
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No playable video files were selected.')),
+      );
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(builder: (_) => VideoPlayerPage(files: files)),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _searchShoutcastStations(
+    String term,
+  ) async {
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(
+        Uri.https('directory.shoutcast.com', '/Search/UpdateSearch'),
+      );
+      request.headers.contentType = ContentType(
+        'application',
+        'x-www-form-urlencoded',
+        charset: 'utf-8',
+      );
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
+      request.write(Uri(queryParameters: {'query': term}).query);
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      if (response.statusCode != HttpStatus.ok) return const [];
+      final decoded = jsonDecode(body);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map<String, dynamic>>()
+          .map(normalizeShoutcastStation)
+          .toList();
+    } catch (_) {
+      return const [];
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<String?> _resolveShoutcastStream(Map<String, dynamic> station) async {
+    final id = (station['shoutcastId'] as num?)?.toInt();
+    if (id == null) return null;
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(
+        Uri.https('directory.shoutcast.com', '/Player/GetStreamUrl'),
+      );
+      request.headers.contentType = ContentType(
+        'application',
+        'x-www-form-urlencoded',
+        charset: 'utf-8',
+      );
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
+      request.write(Uri(queryParameters: {'station': '$id'}).query);
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      if (response.statusCode != HttpStatus.ok) return null;
+      final decoded = jsonDecode(body);
+      return decoded is String && decoded.trim().isNotEmpty ? decoded : null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _searchRadioDirectory() async {
+    final controller = TextEditingController();
+    final term = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Find internet radio'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'Station, genre, or country',
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Search'),
+          ),
+        ],
+      ),
+    );
+    if (term == null || term.trim().isEmpty) return;
+    try {
+      final uri = Uri.https(
+        'de1.api.radio-browser.info',
+        '/json/stations/search',
+        {
+          'name': term.trim(),
+          'limit': '25',
+          'order': 'votes',
+          'reverse': 'true',
+          'hidebroken': 'true',
+        },
+      );
+      final client = HttpClient();
+      final request = await client.getUrl(uri);
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      client.close(force: true);
+      if (response.statusCode != HttpStatus.ok)
+        throw const HttpException('Radio directory request failed');
+      final radioBrowserStations = (jsonDecode(body) as List)
+          .whereType<Map<String, dynamic>>()
+          .where((station) => _stationStreamUrl(station) != null)
+          .map(normalizeRadioBrowserStation)
+          .toList();
+      final stations = mergeRadioStations([
+        ...radioBrowserStations,
+        ...await _searchShoutcastStations(term.trim()),
+      ]);
+      if (!mounted) return;
+      if (stations.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No playable stations found.')),
+        );
+        return;
+      }
+      final selected = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: Text('Radio stations for “$term”'),
+            content: SizedBox(
+              width: 520,
+              height: 420,
+              child: ListView.builder(
+                itemCount: stations.length,
+                itemBuilder: (_, index) {
+                  final station = stations[index];
+                  final name = (station['name'] as String? ?? 'Untitled')
+                      .trim();
+                  final country = station['country'] as String? ?? '';
+                  final codec = station['codec'] as String? ?? '';
+                  final genre =
+                      (station['genre'] as String? ??
+                              station['tags'] as String? ??
+                              '')
+                          .split(',')
+                          .first
+                          .trim();
+                  final listeners =
+                      (station['listeners'] as num?)?.toInt() ?? 0;
+                  final bitrate = (station['bitrate'] as num?)?.toInt() ?? 0;
+                  final path = _stationStreamUrl(station);
+                  final isShoutcast = station['source'] == 'SHOUTcast';
+                  final saved = path == null
+                      ? null
+                      : _library.cast<Track?>().firstWhere(
+                          (track) => track?.path == path,
+                          orElse: () => null,
+                        );
+                  return ListTile(
+                    leading: const Icon(Icons.radio, color: Color(0xffef4bff)),
+                    title: Text(name.isEmpty ? 'Untitled station' : name),
+                    subtitle: Text(
+                      [
+                        country,
+                        codec,
+                        if (genre.isNotEmpty) genre,
+                        if (bitrate > 0) '$bitrate kbps',
+                        if (listeners > 0) '$listeners listeners',
+                      ].where((value) => value.isNotEmpty).join(' · '),
+                    ),
+                    trailing: IconButton(
+                      tooltip: saved?.favorite == true
+                          ? 'Remove station favorite'
+                          : 'Save station favorite',
+                      icon: Icon(
+                        saved?.favorite == true
+                            ? Icons.star
+                            : Icons.star_border,
+                        color: saved?.favorite == true ? Colors.amber : null,
+                      ),
+                      onPressed: path == null && !isShoutcast
+                          ? null
+                          : () async {
+                              if (_stationStreamUrl(station) == null) {
+                                final resolved = await _resolveShoutcastStream(
+                                  station,
+                                );
+                                if (resolved != null) {
+                                  station['streamUrl'] = resolved;
+                                }
+                              }
+                              if (_stationStreamUrl(station) == null) return;
+                              await _toggleRadioFavorite(station);
+                              setDialogState(() {});
+                            },
+                    ),
+                    onTap: () => Navigator.pop(context, station),
+                  );
+                },
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (selected == null) return;
+      var path = _stationStreamUrl(selected);
+      if (path == null && selected['source'] == 'SHOUTcast') {
+        path = await _resolveShoutcastStream(selected);
+        if (path != null) selected['streamUrl'] = path;
+      }
+      if (path == null) return;
+      final name = (selected['name'] as String? ?? 'Internet radio').trim();
+      final track = Track(
+        path: path,
+        name: name.isEmpty ? 'Internet radio' : name,
+        artist: (selected['country'] as String? ?? 'Internet radio').trim(),
+        album: 'Internet radio',
+        genre:
+            (selected['tags'] as String? ??
+                    selected['genre'] as String? ??
+                    'Radio')
+                .split(',')
+                .first
+                .trim(),
+      );
+      setState(() {
+        _queue.add(track);
+        _library.removeWhere((item) => item.path == path);
+        _library.add(track);
+        _selected = _queue.length - 1;
+      });
+      await _select(_selected);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not reach the radio directory.')),
+        );
+      }
+    }
+  }
+
+  String? _stationStreamUrl(Map<String, dynamic> station) {
+    final shoutcast = station['streamUrl'] as String?;
+    if (shoutcast != null && shoutcast.isNotEmpty) return shoutcast;
+    final resolved = station['url_resolved'] as String?;
+    final fallback = station['url'] as String?;
+    final value = (resolved?.trim().isNotEmpty == true ? resolved : fallback)
+        ?.trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  Future<void> _toggleRadioFavorite(Map<String, dynamic> station) async {
+    final path = _stationStreamUrl(station);
+    if (path == null) return;
+    final name = (station['name'] as String? ?? 'Internet radio').trim();
+    final existingIndex = _library.indexWhere((track) => track.path == path);
+    setState(() {
+      if (existingIndex >= 0) {
+        final track = _library[existingIndex];
+        _library[existingIndex] = track.copyWith(favorite: !track.favorite);
+      } else {
+        _library.add(
+          Track(
+            path: path,
+            name: name.isEmpty ? 'Internet radio' : name,
+            artist: (station['country'] as String? ?? 'Internet radio').trim(),
+            album: 'Internet radio',
+            genre:
+                (station['tags'] as String? ??
+                        station['genre'] as String? ??
+                        'Radio')
+                    .split(',')
+                    .first
+                    .trim(),
+            favorite: true,
+          ),
+        );
+      }
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _addPodcastFeed() async {
+    final controller = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Subscribe to podcast RSS'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            hintText: 'https://example.com/podcast.xml',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Subscribe'),
+          ),
+        ],
+      ),
+    );
+    if (url == null || url.isEmpty) return;
+    try {
+      final added = await _loadPodcastFeed(url);
+      if (!_podcastFeeds.contains(url)) _podcastFeeds.add(url);
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added $added podcast episode(s)')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not load that podcast feed.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _refreshPodcasts() async {
+    var added = 0;
+    for (final feed in List<String>.from(_podcastFeeds)) {
+      try {
+        added += await _loadPodcastFeed(feed);
+      } catch (_) {
+        // Keep other subscriptions refreshing if one feed is unavailable.
+      }
+    }
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Refreshed podcasts ($added new episode(s))')),
+      );
+    }
+  }
+
+  Future<void> _importPodcastSubscriptions() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['opml', 'xml'],
+    );
+    if (picked.isEmpty) return;
+    final bytes = await picked.first.readAsBytes();
+    final feeds = podcastFeedsFromOpml(
+      utf8.decode(bytes, allowMalformed: true),
+    );
+    var addedFeeds = 0;
+    var addedEpisodes = 0;
+    for (final feed in feeds) {
+      if (_podcastFeeds.contains(feed)) continue;
+      try {
+        addedEpisodes += await _loadPodcastFeed(feed);
+        _podcastFeeds.add(feed);
+        addedFeeds++;
+      } on Exception {
+        // A bad or temporarily unavailable feed must not block other imports.
+      }
+    }
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Imported $addedFeeds podcast feed(s), $addedEpisodes new episode(s)',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _exportPodcastSubscriptions() async {
+    final bytes = Uint8List.fromList(
+      utf8.encode(podcastFeedsToOpml(_podcastFeeds)),
+    );
+    await FilePicker.saveFile(
+      fileName: 'neonamp-podcasts.opml',
+      bytes: bytes,
+      mimeType: 'text/x-opml',
+      type: FileType.custom,
+      allowedExtensions: ['opml'],
+    );
+  }
+
+  Future<void> _managePodcastSubscriptions() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Podcast subscriptions'),
+          content: SizedBox(
+            width: 520,
+            height: 360,
+            child: _podcastFeeds.isEmpty
+                ? const Center(child: Text('No podcast subscriptions yet.'))
+                : ListView.builder(
+                    itemCount: _podcastFeeds.length,
+                    itemBuilder: (context, index) {
+                      final feed = _podcastFeeds[index];
+                      final uri = Uri.tryParse(feed);
+                      return ListTile(
+                        leading: const Icon(Icons.podcasts),
+                        title: Text(
+                          uri?.host.isNotEmpty == true ? uri!.host : feed,
+                        ),
+                        subtitle: Text(
+                          feed,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Unsubscribe',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            setDialogState(() => _podcastFeeds.remove(feed));
+                            await _saveQueue();
+                          },
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<int> _loadPodcastFeed(String feedUrl) async {
+    final request = await HttpClient().getUrl(Uri.parse(feedUrl));
+    final response = await request.close();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException('Podcast feed returned ${response.statusCode}');
+    }
+    final xml = await response.transform(utf8.decoder).join();
+    final itemPattern = RegExp(
+      r'<item\b[^>]*>([\s\S]*?)</item>',
+      caseSensitive: false,
+    );
+    final enclosurePattern = RegExp(
+      r'''<enclosure\b[^>]*\burl=["']([^"']+)["']''',
+      caseSensitive: false,
+    );
+    final episodes = <Track>[];
+    for (final match in itemPattern.allMatches(xml)) {
+      final item = match.group(1) ?? '';
+      final enclosure = enclosurePattern.firstMatch(item)?.group(1);
+      if (enclosure == null || enclosure.isEmpty) continue;
+      final title = _rssValue(item, 'title') ?? 'Podcast episode';
+      final author =
+          _rssValue(item, 'author') ?? _rssValue(item, 'creator') ?? 'Podcast';
+      if (_queue.any((track) => track.path == enclosure)) continue;
+      episodes.add(
+        Track(
+          path: enclosure,
+          name: title,
+          artist: author,
+          album: 'Podcast',
+          genre: 'Podcast',
+        ),
+      );
+    }
+    if (episodes.isNotEmpty && mounted) {
+      setState(() {
+        _queue.addAll(episodes);
+        _library.addAll(
+          episodes.where(
+            (episode) => !_library.any((track) => track.path == episode.path),
+          ),
+        );
+      });
+    }
+    return episodes.length;
+  }
+
+  Future<void> _downloadPodcastEpisode(Track track) async {
+    if (!track.path.startsWith('http')) return;
+    final directory = await _pickFolderLocation(
+      'Choose a podcast download folder',
+    );
+    if (directory == null) return;
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(Uri.parse(track.path));
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('Episode returned ${response.statusCode}');
+      }
+      final safeName = track.name
+          .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      final extension = Uri.tryParse(track.path)?.path.split('.').last;
+      final filename =
+          '$safeName.${extension != null && extension.length <= 5 ? extension : 'mp3'}';
+      final usedNames = <String>{};
+      final safeFilename = nextSyncFileName(filename, usedNames);
+      final target = Platform.isAndroid
+          ? File(
+              '${(await getApplicationSupportDirectory()).path}'
+              '${Platform.pathSeparator}podcasts${Platform.pathSeparator}$safeFilename',
+            )
+          : File('$directory${Platform.pathSeparator}$safeFilename');
+      await target.parent.create(recursive: true);
+      await response.pipe(target.openWrite());
+      if (Platform.isAndroid) {
+        await _copyFileToFolder(directory, target.path, safeFilename);
+      }
+      final downloaded = track.copyWith(path: target.path, name: safeFilename);
+      if (mounted) {
+        setState(() {
+          if (!_queue.any((item) => item.path == downloaded.path)) {
+            _queue.add(downloaded);
+          }
+          if (!_library.any((item) => item.path == downloaded.path)) {
+            _library.add(downloaded);
+          }
+        });
+      }
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Downloaded ${track.name}')));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not download this episode.')),
+        );
+      }
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  String? _rssValue(String item, String tag) {
+    final match = RegExp(
+      '<(?:[A-Za-z0-9_]+:)?$tag\\b[^>]*>([\\s\\S]*?)</(?:[A-Za-z0-9_]+:)?$tag>',
+      caseSensitive: false,
+    ).firstMatch(item);
+    final value = match?.group(1)?.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+    if (value == null || value.isEmpty) return null;
+    return value
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'");
+  }
+
+  Future<void> _exportPlaylist() async {
+    final bytes = Uint8List.fromList(
+      utf8.encode('#EXTM3U\n${_queue.map((track) => track.path).join('\n')}\n'),
+    );
+    await FilePicker.saveFile(
+      fileName: 'neonamp-playlist.m3u',
+      bytes: bytes,
+      mimeType: 'audio/x-mpegurl',
+      type: FileType.custom,
+      allowedExtensions: ['m3u'],
+    );
+  }
+
+  Future<void> _exportB4sPlaylist() async {
+    final xml = buildB4sPlaylist([
+      for (final track in _queue)
+        PlaylistEntry(path: track.path, title: track.name),
+    ]);
+    await FilePicker.saveFile(
+      bytes: Uint8List.fromList(utf8.encode(xml)),
+      fileName: 'neonamp-playlist.b4s',
+      type: FileType.custom,
+      allowedExtensions: ['b4s'],
+    );
+  }
+
+  Future<void> _exportWplPlaylist() async {
+    final xml = buildWplPlaylist([
+      for (final track in _queue)
+        PlaylistEntry(path: track.path, title: track.name),
+    ]);
+    await FilePicker.saveFile(
+      bytes: Uint8List.fromList(utf8.encode(xml)),
+      fileName: 'neonamp-playlist.wpl',
+      type: FileType.custom,
+      allowedExtensions: ['wpl'],
+    );
+  }
+
+  Future<void> _exportAsxPlaylist() async {
+    final xml = buildAsxPlaylist([
+      for (final track in _queue)
+        PlaylistEntry(path: track.path, title: track.name),
+    ]);
+    await FilePicker.saveFile(
+      bytes: Uint8List.fromList(utf8.encode(xml)),
+      fileName: 'neonamp-playlist.asx',
+      type: FileType.custom,
+      allowedExtensions: ['asx'],
+    );
+  }
+
+  Future<void> _syncToDeviceFolder() async {
+    final destination = await _pickFolderLocation(
+      'Choose a device music folder',
+    );
+    if (destination == null) return;
+    final selected = _selectedLibraryPaths.isEmpty
+        ? _library
+        : _library.where((track) => _selectedLibraryPaths.contains(track.path));
+    final tracks = <Track>[];
+    final seen = <String>{};
+    for (final track in selected) {
+      if (track.path.startsWith('http')) continue;
+      if (seen.add(track.path)) tracks.add(track);
+    }
+    if (tracks.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No local tracks are available to sync.')),
+      );
+      return;
+    }
+
+    final usedNames = <String>{};
+    final manifest = <String>['#EXTM3U'];
+    var copied = 0;
+    var skipped = 0;
+    for (final track in tracks) {
+      final source = File(track.path);
+      if (!await source.exists()) {
+        skipped++;
+        continue;
+      }
+      final name = nextSyncFileName(syncFileName(track.path), usedNames);
+      final samePath =
+          !Platform.isAndroid &&
+          source.absolute.path.toLowerCase() ==
+              File('$destination${Platform.pathSeparator}$name').absolute.path
+                  .toLowerCase();
+      if (samePath) {
+        manifest.add(name);
+        copied++;
+        continue;
+      }
+      try {
+        await _copyFileToFolder(destination, track.path, name);
+        manifest
+          ..add('#EXTINF:-1,${track.name}')
+          ..add(name);
+        copied++;
+      } on Object {
+        skipped++;
+      }
+    }
+    try {
+      await _writeTextToFolder(
+        destination,
+        'neonamp-sync.m3u8',
+        '${manifest.join('\n')}\n',
+      );
+    } on Object {
+      skipped++;
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Synced $copied track${copied == 1 ? '' : 's'}'
+          '${skipped == 0 ? '' : ' · $skipped skipped'}',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _convertTrackToM4a(Track track) async {
+    if (track.path.startsWith('http')) return;
+    final destination = await _pickFolderLocation('Choose a conversion folder');
+    if (destination == null) return;
+    final usedNames = <String>{};
+    final requested = convertedM4aFileName(track.path);
+    final outputName = nextSyncFileName(requested, usedNames);
+    var output = '$destination${Platform.pathSeparator}$outputName';
+    try {
+      if (Platform.isAndroid) {
+        final supportDirectory = await getApplicationSupportDirectory();
+        final convertedDirectory = Directory(
+          '${supportDirectory.path}${Platform.pathSeparator}converted',
+        );
+        await convertedDirectory.create(recursive: true);
+        output =
+            '${convertedDirectory.path}${Platform.pathSeparator}$outputName';
+      }
+      final converted = await const MethodChannel('neonamp/converter')
+          .invokeMethod<bool>('convertToM4a', {
+            'inputPath': track.path,
+            'outputPath': output,
+          });
+      if (converted != true) {
+        throw const FormatException(
+          'The native audio converter rejected the file.',
+        );
+      }
+      try {
+        await writeTrackMetadata(File(output), [
+          track.name,
+          track.artist,
+          track.album,
+          track.genre,
+          '',
+          track.year?.toString() ?? '',
+          track.trackNumber?.toString() ?? '',
+          track.trackTotal?.toString() ?? '',
+          track.discNumber?.toString() ?? '',
+          track.discTotal?.toString() ?? '',
+          track.lyrics ?? '',
+        ]);
+      } on Object {
+        // The converted audio remains usable if a target tag writer rejects a field.
+      }
+      if (Platform.isAndroid) {
+        await _copyFileToFolder(destination, output, outputName);
+      }
+      final convertedTrack = await _readTrack(output, outputName);
+      final withMetadata = convertedTrack.copyWith(
+        name: track.name,
+        artist: track.artist,
+        album: track.album,
+        genre: track.genre,
+        year: track.year,
+        trackNumber: track.trackNumber,
+        trackTotal: track.trackTotal,
+        discNumber: track.discNumber,
+        discTotal: track.discTotal,
+        lyrics: track.lyrics,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (!_library.any((item) => item.path == output)) {
+          _library.add(withMetadata);
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Converted ${track.name} to M4A')),
+        );
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not convert track: $error')),
+      );
+    }
+  }
+
+  Future<void> _importAudioCd() async {
+    try {
+      final raw = await const MethodChannel('neonamp/system_controls')
+          .invokeMethod<List<dynamic>>('listAudioCds');
+      final discs = (raw ?? [])
+          .whereType<Map>()
+          .map((disc) => Map<String, dynamic>.from(disc))
+          .toList();
+      if (discs.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No audio CD drives are available.')),
+        );
+        return;
+      }
+      final choices = <Map<String, dynamic>>[];
+      for (final disc in discs) {
+        final drive = disc['drive'] as String? ?? '';
+        for (final track in (disc['tracks'] as List? ?? []).whereType<Map>()) {
+          choices.add({
+            'drive': drive,
+            'track': (track['track'] as num?)?.toInt() ?? 0,
+            'durationSeconds': (track['durationSeconds'] as num?)?.toInt() ?? 0,
+          });
+        }
+      }
+      final selection = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Import audio CD track'),
+          children: choices
+              .map(
+                (choice) => SimpleDialogOption(
+                  onPressed: () => Navigator.pop(context, choice),
+                  child: Text(
+                    '${choice['drive']} · Track ${choice['track']} · '
+                    '${_time(Duration(seconds: choice['durationSeconds'] as int))}',
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+      );
+      if (selection == null) return;
+      final destination = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Choose a CD rip folder',
+      );
+      if (destination == null) return;
+      final drive = selection['drive'] as String;
+      final trackNumber = selection['track'] as int;
+      final outputName = nextSyncFileName(
+        'CD ${drive.replaceAll(':', '')} Track $trackNumber.wav',
+        <String>{},
+      );
+      final output = '$destination${Platform.pathSeparator}$outputName';
+      final ripped = await const MethodChannel('neonamp/system_controls')
+          .invokeMethod<bool>('ripAudioCd', {
+            'drive': drive,
+            'track': trackNumber,
+            'outputPath': output,
+          });
+      if (ripped != true) throw const FormatException('CD rip failed.');
+      final track = await _readTrack(output, outputName);
+      if (!mounted) return;
+      setState(() {
+        _queue.add(track);
+        _library.add(track);
+        _selected = _queue.length - 1;
+      });
+      await _saveQueue();
+      await _select(_selected);
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not import CD: $error')));
+    }
+  }
+
+  Future<void> _exportPlsPlaylist() async {
+    final lines = <String>['[playlist]'];
+    for (var index = 0; index < _queue.length; index++) {
+      final track = _queue[index];
+      final number = index + 1;
+      lines
+        ..add('File$number=${track.path}')
+        ..add('Title$number=${track.name}')
+        ..add('Length$number=-1');
+    }
+    lines
+      ..add('NumberOfEntries=${_queue.length}')
+      ..add('Version=2');
+    await FilePicker.saveFile(
+      bytes: Uint8List.fromList(utf8.encode('${lines.join('\n')}\n')),
+      fileName: 'neonamp-playlist.pls',
+      type: FileType.custom,
+      allowedExtensions: ['pls'],
+    );
+  }
+
+  List<Track> get _visibleLibrary {
+    final query = _searchQuery.toLowerCase();
+    final tracks = _library
+        .where(
+          (track) =>
+              (_libraryFilter == 'All' ||
+                  (_libraryFilter == 'Favorites' && track.favorite) ||
+                  (_libraryFilter == 'Top rated' && track.rating >= 4) ||
+                  (_libraryFilter == 'Most played' && track.playCount > 0)) &&
+              (query.isEmpty ||
+                  '${track.name} ${track.artist} ${track.album} ${track.genre}'
+                      .toLowerCase()
+                      .contains(query)),
+        )
+        .toList();
+    if (_librarySort == 'Added') return tracks;
+    tracks.sort((a, b) {
+      final comparison = switch (_librarySort) {
+        'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        'Artist' => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+        'Album' => a.album.toLowerCase().compareTo(b.album.toLowerCase()),
+        'Rating' => a.rating.compareTo(b.rating),
+        'Play count' => a.playCount.compareTo(b.playCount),
+        _ => 0,
+      };
+      return _librarySortDescending ? -comparison : comparison;
+    });
+    return tracks;
+  }
+
+  List<Track> _tracksForSmartPlaylist(SmartPlaylist playlist) {
+    final tracks = _library.where((track) {
+      bool matches(SmartCriterion criterion) {
+        final value = criterion.value.toLowerCase();
+        switch (criterion.rule) {
+          case 'Favorites':
+            return track.favorite;
+          case 'Top rated':
+            return track.rating >= 4;
+          case 'Most played':
+            return track.playCount > 0;
+          case 'Rating at least':
+            return track.rating >= (int.tryParse(criterion.value) ?? 0);
+          case 'Played at least':
+            return track.playCount >= (int.tryParse(criterion.value) ?? 0);
+          case 'Genre':
+            return track.genre.toLowerCase() == value;
+          case 'Artist':
+            return track.artist.toLowerCase() == value;
+          default:
+            return false;
+        }
+      }
+
+      final results = playlist.effectiveCriteria.map(matches);
+      return playlist.matchAll
+          ? results.every((result) => result)
+          : results.any((result) => result);
+    }).toList();
+    if (playlist.sortBy != 'Added') {
+      tracks.sort((a, b) {
+        final comparison = switch (playlist.sortBy) {
+          'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          'Artist' => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+          'Album' => a.album.toLowerCase().compareTo(b.album.toLowerCase()),
+          'Rating' => a.rating.compareTo(b.rating),
+          'Play count' => a.playCount.compareTo(b.playCount),
+          _ => 0,
+        };
+        return playlist.descending ? -comparison : comparison;
+      });
+    }
+    if (playlist.limit > 0 && tracks.length > playlist.limit) {
+      return tracks.sublist(0, playlist.limit);
+    }
+    return tracks;
+  }
+
+  void _toggleFavorite(Track track) {
+    final index = _library.indexWhere((item) => item.path == track.path);
+    if (index < 0) return;
+    setState(() => _library[index] = track.copyWith(favorite: !track.favorite));
+    _saveQueue();
+  }
+
+  Future<void> _editTrack(Track track) async {
+    final title = TextEditingController(text: track.name);
+    final artist = TextEditingController(text: track.artist);
+    final album = TextEditingController(text: track.album);
+    final genre = TextEditingController(text: track.genre);
+    final year = TextEditingController(text: track.year?.toString() ?? '');
+    final trackNumber = TextEditingController(
+      text: track.trackNumber?.toString() ?? '',
+    );
+    final trackTotal = TextEditingController(
+      text: track.trackTotal?.toString() ?? '',
+    );
+    final discNumber = TextEditingController(
+      text: track.discNumber?.toString() ?? '',
+    );
+    final discTotal = TextEditingController(
+      text: track.discTotal?.toString() ?? '',
+    );
+    final lyrics = TextEditingController(text: track.lyrics ?? '');
+    var rating = track.rating;
+    final values = await showDialog<List<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit metadata'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: title,
+                  decoration: const InputDecoration(labelText: 'Title'),
+                ),
+                TextField(
+                  controller: artist,
+                  decoration: const InputDecoration(labelText: 'Artist'),
+                ),
+                TextField(
+                  controller: album,
+                  decoration: const InputDecoration(labelText: 'Album'),
+                ),
+                TextField(
+                  controller: genre,
+                  decoration: const InputDecoration(labelText: 'Genre'),
+                ),
+                TextField(
+                  controller: year,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Release year'),
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: trackNumber,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Track #'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: trackTotal,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Tracks'),
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: discNumber,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Disc #'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: discTotal,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Discs'),
+                      ),
+                    ),
+                  ],
+                ),
+                TextField(
+                  controller: lyrics,
+                  minLines: 2,
+                  maxLines: 5,
+                  decoration: const InputDecoration(labelText: 'Lyrics'),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Text('Rating'),
+                    const SizedBox(width: 8),
+                    for (var star = 1; star <= 5; star++)
+                      IconButton(
+                        tooltip: '$star star${star == 1 ? '' : 's'}',
+                        onPressed: () => setDialogState(() => rating = star),
+                        icon: Icon(
+                          star <= rating ? Icons.star : Icons.star_border,
+                          color: const Color(0xffffd166),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, [
+                title.text.trim(),
+                artist.text.trim(),
+                album.text.trim(),
+                genre.text.trim(),
+                '$rating',
+                year.text.trim(),
+                trackNumber.text.trim(),
+                trackTotal.text.trim(),
+                discNumber.text.trim(),
+                discTotal.text.trim(),
+                lyrics.text,
+              ]),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (values == null || values.length != 11) return;
+    try {
+      await writeTrackMetadata(File(track.path), values);
+      final written = readTrackMetadata(File(track.path));
+      final titleMatches =
+          values[0].isEmpty || written.title?.trim() == values[0];
+      final artistMatches =
+          values[1].isEmpty || written.artist?.trim() == values[1];
+      final albumMatches =
+          values[2].isEmpty || written.album?.trim() == values[2];
+      final genreMatches =
+          values[3].isEmpty ||
+          written.genres.any((genre) => genre == values[3]);
+      final year = int.tryParse(values[5]);
+      final trackNumber = int.tryParse(values[6]);
+      final trackTotal = int.tryParse(values[7]);
+      final discNumber = int.tryParse(values[8]);
+      final discTotal = int.tryParse(values[9]);
+      final writtenLyrics = isAiffAudioPath(track.path)
+          ? readAiffId3Lyrics(await File(track.path).readAsBytes())
+          : isWavAudioPath(track.path)
+          ? readWavId3Lyrics(await File(track.path).readAsBytes())
+          : written.lyrics;
+      final customId3Numbers =
+          isAiffAudioPath(track.path) || isWavAudioPath(track.path)
+          ? readContainerId3TrackDiscNumbers(
+              await File(track.path).readAsBytes(),
+            )
+          : null;
+      final writtenTrackNumber = customId3Numbers?.track ?? written.trackNumber;
+      final writtenTrackTotal =
+          customId3Numbers?.trackTotal ?? written.trackTotal;
+      final writtenDiscNumber = customId3Numbers?.disc ?? written.discNumber;
+      final writtenDiscTotal = customId3Numbers?.discTotal ?? written.totalDisc;
+      final metadataMatches =
+          (year == null || written.year?.year == year) &&
+          (trackNumber == null || writtenTrackNumber == trackNumber) &&
+          (trackTotal == null || writtenTrackTotal == trackTotal) &&
+          (discNumber == null || writtenDiscNumber == discNumber) &&
+          (discTotal == null || writtenDiscTotal == discTotal) &&
+          (values[10].trim().isEmpty || writtenLyrics == values[10]);
+      if (!titleMatches ||
+          !artistMatches ||
+          !albumMatches ||
+          !genreMatches ||
+          !metadataMatches) {
+        throw const FormatException(
+          'Metadata writer did not persist the changes.',
+        );
+      }
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This file format does not support tag writing yet.'),
+          ),
+        );
+    }
+    final updated = track.copyWith(
+      name: values[0],
+      artist: values[1],
+      album: values[2],
+      genre: values[3],
+      rating: int.tryParse(values[4]) ?? track.rating,
+      year: int.tryParse(values[5]) ?? track.year,
+      trackNumber: int.tryParse(values[6]) ?? track.trackNumber,
+      trackTotal: int.tryParse(values[7]) ?? track.trackTotal,
+      discNumber: int.tryParse(values[8]) ?? track.discNumber,
+      discTotal: int.tryParse(values[9]) ?? track.discTotal,
+      lyrics: values[10].trim().isEmpty ? track.lyrics : values[10],
+    );
+    setState(() {
+      final libraryIndex = _library.indexWhere(
+        (item) => item.path == track.path,
+      );
+      if (libraryIndex >= 0) _library[libraryIndex] = updated;
+      for (var i = 0; i < _queue.length; i++) {
+        if (_queue[i].path == track.path) _queue[i] = updated;
+      }
+    });
+    await _saveQueue();
+  }
+
+  void _toggleLibrarySelection(Track track) {
+    setState(() {
+      if (!_selectedLibraryPaths.add(track.path)) {
+        _selectedLibraryPaths.remove(track.path);
+      }
+    });
+  }
+
+  Future<void> _editSelectedTracks() async {
+    final selected = _library
+        .where((track) => _selectedLibraryPaths.contains(track.path))
+        .toList();
+    if (selected.isEmpty) return;
+    final artist = TextEditingController();
+    final album = TextEditingController();
+    final genre = TextEditingController();
+    final year = TextEditingController();
+    final rating = TextEditingController();
+    final values = await showDialog<List<String>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit ${selected.length} tracks'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Leave a field empty to keep each track’s current value.',
+                  style: TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+              ),
+              TextField(
+                controller: artist,
+                decoration: const InputDecoration(labelText: 'Artist'),
+              ),
+              TextField(
+                controller: album,
+                decoration: const InputDecoration(labelText: 'Album'),
+              ),
+              TextField(
+                controller: genre,
+                decoration: const InputDecoration(labelText: 'Genre'),
+              ),
+              TextField(
+                controller: year,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Release year'),
+              ),
+              TextField(
+                controller: rating,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Rating (0–5)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, [
+              artist.text.trim(),
+              album.text.trim(),
+              genre.text.trim(),
+              year.text.trim(),
+              rating.text.trim(),
+            ]),
+            child: const Text('Apply to selected'),
+          ),
+        ],
+      ),
+    );
+    if (values == null) return;
+
+    var updatedCount = 0;
+    var failedCount = 0;
+    final updatedTracks = <String, Track>{};
+    for (final track in selected) {
+      final updated = track.copyWith(
+        artist: values[0].isEmpty ? track.artist : values[0],
+        album: values[1].isEmpty ? track.album : values[1],
+        genre: values[2].isEmpty ? track.genre : values[2],
+        year: values[3].isEmpty ? track.year : int.tryParse(values[3]),
+        rating: values[4].isEmpty
+            ? track.rating
+            : (int.tryParse(values[4]) ?? track.rating).clamp(0, 5).toInt(),
+      );
+      final metadataValues = [
+        updated.name,
+        updated.artist,
+        updated.album,
+        updated.genre,
+        '${updated.rating}',
+        updated.year?.toString() ?? '',
+        updated.trackNumber?.toString() ?? '',
+        updated.trackTotal?.toString() ?? '',
+        updated.discNumber?.toString() ?? '',
+        updated.discTotal?.toString() ?? '',
+        updated.lyrics ?? '',
+      ];
+      try {
+        await writeTrackMetadata(File(track.path), metadataValues);
+        updatedTracks[track.path] = updated;
+        updatedCount++;
+      } catch (_) {
+        failedCount++;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      for (var index = 0; index < _library.length; index++) {
+        final updated = updatedTracks[_library[index].path];
+        if (updated != null) _library[index] = updated;
+      }
+      for (var index = 0; index < _queue.length; index++) {
+        final updated = updatedTracks[_queue[index].path];
+        if (updated != null) _queue[index] = updated;
+      }
+      _selectedLibraryPaths.clear();
+    });
+    await _saveQueue();
+    if (failedCount > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$updatedCount updated; $failedCount failed.')),
+      );
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$updatedCount tracks updated.')));
+    }
+  }
+
+  Future<void> _replaceArtwork(Track track) async {
+    if (track.path.startsWith('http')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cover art can only be embedded in local files.'),
+        ),
+      );
+      return;
+    }
+    final result = await FilePicker.pickFiles(type: FileType.image);
+    if (result.isEmpty || result.first.path == null) return;
+    final imageFile = File(result.first.path!);
+    final bytes = await imageFile.readAsBytes();
+    if (bytes.isEmpty) return;
+    final extension = imageFile.path.split('.').last.toLowerCase();
+    final mimeType = switch (extension) {
+      'png' => 'image/png',
+      'webp' => 'image/webp',
+      _ => 'image/jpeg',
+    };
+    try {
+      if (isAiffAudioPath(track.path) || isWavAudioPath(track.path)) {
+        final writer = isWavAudioPath(track.path)
+            ? writeWavTags
+            : writeAiffTags;
+        await writer(
+          File(track.path),
+          [
+            track.name,
+            track.artist,
+            track.album,
+            track.genre,
+            '',
+            track.year?.toString() ?? '',
+            track.trackNumber?.toString() ?? '',
+            track.trackTotal?.toString() ?? '',
+            track.discNumber?.toString() ?? '',
+            track.discTotal?.toString() ?? '',
+            track.lyrics ?? '',
+          ],
+          artwork: bytes,
+          artworkMimeType: mimeType,
+        );
+      } else if (isAsfAudioPath(track.path)) {
+        await writeAsfTags(
+          File(track.path),
+          [
+            track.name,
+            track.artist,
+            track.album,
+            track.genre,
+            '',
+            track.year?.toString() ?? '',
+            track.trackNumber?.toString() ?? '',
+            track.trackTotal?.toString() ?? '',
+            track.discNumber?.toString() ?? '',
+            track.discTotal?.toString() ?? '',
+            track.lyrics ?? '',
+          ],
+          artwork: bytes,
+          artworkMimeType: mimeType,
+        );
+      } else if (isVorbisAudioPath(track.path)) {
+        await writeVorbisTags(
+          File(track.path),
+          [
+            track.name,
+            track.artist,
+            track.album,
+            track.genre,
+            '',
+            track.year?.toString() ?? '',
+            track.trackNumber?.toString() ?? '',
+            track.trackTotal?.toString() ?? '',
+            track.discNumber?.toString() ?? '',
+            track.discTotal?.toString() ?? '',
+            track.lyrics ?? '',
+          ],
+          artwork: bytes,
+          artworkMimeType: mimeType,
+        );
+      } else if (isAacAudioPath(track.path)) {
+        await writeAacArtwork(
+          File(track.path),
+          [
+            track.name,
+            track.artist,
+            track.album,
+            track.genre,
+            '',
+            track.year?.toString() ?? '',
+            track.trackNumber?.toString() ?? '',
+            track.trackTotal?.toString() ?? '',
+            track.discNumber?.toString() ?? '',
+            track.discTotal?.toString() ?? '',
+            track.lyrics ?? '',
+          ],
+          bytes,
+          mimeType,
+        );
+      } else {
+        updateMetadata(File(track.path), (metadata) {
+          metadata.setPictures([
+            Picture(bytes, mimeType, PictureType.coverFront),
+          ]);
+        });
+      }
+      final updated = track.copyWith(artwork: bytes);
+      setState(() {
+        final libraryIndex = _library.indexWhere(
+          (item) => item.path == track.path,
+        );
+        if (libraryIndex >= 0) _library[libraryIndex] = updated;
+        for (var i = 0; i < _queue.length; i++) {
+          if (_queue[i].path == track.path) _queue[i] = updated;
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Embedded cover art updated.')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This file format cannot embed cover art.'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _createPlaylist() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('New playlist'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Late night synthwave'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    setState(() => _playlists[name] = []);
+    await _saveQueue();
+  }
+
+  Future<void> _renamePlaylist(String oldName) async {
+    final controller = TextEditingController(text: oldName);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename playlist'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Playlist name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty || name == oldName) return;
+    if (_playlists.containsKey(name)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('A playlist with that name already exists.'),
+          ),
+        );
+      }
+      return;
+    }
+    setState(() {
+      final renamed = <String, List<String>>{};
+      for (final entry in _playlists.entries) {
+        renamed[entry.key == oldName ? name : entry.key] = entry.value;
+      }
+      _playlists
+        ..clear()
+        ..addAll(renamed);
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _deletePlaylist(String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete playlist?'),
+        content: Text(
+          'Remove "$name"? The audio files will stay in your library.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _playlists.remove(name));
+    await _saveQueue();
+  }
+
+  Future<void> _editPlaylist(String name) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final tracks = _playlists[name] ?? <String>[];
+          return AlertDialog(
+            title: Text('Edit $name'),
+            content: SizedBox(
+              width: 420,
+              height: 360,
+              child: tracks.isEmpty
+                  ? const Center(child: Text('No tracks in this playlist.'))
+                  : ListView.builder(
+                      itemCount: tracks.length,
+                      itemBuilder: (context, index) {
+                        final path = tracks[index];
+                        final track = _library.firstWhere(
+                          (item) => item.path == path,
+                          orElse: () => Track(
+                            path: path,
+                            name: path.split(RegExp(r'[/\\]')).last,
+                          ),
+                        );
+                        return ListTile(
+                          dense: true,
+                          title: Text(track.name),
+                          subtitle: Text(track.artist),
+                          trailing: IconButton(
+                            tooltip: 'Remove from playlist',
+                            icon: const Icon(Icons.remove_circle_outline),
+                            onPressed: () {
+                              setState(() => tracks.removeAt(index));
+                              setDialogState(() {});
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    await _saveQueue();
+  }
+
+  Future<void> _createSmartPlaylist() async {
+    final nameController = TextEditingController();
+    final valueController = TextEditingController();
+    final secondValueController = TextEditingController();
+    var rule = 'Favorites';
+    var secondRule = 'None';
+    var matchAll = true;
+    var sortBy = 'Added';
+    var descending = false;
+    var limit = 0;
+    final limitController = TextEditingController();
+    final result = await showDialog<SmartPlaylist>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('New smart playlist'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Name'),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: rule,
+                decoration: const InputDecoration(labelText: 'Rule'),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'Favorites',
+                    child: Text('Favorites'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Top rated',
+                    child: Text('Top rated'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Most played',
+                    child: Text('Most played'),
+                  ),
+                  DropdownMenuItem(value: 'Genre', child: Text('Genre is')),
+                  DropdownMenuItem(value: 'Artist', child: Text('Artist is')),
+                  DropdownMenuItem(
+                    value: 'Rating at least',
+                    child: Text('Rating at least'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Played at least',
+                    child: Text('Played at least'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => rule = value);
+                },
+              ),
+              if (rule == 'Genre' ||
+                  rule == 'Artist' ||
+                  rule == 'Rating at least' ||
+                  rule == 'Played at least')
+                TextField(
+                  controller: valueController,
+                  keyboardType:
+                      rule == 'Rating at least' || rule == 'Played at least'
+                      ? TextInputType.number
+                      : null,
+                  decoration: InputDecoration(
+                    labelText: switch (rule) {
+                      'Genre' => 'Genre',
+                      'Artist' => 'Artist',
+                      'Rating at least' => 'Minimum rating (1-5)',
+                      _ => 'Minimum play count',
+                    },
+                  ),
+                ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: secondRule,
+                decoration: const InputDecoration(
+                  labelText: 'Second rule (optional)',
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'None', child: Text('None')),
+                  DropdownMenuItem(
+                    value: 'Favorites',
+                    child: Text('Favorites'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Top rated',
+                    child: Text('Top rated'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Most played',
+                    child: Text('Most played'),
+                  ),
+                  DropdownMenuItem(value: 'Genre', child: Text('Genre is')),
+                  DropdownMenuItem(value: 'Artist', child: Text('Artist is')),
+                  DropdownMenuItem(
+                    value: 'Rating at least',
+                    child: Text('Rating at least'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'Played at least',
+                    child: Text('Played at least'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => secondRule = value);
+                },
+              ),
+              if (secondRule != 'None' &&
+                  (secondRule == 'Genre' ||
+                      secondRule == 'Artist' ||
+                      secondRule == 'Rating at least' ||
+                      secondRule == 'Played at least'))
+                TextField(
+                  controller: secondValueController,
+                  keyboardType:
+                      secondRule == 'Rating at least' ||
+                          secondRule == 'Played at least'
+                      ? TextInputType.number
+                      : null,
+                  decoration: InputDecoration(
+                    labelText: switch (secondRule) {
+                      'Genre' => 'Second genre',
+                      'Artist' => 'Second artist',
+                      'Rating at least' => 'Second minimum rating',
+                      _ => 'Second minimum play count',
+                    },
+                  ),
+                ),
+              if (secondRule != 'None')
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(matchAll ? 'Match all rules' : 'Match any rule'),
+                  value: matchAll,
+                  onChanged: (value) => setDialogState(() => matchAll = value),
+                ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: sortBy,
+                decoration: const InputDecoration(labelText: 'Sort by'),
+                items: const [
+                  DropdownMenuItem(value: 'Added', child: Text('Added order')),
+                  DropdownMenuItem(value: 'Title', child: Text('Title')),
+                  DropdownMenuItem(value: 'Artist', child: Text('Artist')),
+                  DropdownMenuItem(value: 'Album', child: Text('Album')),
+                  DropdownMenuItem(value: 'Rating', child: Text('Rating')),
+                  DropdownMenuItem(
+                    value: 'Play count',
+                    child: Text('Play count'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) setDialogState(() => sortBy = value);
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Descending'),
+                value: descending,
+                onChanged: (value) => setDialogState(() => descending = value),
+              ),
+              TextField(
+                controller: limitController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Maximum tracks (optional)',
+                  hintText: '0 for unlimited',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final value = valueController.text.trim();
+                final secondValue = secondValueController.text.trim();
+                limit = int.tryParse(limitController.text.trim()) ?? 0;
+                if (name.isEmpty ||
+                    ((rule == 'Genre' || rule == 'Artist') && value.isEmpty) ||
+                    ((rule == 'Rating at least' || rule == 'Played at least') &&
+                        int.tryParse(value) == null) ||
+                    (secondRule != 'None' &&
+                        ((secondRule == 'Genre' || secondRule == 'Artist') &&
+                                secondValue.isEmpty ||
+                            (secondRule == 'Rating at least' ||
+                                    secondRule == 'Played at least') &&
+                                int.tryParse(secondValue) == null)) ||
+                    limit < 0) {
+                  return;
+                }
+                Navigator.pop(
+                  context,
+                  SmartPlaylist(
+                    name: name,
+                    rule: rule,
+                    value: value,
+                    sortBy: sortBy,
+                    descending: descending,
+                    limit: limit,
+                    matchAll: matchAll,
+                    criteria: [
+                      SmartCriterion(rule: rule, value: value),
+                      if (secondRule != 'None')
+                        SmartCriterion(rule: secondRule, value: secondValue),
+                    ],
+                  ),
+                );
+              },
+              child: const Text('Create'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    setState(() => _smartPlaylists.add(result));
+    await _saveQueue();
+  }
+
+  Future<void> _importSkin() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    final path = result.isEmpty ? null : result.first.path;
+    if (path == null) return;
+    try {
+      final skin = ThemeSkin.fromJson(
+        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+      );
+      await widget.onSkinImported?.call(skin);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Imported skin: ${skin.name}')));
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not import skin: $error')));
+    }
+  }
+
+  Future<void> _importMidiSoundFont() async {
+    final selected = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['sf2'],
+    );
+    if (selected == null) return;
+    File? candidate;
+    var activated = false;
+    try {
+      final support = await getApplicationSupportDirectory();
+      final directory = Directory(
+        '${support.path}${Platform.pathSeparator}soundfonts',
+      );
+      await directory.create(recursive: true);
+      candidate = File(
+        '${directory.path}${Platform.pathSeparator}'
+        'neonamp-midi-${DateTime.now().microsecondsSinceEpoch}.sf2',
+      );
+      final sink = candidate.openWrite();
+      try {
+        await sink.addStream(selected.readAsByteStream());
+      } finally {
+        await sink.close();
+      }
+      await validateMidiSoundFont(candidate.path);
+      if (!mounted) {
+        await candidate.delete();
+        return;
+      }
+      final oldPath = _midiSoundFontPath;
+      final importedFont = candidate;
+      setState(() => _midiSoundFontPath = importedFont.path);
+      activated = true;
+      await _saveQueue();
+      if (oldPath != null && oldPath != importedFont.path) {
+        final oldFont = File(oldPath);
+        if (await oldFont.exists()) await oldFont.delete();
+      }
+      final wasPlaying = _isPlaying;
+      final wasActive = wasPlaying || _playerState == PlayerState.paused;
+      final previousPosition = _position;
+      if (_current != null && isMidiFilePath(_current!.path) && wasActive) {
+        await _select(_selected);
+        if (previousPosition > Duration.zero) {
+          await _seekCurrent(previousPosition);
+        }
+        if (!wasPlaying) await _pauseCurrent();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('MIDI SoundFont imported.')),
+        );
+      }
+    } on Object catch (error) {
+      if (!activated && candidate != null && await candidate.exists()) {
+        await candidate.delete();
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import SoundFont: $error')),
+      );
+    }
+  }
+
+  Future<String?> _ensureMidiSoundFont() async {
+    final configured = _midiSoundFontPath;
+    if (configured != null && FileSystemEntity.isFileSync(configured)) {
+      return configured;
+    }
+
+    final support = await getApplicationSupportDirectory();
+    final directory = Directory(
+      '${support.path}${Platform.pathSeparator}soundfonts',
+    );
+    await directory.create(recursive: true);
+    final target = File(
+      '${directory.path}${Platform.pathSeparator}$_bundledMidiSoundFontFileName',
+    );
+    if (!await target.exists() || await target.length() == 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Preparing the built-in MIDI SoundFont…')),
+        );
+      }
+      final data = await rootBundle.load(_bundledMidiSoundFontAsset);
+      await target.writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+        flush: true,
+      );
+    }
+    await validateMidiSoundFont(target.path);
+    _midiSoundFontPath = target.path;
+    await _saveQueue();
+    return target.path;
+  }
+
+  Future<void> _importPlugin() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json', 'neonamp-plugin'],
+    );
+    final path = result.isEmpty ? null : result.first.path;
+    if (path == null) return;
+    try {
+      final plugin = NeonAmpPlugin.fromJson(
+        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+      );
+      setState(() => _plugins[plugin.id] = plugin);
+      await _saveQueue();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported plugin: ${plugin.name}')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import plugin: $error')),
+      );
+    }
+  }
+
+  Future<void> _showPluginManager() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Plugins'),
+          content: SizedBox(
+            width: 540,
+            child: _plugins.isEmpty
+                ? const Text('No plugins installed.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: _plugins.values
+                        .map(
+                          (plugin) => ListTile(
+                            leading: const Icon(Icons.extension_outlined),
+                            title: Text('${plugin.name} ${plugin.version}'),
+                            subtitle: Text(
+                              [
+                                plugin.description,
+                                if (plugin.capabilities.isNotEmpty)
+                                  plugin.capabilities.join(', '),
+                              ].where((value) => value.isNotEmpty).join(' · '),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Switch(
+                                  value: plugin.enabled,
+                                  onChanged: (value) {
+                                    setState(
+                                      () => _plugins[plugin.id] = plugin
+                                          .copyWith(enabled: value),
+                                    );
+                                    unawaited(_saveQueue());
+                                    setDialogState(() {});
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: 'Remove plugin',
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: () {
+                                    setState(() => _plugins.remove(plugin.id));
+                                    unawaited(_saveQueue());
+                                    setDialogState(() {});
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _importPlugin();
+              },
+              child: const Text('Import plugin'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showThemePicker() async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Choose a skin'),
+        children: [
+          ...widget.skins.map(
+            (theme) => RadioListTile<String>(
+              value: theme.name,
+              groupValue: widget.themeName,
+              title: Text(theme.name),
+              onChanged: (value) => Navigator.pop(context, value),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.file_upload_outlined),
+            title: const Text('Import skin package'),
+            onTap: () {
+              Navigator.pop(context);
+              _importSkin();
+            },
+          ),
+        ],
+      ),
+    );
+    if (selected != null) widget.onThemeChanged?.call(selected);
+  }
+
+  Future<void> _showLyrics(Track track) async {
+    final lyrics = track.lyrics?.trim();
+    if (lyrics == null || lyrics.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This track has no embedded lyrics.')),
+      );
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(track.name),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(child: SelectableText(lyrics)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showVisualizer() async {
+    final canVisualize = _dspActive && soloud.SoLoud.instance.isInitialized;
+    if (canVisualize) _dspPlayer.setVisualizationEnabled(true);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Spectrum visualizer'),
+          content: SizedBox(
+            width: 560,
+            height: 220,
+            child: canVisualize
+                ? StreamBuilder<soloud.AudioVisualizationData>(
+                    stream: soloud.SoLoud.instance.audioVisualizationEvents,
+                    builder: (context, snapshot) => CustomPaint(
+                      painter: SpectrumPainter(
+                        fft: snapshot.data?.fftData,
+                        active: _isPlaying,
+                      ),
+                    ),
+                  )
+                : const Center(
+                    child: Text(
+                      'Audio-reactive visuals are available during local playback with the equalizer enabled.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      if (canVisualize) _dspPlayer.setVisualizationEnabled(false);
+    }
+  }
+
+  Future<void> _showSettings() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Settings'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Crossfade tracks'),
+                value: _crossfade,
+                onChanged: (value) {
+                  setState(() => _crossfade = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              if (_crossfade)
+                Row(
+                  children: [
+                    const Text('1s'),
+                    Expanded(
+                      child: Slider(
+                        value: _crossfadeSeconds.toDouble(),
+                        min: 1,
+                        max: 12,
+                        divisions: 11,
+                        label: '${_crossfadeSeconds}s',
+                        onChanged: (value) {
+                          setState(() => _crossfadeSeconds = value.round());
+                          unawaited(_saveQueue());
+                          setDialogState(() {});
+                        },
+                      ),
+                    ),
+                    const Text('12s'),
+                  ],
+                ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('ReplayGain normalization'),
+                value: _replayGainEnabled,
+                onChanged: (value) {
+                  unawaited(_setReplayGainEnabled(value));
+                  setDialogState(() {});
+                },
+              ),
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Keyboard controls'),
+                subtitle: Text(
+                  'Space: play/pause · M: mute · Ctrl+arrows: seek',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _playSmartPlaylist(SmartPlaylist playlist) async {
+    final tracks = _tracksForSmartPlaylist(playlist);
+    if (tracks.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No tracks match ${playlist.name}.')),
+      );
+      return;
+    }
+    setState(() {
+      _queue
+        ..clear()
+        ..addAll(tracks);
+      _selected = 0;
+    });
+    await _select(0);
+  }
+
+  Future<void> _addTrackToPlaylist(Track track) async {
+    if (_playlists.isEmpty) {
+      await _createPlaylist();
+      if (_playlists.isEmpty) return;
+    }
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Add to playlist'),
+        children: _playlists.keys
+            .map(
+              (name) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, name),
+                child: Text(name),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (name == null) return;
+    setState(() {
+      final tracks = _playlists[name]!;
+      if (!tracks.contains(track.path)) tracks.add(track.path);
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _saveEqualizerPreset(
+    StateSetter setDialogState,
+    Set<String> reservedNames,
+  ) async {
+    final controller = TextEditingController();
+    var validationError = '';
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setPromptState) => AlertDialog(
+          title: const Text('Save equalizer preset'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 40,
+            decoration: InputDecoration(
+              labelText: 'Preset name',
+              errorText: validationError.isEmpty ? null : validationError,
+            ),
+            onSubmitted: (_) {},
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final requestedName = controller.text.trim();
+                if (!canSaveEqualizerPresetName(
+                  requestedName,
+                  reservedNames: reservedNames,
+                )) {
+                  setPromptState(() {
+                    validationError = requestedName.isEmpty
+                        ? 'Enter a preset name.'
+                        : 'That name is already used by a built-in or plugin preset.';
+                  });
+                  return;
+                }
+                Navigator.pop(dialogContext, requestedName);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (name == null || !mounted) return;
+
+    var storedName = name;
+    for (final existingName in _customEqPresets.keys) {
+      if (existingName.toLowerCase() == name.toLowerCase()) {
+        storedName = existingName;
+        break;
+      }
+    }
+    setState(() {
+      _customEqPresets[storedName] = List<double>.from(_eqBands);
+      _eqPreset = storedName;
+    });
+    if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
+      unawaited(_setEqualizerEnabled(true));
+    } else if (_dspActive) {
+      _dspPlayer.applyEqualizer(enabled: _equalizerEnabled, bands: _eqBands);
+    }
+    setDialogState(() {});
+    await _saveQueue();
+  }
+
+  Future<void> _showEqualizer() async {
+    final pluginPresets = <String, List<double>>{};
+    final reservedPluginNames = <String>{};
+    for (final plugin in _plugins.values) {
+      reservedPluginNames.addAll(plugin.equalizerPresets.keys);
+    }
+    for (final plugin in _plugins.values.where((plugin) => plugin.enabled)) {
+      pluginPresets.addAll(plugin.equalizerPresets);
+    }
+    final customPresets = {...pluginPresets, ..._customEqPresets};
+    final presets = [...builtInEqualizerPresets.keys, ...customPresets.keys];
+    final selectedPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
+    if (_eqPreset != selectedPreset) _eqPreset = selectedPreset;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          constraints: BoxConstraints(
+            maxWidth: math.min(
+              560.0,
+              MediaQuery.sizeOf(this.context).width - 24.0,
+            ),
+          ),
+          title: const Text('10-band equalizer'),
+          content: SizedBox(
+            width: math.min(
+              560.0,
+              math.max(200.0, MediaQuery.sizeOf(this.context).width - 128.0),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Enable equalizer'),
+                    value: _equalizerEnabled,
+                    onChanged: _midiEqualizerUnavailable
+                        ? null
+                        : (value) {
+                            unawaited(_setEqualizerEnabled(value));
+                            setDialogState(() {});
+                          },
+                  ),
+                  if (_midiEqualizerUnavailable)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'System MIDI playback bypasses DSP. Import a SoundFont from the menu to enable equalizer processing for MIDI/KAR.',
+                        style: TextStyle(color: Colors.white60),
+                      ),
+                    ),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedPreset,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Preset'),
+                    items: presets
+                        .map(
+                          (preset) => DropdownMenuItem(
+                            value: preset,
+                            child: Text(
+                              preset,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: _midiEqualizerUnavailable
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _eqPreset = value;
+                              _eqBands.setAll(
+                                0,
+                                equalizerPresetBands(
+                                  value,
+                                  pluginPresets: customPresets,
+                                  bandCount: _eqBands.length,
+                                ),
+                              );
+                            });
+                            if (!_equalizerEnabled) {
+                              unawaited(_setEqualizerEnabled(true));
+                            } else if (_dspActive) {
+                              _dspPlayer.applyEqualizer(
+                                enabled: _equalizerEnabled,
+                                bands: _eqBands,
+                              );
+                            }
+                            setDialogState(() {});
+                          },
+                  ),
+                  Row(
+                    children: [
+                      const Text('L', style: TextStyle(color: Colors.white54)),
+                      Expanded(
+                        child: Slider(
+                          value: _balance,
+                          min: -1,
+                          max: 1,
+                          divisions: 40,
+                          label: stereoBalanceLabel(_balance),
+                          onChanged: _midiEqualizerUnavailable
+                              ? null
+                              : (value) {
+                                  setState(() => _balance = value);
+                                  _applyBalance(value);
+                                  setDialogState(() {});
+                                },
+                          onChangeEnd: (_) => unawaited(_saveQueue()),
+                        ),
+                      ),
+                      const Text('R', style: TextStyle(color: Colors.white54)),
+                    ],
+                  ),
+                  Text(
+                    'Stereo balance · ${stereoBalanceLabel(_balance)}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Crossfade between tracks'),
+                    subtitle: Text('Overlap for $_crossfadeSeconds seconds'),
+                    value: _crossfade,
+                    onChanged: (value) {
+                      setState(() => _crossfade = value);
+                      setDialogState(() {});
+                    },
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('ReplayGain normalization'),
+                    subtitle: const Text(
+                      'Use embedded track or album gain tags when available',
+                    ),
+                    value: _replayGainEnabled,
+                    onChanged: (value) {
+                      unawaited(_setReplayGainEnabled(value));
+                      setDialogState(() {});
+                    },
+                  ),
+                  if (_crossfade)
+                    Row(
+                      children: [
+                        const Text(
+                          '1s',
+                          style: TextStyle(color: Colors.white38),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: _crossfadeSeconds.toDouble(),
+                            min: 1,
+                            max: 12,
+                            divisions: 11,
+                            label: '${_crossfadeSeconds}s',
+                            onChanged: (value) {
+                              setState(() => _crossfadeSeconds = value.round());
+                              setDialogState(() {});
+                            },
+                          ),
+                        ),
+                        const Text(
+                          '12s',
+                          style: TextStyle(color: Colors.white38),
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 180,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: List.generate(
+                        _eqBands.length,
+                        (index) => Expanded(
+                          child: Column(
+                            children: [
+                              Expanded(
+                                child: RotatedBox(
+                                  quarterTurns: 3,
+                                  child: Slider(
+                                    value: _eqBands[index],
+                                    min: -12,
+                                    max: 12,
+                                    onChanged: _equalizerEnabled
+                                        ? (value) {
+                                            setState(
+                                              () => _eqBands[index] = value,
+                                            );
+                                            if (_dspActive) {
+                                              _dspPlayer.applyEqualizer(
+                                                enabled: true,
+                                                bands: _eqBands,
+                                              );
+                                            }
+                                            setDialogState(() {});
+                                          }
+                                        : null,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '${index + 1}',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white38,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: () =>
+                  _saveEqualizerPreset(setDialogState, reservedPluginNames),
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save preset'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+    await _saveQueue();
+  }
+
+  Future<void> _showPlaybackSpeed() async {
+    var selected = _playbackSpeed;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Playback speed'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_casting)
+                const Text(
+                  'Speed control is unavailable while casting to this player.',
+                  textAlign: TextAlign.center,
+                ),
+              Text('${selected.toStringAsFixed(2)}×'),
+              Slider(
+                value: selected,
+                min: 0.5,
+                max: 2.0,
+                divisions: 15,
+                label: '${selected.toStringAsFixed(2)}×',
+                onChanged: _casting
+                    ? null
+                    : (value) {
+                        selected = value;
+                        setDialogState(() {});
+                      },
+                onChangeEnd: _casting
+                    ? null
+                    : (value) => unawaited(_setPlaybackSpeed(value)),
+              ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final speed in [0.5, 1.0, 1.25, 1.5, 2.0])
+                    OutlinedButton(
+                      onPressed: _casting
+                          ? null
+                          : () {
+                              selected = speed;
+                              setDialogState(() {});
+                              unawaited(_setPlaybackSpeed(speed));
+                            },
+                      child: Text('${speed}×'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showPlayerLayout() async {
+    final draft = List<String>.from(_playerControls);
+    var resetToDefault = false;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Customize player controls'),
+          content: SizedBox(
+            width: 400,
+            height: 430,
+            child: Column(
+              children: [
+                const Text(
+                  'Drag to reorder. Keep Play / pause in the bar and add the actions you use.',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ReorderableListView(
+                    onReorder: (oldIndex, newIndex) {
+                      if (newIndex > oldIndex) newIndex--;
+                      final control = draft.removeAt(oldIndex);
+                      draft.insert(newIndex, control);
+                      resetToDefault = false;
+                      setDialogState(() {});
+                    },
+                    children: [
+                      for (var index = 0; index < draft.length; index++)
+                        ListTile(
+                          key: ValueKey('${draft[index]}-$index'),
+                          dense: true,
+                          leading: ReorderableDragStartListener(
+                            index: index,
+                            child: const Icon(
+                              Icons.drag_handle,
+                              color: Colors.white38,
+                            ),
+                          ),
+                          title: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              value: draft[index],
+                              items: [
+                                for (final entry in playerControlLabels.entries)
+                                  if (entry.key == draft[index] ||
+                                      !draft.contains(entry.key))
+                                    DropdownMenuItem(
+                                      value: entry.key,
+                                      child: Text(
+                                        entry.value,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                              ],
+                              onChanged: (value) {
+                                if (value == null) return;
+                                draft[index] = value;
+                                resetToDefault = false;
+                                setDialogState(() {});
+                              },
+                            ),
+                          ),
+                          trailing: IconButton(
+                            tooltip: 'Remove control',
+                            onPressed: draft[index] == 'playPause'
+                                ? null
+                                : () {
+                                    draft.removeAt(index);
+                                    resetToDefault = false;
+                                    setDialogState(() {});
+                                  },
+                            icon: const Icon(Icons.remove_circle_outline),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                DropdownButton<String>(
+                  value: null,
+                  hint: const Text('Add a control'),
+                  items: [
+                    for (final entry in playerControlLabels.entries)
+                      if (!draft.contains(entry.key))
+                        DropdownMenuItem(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    draft.add(value);
+                    resetToDefault = false;
+                    setDialogState(() {});
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                draft
+                  ..clear()
+                  ..addAll(defaultPlayerControls);
+                resetToDefault = true;
+                setDialogState(() {});
+              },
+              child: const Text('Reset'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save layout'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    setState(() {
+      _playerControls = normalizePlayerControls(draft);
+      _playerLayoutCustomized = !resetToDefault;
+    });
+    await _saveQueue();
+  }
+
+  Widget _playerControl(String control) {
+    final selectedColor = const Color(0xffef4bff);
+    switch (control) {
+      case 'previous':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _previous,
+          icon: const Icon(Icons.skip_previous_rounded),
+          color: Colors.white70,
+        );
+      case 'rewind15':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => _skipBy(const Duration(seconds: -15)),
+          icon: const Icon(Icons.fast_rewind_rounded),
+          color: Colors.white70,
+        );
+      case 'playPause':
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0xffef4bff),
+          ),
+          child: IconButton(
+            tooltip: _isPlaying ? 'Pause' : 'Play',
+            onPressed: _togglePlay,
+            icon: Icon(
+              _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            ),
+            iconSize: 28,
+            color: Colors.white,
+          ),
+        );
+      case 'forward15':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => _skipBy(const Duration(seconds: 15)),
+          icon: const Icon(Icons.fast_forward_rounded),
+          color: Colors.white70,
+        );
+      case 'next':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _next,
+          icon: const Icon(Icons.skip_next_rounded),
+          color: Colors.white70,
+        );
+      case 'shuffle':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() => _shuffle = !_shuffle),
+          icon: const Icon(Icons.shuffle_rounded),
+          color: _shuffle ? selectedColor : Colors.white38,
+        );
+      case 'repeat':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() {
+            if (!_repeat && !_repeatOne) {
+              _repeat = true;
+            } else if (_repeat) {
+              _repeat = false;
+              _repeatOne = true;
+            } else {
+              _repeatOne = false;
+            }
+          }),
+          icon: Icon(
+            _repeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+          ),
+          color: (_repeat || _repeatOne) ? selectedColor : Colors.white38,
+        );
+      case 'equalizer':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showEqualizer,
+          icon: const Icon(Icons.equalizer_rounded),
+          color: _equalizerEnabled ? selectedColor : Colors.white70,
+        );
+      case 'speed':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showPlaybackSpeed,
+          icon: const Icon(Icons.speed_rounded),
+          color: Colors.white70,
+        );
+      case 'sleep':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showSleepTimer,
+          icon: const Icon(Icons.bedtime_outlined),
+          color: _sleepDeadline == null ? Colors.white70 : selectedColor,
+        );
+      case 'queue':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() => _activeView = 'queue'),
+          icon: const Icon(Icons.queue_music_rounded),
+          color: Colors.white70,
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(() async {
+      await _dlnaCast.dispose();
+      await _chromecastCast.dispose();
+      await _deleteCastMidiRender();
+    }());
+    _castPositionTimer?.cancel();
+    _sleepTimer?.cancel();
+    _resumeSaveTimer?.cancel();
+    _positionSub?.cancel();
+    _durationSub?.cancel();
+    _stateSub?.cancel();
+    _completeSub?.cancel();
+    _searchController.dispose();
+    _pulse.dispose();
+    _player.dispose();
+    unawaited(_midiPlayer.dispose());
+    unawaited(_dspPlayer.dispose());
+    super.dispose();
+  }
+
+  String _time(Duration value) =>
+      '${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+
+  String _ratingLabel(int rating) => '${'★' * rating}${'☆' * (5 - rating)}';
+
+  @override
+  Widget build(BuildContext context) => Shortcuts(
+    shortcuts: const <ShortcutActivator, Intent>{
+      SingleActivator(LogicalKeyboardKey.space): _TogglePlayIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowRight): _NextTrackIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowLeft): _PreviousTrackIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowRight, control: true):
           _SeekIntent(Duration(seconds: 10)),
       SingleActivator(LogicalKeyboardKey.arrowLeft, control: true): _SeekIntent(
         Duration(seconds: -10),
@@ -3471,4 +8967,3 @@ class SpectrumPainter extends CustomPainter {
   bool shouldRepaint(covariant SpectrumPainter oldDelegate) =>
       oldDelegate.fft != fft || oldDelegate.active != active;
 }
-
