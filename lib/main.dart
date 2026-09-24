@@ -26,7 +26,8 @@ import 'dlna_cast.dart';
 import 'chromecast_cast.dart';
 import 'airplay_cast.dart';
 
-import 'package:dart_cast/dart_cast.dart' show CastDevice;
+import 'package:dart_cast/dart_cast.dart'
+    show CastDevice, NeedsPairingException;
 
 import 'playlist_formats.dart';
 import 'tracker_modules.dart';
@@ -2902,7 +2903,7 @@ class _PlayerPageState extends State<PlayerPage>
                               if (track == null) return;
                               Navigator.pop(dialogContext);
                               try {
-                                await _castTrack(track, airplayDevice: device);
+                                await _startAirPlayCast(track, device);
                               } catch (e) {
                                 if (mounted)
                                   ScaffoldMessenger.of(this.context)
@@ -6487,6 +6488,59 @@ class _PlayerPageState extends State<PlayerPage>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not import SoundFont: $error')),
       );
+    }
+  }
+
+  Future<void> _startAirPlayCast(Track track, CastDevice device) async {
+    try {
+      await _castTrack(track, airplayDevice: device);
+    } on NeedsPairingException {
+      if (!await _pairAirPlayDevice(device)) return;
+      await _castTrack(track, airplayDevice: device);
+    }
+  }
+
+  Future<bool> _pairAirPlayDevice(CastDevice device) async {
+    final controller = TextEditingController();
+    final pin = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Pair with ${device.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          maxLength: 4,
+          decoration: const InputDecoration(
+            labelText: 'AirPlay PIN',
+            hintText: 'Enter the PIN shown on the receiver',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Pair'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final value = pin?.trim() ?? '';
+    if (value.length != 4 || int.tryParse(value) == null) return false;
+    try {
+      await _airplayCast.pair(device, value);
+      return true;
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not pair with AirPlay receiver: $error')),
+        );
+      }
+      return false;
     }
   }
 

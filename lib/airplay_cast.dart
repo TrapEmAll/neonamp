@@ -13,9 +13,13 @@ class AirPlayCast {
   static const MethodChannel _androidChannel = MethodChannel('neonamp/dlna');
   late final CastService _service = CastService(
     discoveryProviders: [AirPlayDiscoveryProvider()],
-    sessionFactory: (device) => AirPlaySession(device),
+    sessionFactory: (device) => AirPlaySession(
+      device,
+      credentials: _credentials[device.id],
+    ),
   );
   CastSession? _session;
+  final Map<String, HapCredentials> _credentials = {};
 
   bool get isConnected => _session != null;
   String? get deviceName => _session?.device.name;
@@ -79,6 +83,18 @@ class AirPlayCast {
       _session = null;
       await session.disconnect();
       rethrow;
+    }
+  }
+
+  /// Pair an AirPlay 2 receiver using the PIN displayed by the receiver.
+  /// Credentials are retained for the current app session and reused on the
+  /// next connection to the same receiver.
+  Future<void> pair(CastDevice device, String pin) async {
+    final session = AirPlaySession(device);
+    try {
+      _credentials[device.id] = await session.pairSetup(pin);
+    } finally {
+      session.dispose();
     }
   }
 
