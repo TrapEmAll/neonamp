@@ -50,6 +50,23 @@ void main() {
     expect(info.bitDepth, isNull);
   });
 
+  test('output status distinguishes requested mode from hardware knowledge', () {
+    final status = AudioOutputStatus(
+      backend: 'Native audio backend',
+      bitPerfectRequested: true,
+      softwareDspActive: false,
+      sourceFormat: const AudioFormatInfo(
+        codec: 'FLAC',
+        sampleRate: 96000,
+        bitDepth: 24,
+        channels: 2,
+      ),
+    );
+    expect(status.hardwareFormatKnown, isFalse);
+    expect(status.summary, contains('bit-perfect best effort requested'));
+    expect(status.summary, contains('hardware rate unavailable'));
+  });
+
   test('returns null for unknown formats', () {
     expect(parseAudioFormat(Uint8List.fromList([1, 2, 3]), path: 'x.bin'), isNull);
   });
