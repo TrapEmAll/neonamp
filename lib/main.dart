@@ -9015,16 +9015,27 @@ class _PlayerPageState extends State<PlayerPage>
     ),
   );
 
-  Widget _bottomPlayer() => Container(
-    padding: MediaQuery.sizeOf(context).width < 600
-        ? const EdgeInsets.fromLTRB(8, 2, 8, 4)
+  Widget _bottomPlayer() {
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    return Container(
+    padding: compact
+        ? const EdgeInsets.fromLTRB(8, 0, 8, 2)
         : const EdgeInsets.fromLTRB(24, 10, 24, 18),
     decoration: const BoxDecoration(
       color: Color(0xff0c0d14),
       border: Border(top: BorderSide(color: Colors.white10)),
     ),
-    child: Column(
-      children: [
+    child: Theme(
+      data: Theme.of(context).copyWith(
+        materialTapTargetSize: compact
+            ? MaterialTapTargetSize.shrinkWrap
+            : MaterialTapTargetSize.padded,
+        visualDensity: compact
+            ? VisualDensity.compact
+            : VisualDensity.standard,
+      ),
+      child: Column(
+        children: [
         Row(
           children: [
             Text(
@@ -9064,12 +9075,13 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               color: _casting ? const Color(0xffef4bff) : Colors.white54,
             ),
-            IconButton(
-              tooltip: 'Customize player controls',
-              onPressed: _showPlayerLayout,
-              icon: const Icon(Icons.tune_rounded, size: 18),
-              color: Colors.white54,
-            ),
+            if (!compact)
+              IconButton(
+                tooltip: 'Customize player controls',
+                onPressed: _showPlayerLayout,
+                icon: const Icon(Icons.tune_rounded, size: 18),
+                color: Colors.white54,
+              ),
           ],
         ),
         Row(
@@ -9227,7 +9239,8 @@ class _PlayerPageState extends State<PlayerPage>
             ],
           ],
         ),
-      ],
+        ],
+      ),
     ),
   );
 }
