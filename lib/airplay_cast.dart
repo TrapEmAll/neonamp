@@ -44,7 +44,7 @@ class AirPlayCast {
         protocols: {CastProtocol.airplay},
         timeout: timeout,
       )) {
-        devices = found;
+        devices = found.where(airPlayDeviceSupportsAudio).toList();
       }
       return devices;
     } finally {
@@ -166,5 +166,17 @@ class AirPlayCast {
     _session = null;
     await _service.dispose();
   }
+}
+
+/// Returns whether an AirPlay advertisement can accept audio media.
+///
+/// A few receivers omit the feature TXT record entirely; those devices stay
+/// visible and are validated when NeonAmp connects. When a receiver does
+/// advertise its feature mask, hiding non-audio services prevents a dead-end
+/// cast attempt from the device picker.
+bool airPlayDeviceSupportsAudio(CastDevice device) {
+  final features = device.metadata['features'] ?? device.metadata['ft'];
+  if (features == null || features.trim().isEmpty) return true;
+  return AirPlayFeatures.parse(features).supportsAudio;
 }
 
