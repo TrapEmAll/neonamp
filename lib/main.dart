@@ -45,6 +45,7 @@ import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
+import 'convolution.dart';
 import 'loudness_scan.dart';
 import 'custom_metadata.dart';
 import 'remote_command_server.dart';
@@ -2478,6 +2479,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _r128NormalizationEnabled = false;
   final Map<String, double?> _measuredLufs = <String, double?>{};
   bool _truePeakLimiterEnabled = true;
+  String? _convolutionImpulsePath;
   bool _remoteEnabled = false;
   int _remotePort = 8765;
   RemoteCommandServer? _remoteServer;
@@ -3577,6 +3579,11 @@ class _PlayerPageState extends State<PlayerPage>
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         _r128NormalizationEnabled = settings['r128NormalizationEnabled'] as bool? ?? false;
         _truePeakLimiterEnabled = settings['truePeakLimiterEnabled'] as bool? ?? true;
+        final savedImpulse = settings['convolutionImpulsePath'] as String?;
+        _convolutionImpulsePath = savedImpulse != null &&
+                isSupportedImpulseResponsePath(savedImpulse)
+            ? savedImpulse
+            : null;
         _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
@@ -3661,6 +3668,7 @@ class _PlayerPageState extends State<PlayerPage>
         'replayGainEnabled': _replayGainEnabled,
         'r128NormalizationEnabled': _r128NormalizationEnabled,
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
+        'convolutionImpulsePath': _convolutionImpulsePath,
         'remoteEnabled': _remoteEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
@@ -4386,7 +4394,7 @@ class _PlayerPageState extends State<PlayerPage>
           equalizerEnabled: _equalizerEnabled,
           bands: _eqBands,
           frequencies: _eqFrequencies,
-
+          convolutionImpulsePath: _convolutionImpulsePath,
           preamp: _eqPreamp,
           truePeakLimiterEnabled: _truePeakLimiterEnabled,
           effects: _enabledPluginEffects,
@@ -7637,6 +7645,28 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _chooseConvolutionImpulse() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['wav', 'flac', 'aif', 'aiff', 'ogg', 'oga', 'opus'],
+    );
+    if (picked.isEmpty || !mounted) return;
+    final path = picked.first.path;
+    if (path == null || !isSupportedImpulseResponsePath(path)) return;
+    setState(() => _convolutionImpulsePath = path);
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Impulse response enabled for local playback.')),
+      );
+    }
+  }
+
+  Future<void> _clearConvolutionImpulse() async {
+    setState(() => _convolutionImpulsePath = null);
+    await _saveQueue();
+  }
+
   Future<void> _showSettings() async {
     await showDialog<void>(
       context: context,
@@ -7715,6 +7745,39 @@ class _PlayerPageState extends State<PlayerPage>
                   unawaited(_setTruePeakLimiter(value));
                   setDialogState(() {});
                 },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Convolution impulse response'),
+                subtitle: Text(
+                  _convolutionImpulsePath == null
+                      ? 'Disabled'
+                      : _convolutionImpulsePath!.split(Platform.pathSeparator).last,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: Wrap(
+                  spacing: 4,
+                  children: [
+                    if (_convolutionImpulsePath != null)
+                      IconButton(
+                        tooltip: 'Clear impulse response',
+                        onPressed: () {
+                          unawaited(_clearConvolutionImpulse());
+                          setDialogState(() {});
+                        },
+                        icon: const Icon(Icons.clear),
+                      ),
+                    IconButton(
+                      tooltip: 'Choose impulse response',
+                      onPressed: () {
+                        unawaited(_chooseConvolutionImpulse());
+                        setDialogState(() {});
+                      },
+                      icon: const Icon(Icons.file_open_outlined),
+                    ),
+                  ],
+                ),
               ),
               const ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -8802,6 +8865,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'exportPodcasts') _exportPodcastSubscriptions();
               if (value == 'managePodcasts') _managePodcastSubscriptions();
               if (value == 'eq') _showEqualizer();
+              if (value == 'convolution') _chooseConvolutionImpulse();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
               if (value == 'audit') _auditLibrary();
@@ -8868,7 +8932,7 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'managePodcasts',
                 child: Text('Manage podcast subscriptions'),
               ),
-              PopupMenuItem(value: 'eq', child: Text('Equalizer')),
+              PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),\n              PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'abx', child: Text('ABX blind listening test')),
               PopupMenuItem(value: 'audit', child: Text('Audit library quality')),
               PopupMenuItem(
