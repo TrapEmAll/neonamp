@@ -4594,6 +4594,8 @@ class _PlayerPageState extends State<PlayerPage>
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
+        frequencies: _eqFrequencies,
+        convolutionImpulsePath: _convolutionImpulsePath,
 
         preamp: _eqPreamp,
         truePeakLimiterEnabled: _truePeakLimiterEnabled,
