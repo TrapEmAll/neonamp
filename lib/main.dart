@@ -6723,7 +6723,7 @@ class _PlayerPageState extends State<PlayerPage>
       type: FileType.custom,
       allowedExtensions: ['json', 'csv', 'txt'],
     );
-    final file = result?.files.firstOrNull;
+    final file = result.firstOrNull;
     if (file == null) return;
     try {
       final bytes = await _readPickedBytes(file);
@@ -6736,7 +6736,7 @@ class _PlayerPageState extends State<PlayerPage>
       var name = profile.name.trim();
       if (!canSaveEqualizerPresetName(
         name,
-        reservedNames: _plugins.expand((plugin) => plugin.equalizerPresets.keys),
+        reservedNames: _plugins.values.expand((plugin) => plugin.equalizerPresets.keys),
       )) {
         name = 'AutoEQ - ' + name;
       }
