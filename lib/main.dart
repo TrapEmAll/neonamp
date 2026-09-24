@@ -46,6 +46,7 @@ import 'media_artwork_cache.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
 import 'convolution.dart';
+import 'silence_detection.dart';
 import 'loudness_scan.dart';
 import 'custom_metadata.dart';
 import 'remote_command_server.dart';
@@ -2449,6 +2450,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _repeat = false;
   bool _repeatOne = false;
   bool _crossfade = false;
+  bool _silenceAwareCrossfade = false;
   int _crossfadeSeconds = 3;
   bool _equalizerEnabled = false;
   List<String> _playerControls = List<String>.from(defaultPlayerControls);
@@ -3332,6 +3334,11 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _setSilenceAwareCrossfade(bool enabled) async {
+    setState(() => _silenceAwareCrossfade = enabled);
+    await _saveQueue();
+  }
+
   Future<void> _setTruePeakLimiter(bool enabled) async {
     setState(() => _truePeakLimiterEnabled = enabled);
     _dspPlayer.setTruePeakLimiter(enabled);
@@ -3566,6 +3573,7 @@ class _PlayerPageState extends State<PlayerPage>
           (settings['balance'] as num?)?.toDouble() ?? _balance,
         );
         _crossfade = settings['crossfade'] as bool? ?? false;
+        _silenceAwareCrossfade = settings['silenceAwareCrossfade'] as bool? ?? false;
         _crossfadeSeconds =
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
@@ -3656,6 +3664,7 @@ class _PlayerPageState extends State<PlayerPage>
         'volume': _volume,
         'balance': _balance,
         'crossfade': _crossfade,
+        'silenceAwareCrossfade': _silenceAwareCrossfade,
         'crossfadeSeconds': _crossfadeSeconds,
         'equalizerEnabled': _equalizerEnabled,
         'eqPreamp': _eqPreamp,
@@ -4620,6 +4629,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _fadeBetweenTracks(
         outgoing: previousTrack,
         incoming: track,
+        incomingDuration: incomingDuration,
         setOutgoingVolume: previousPlayer.setVolume,
         setIncomingVolume: incomingPlayer.setVolume,
       );
@@ -4810,13 +4820,39 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<Duration> _transitionDuration(
+    Track outgoing,
+    Track incoming,
+    Duration incomingDuration,
+  ) async {
+    final base = Duration(seconds: _crossfadeSeconds);
+    if (!_silenceAwareCrossfade ||
+        outgoing.path.startsWith('http://') ||
+        outgoing.path.startsWith('https://') ||
+        incoming.path.startsWith('http://') ||
+        incoming.path.startsWith('https://')) {
+      return base;
+    }
+    final profiles = await Future.wait<SilenceProfile?>([
+      detectSilenceWithFfmpeg(outgoing.path, duration: _duration),
+      detectSilenceWithFfmpeg(incoming.path, duration: incomingDuration),
+    ]);
+    return adjustSilenceAwareCrossfade(
+      base: base,
+      outgoing: profiles[0] ?? const SilenceProfile(),
+      incoming: profiles[1] ?? const SilenceProfile(),
+    );
+  }
+
   Future<void> _fadeBetweenTracks({
     required Track outgoing,
     required Track incoming,
     required Future<void> Function(double volume) setOutgoingVolume,
+    required Duration incomingDuration,
     required Future<void> Function(double volume) setIncomingVolume,
   }) async {
-    final steps = math.max(1, _crossfadeSeconds * 10);
+    final transition = await _transitionDuration(outgoing, incoming, incomingDuration);
+    final steps = math.max(1, (transition.inMilliseconds / 100).round());
     for (var step = 1; step <= steps; step++) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
       final progress = step / steps;
@@ -7781,6 +7817,17 @@ class _PlayerPageState extends State<PlayerPage>
                     const Text('12s'),
                   ],
                 ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Silence-aware crossfade'),
+                subtitle: const Text('Use FFmpeg silence detection for local tracks'),
+                value: _silenceAwareCrossfade,
+                onChanged: (value) {
+                  setState(() => _silenceAwareCrossfade = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('ReplayGain normalization'),
