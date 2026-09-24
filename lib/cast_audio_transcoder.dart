@@ -55,6 +55,7 @@ Future<String?> prepareCastAudio(String path) async {
 }
 
 bool _isLocalFile(String path) {
+  if (RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(path)) return File(path).existsSync();
   final uri = Uri.tryParse(path);
   if (uri != null && uri.scheme.isNotEmpty && uri.scheme != 'file') {
     return false;
