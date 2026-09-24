@@ -9,6 +9,7 @@ import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 
 import 'tracker_modules.dart';
 import 'audio_effects.dart';
+import 'audio_loudness.dart';
 
 double dspGainForDb(double decibels) =>
     math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
@@ -110,6 +111,7 @@ class DspLocalPlayer {
       rethrow;
     }
     final equalizer = source.filters.parametricEqFilter..activate();
+    final limiter = source.filters.limiterFilter..activate();
     _volume = volume.clamp(0.0, 1.0).toDouble();
     _preamp = preamp.clamp(-12.0, 12.0).toDouble();
     final handle = soloud.SoLoud.instance.play(
@@ -117,6 +119,12 @@ class DspLocalPlayer {
       volume: _effectiveVolume,
       pan: balance.clamp(-1.0, 1.0),
     );
+    limiter.wet(soundHandle: handle).value = 1.0;
+    limiter.threshold(soundHandle: handle).value = -3.0;
+    limiter.outputCeiling(soundHandle: handle).value = defaultTruePeakCeilingDb;
+    limiter.attackTime(soundHandle: handle).value = 1.0;
+    limiter.releaseTime(soundHandle: handle).value = 100.0;
+    limiter.kneeWidth(soundHandle: handle).value = 2.0;
     equalizer.numBands(soundHandle: handle).value = bands.length.toDouble();
     for (var index = 0; index < bands.length; index++) {
       final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
