@@ -34,7 +34,6 @@ class DspLocalPlayer {
   Duration _duration = Duration.zero;
   double _volume = 1;
   double _preamp = 0;
-  bool _truePeakLimiterEnabled = true;
 
   Stream<Duration> get onPositionChanged => _positionController.stream;
   Stream<Duration> get onDurationChanged => _durationController.stream;
@@ -114,7 +113,6 @@ class DspLocalPlayer {
     }
     final equalizer = source.filters.parametricEqFilter..activate();
     final limiter = source.filters.limiterFilter;
-    _truePeakLimiterEnabled = truePeakLimiterEnabled;
     _volume = volume.clamp(0.0, 1.0).toDouble();
     _preamp = preamp.clamp(-12.0, 12.0).toDouble();
     final handle = soloud.SoLoud.instance.play(
