@@ -264,7 +264,6 @@ class DspLocalPlayer {
   }
 
   void setTruePeakLimiter(bool enabled) {
-    _truePeakLimiterEnabled = enabled;
     final source = _source;
     final handle = _handle;
     if (source == null ||
