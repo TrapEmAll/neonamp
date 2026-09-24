@@ -3547,6 +3547,23 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<({String path, bool temporary})?> _materializePickedFile(
+    PlatformFile file,
+  ) async {
+    final path = file.path;
+    if (path != null) return (path: path, temporary: false);
+    final bytes = await _readPickedBytes(file);
+    if (bytes == null) return null;
+    final extension = (file.extension ?? 'dat').toLowerCase();
+    final directory = await getTemporaryDirectory();
+    final temporary = File(
+      '${directory.path}${Platform.pathSeparator}'
+      'neonamp-import-${DateTime.now().microsecondsSinceEpoch}.$extension',
+    );
+    await temporary.writeAsBytes(bytes, flush: true);
+    return (path: temporary.path, temporary: true);
+  }
+
   Future<void> _copyFileToFolder(
     String folder,
     String sourcePath,
@@ -3711,8 +3728,11 @@ class _PlayerPageState extends State<PlayerPage>
       type: FileType.custom,
       allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
     );
-    if (result.isEmpty || result.first.path == null) return;
-    final playlistPath = result.first.path!;
+    final file = result.firstOrNull;
+    if (file == null) return;
+    final materialized = await _materializePickedFile(file);
+    if (materialized == null) return;
+    final playlistPath = materialized.path;
     try {
       final extension = playlistPath.split('.').last.toLowerCase();
       final document = parsePlaylistDocument(
@@ -3781,6 +3801,11 @@ class _PlayerPageState extends State<PlayerPage>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not import playlist: $error')),
         );
+      }
+    } finally {
+      if (materialized.temporary) {
+        final temporary = File(materialized.path);
+        if (await temporary.exists()) await temporary.delete();
       }
     }
   }
