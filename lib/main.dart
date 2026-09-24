@@ -2507,7 +2507,6 @@ class _PlayerPageState extends State<PlayerPage>
   String _libreFmSharedSecret = '';
   bool _scrobblingEnabled = false;
   String? _scrobbledTrackIdentity;
-  AudioFormatInfo? _audioFormatInfo;
   bool _remoteEnabled = false;
   bool _controllerOverlayVisible = false;
   int _remotePort = 8765;
@@ -4581,7 +4580,6 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await _saveQueue();
       _scrobbledTrackIdentity = null;
-      unawaited(_refreshAudioFormatInfo(track));
       unawaited(_submitNowPlaying(track));
       if (castDevice != null || airplayDevice != null || castRenderer != null) {
         try {
@@ -4998,7 +4996,6 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _scrobbledTrackIdentity = null;
-    unawaited(_refreshAudioFormatInfo(track));
     unawaited(_submitNowPlaying(track));
   }
 
@@ -8984,31 +8981,6 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
-  Future<void> _refreshAudioFormatInfo(Track track) async {
-    if (track.path.startsWith('http')) {
-      if (mounted) setState(() => _audioFormatInfo = null);
-      return;
-    }
-    try {
-      final file = File(track.path);
-      if (!await file.exists()) return;
-      final handle = await file.open();
-      try {
-        final length = math.min(await file.length(), 128 * 1024);
-        final info = parseAudioFormat(await handle.read(length), path: track.path);
-        if (mounted && identical(_current, track)) {
-          setState(() => _audioFormatInfo = info);
-        }
-      } finally {
-        await handle.close();
-      }
-    } on Object {
-      if (mounted && identical(_current, track)) {
-        setState(() => _audioFormatInfo = null);
-      }
-    }
-  }
-
   Future<void> _showAudioFormatInfo() async {
     final track = _current;
     if (track == null || track.path.startsWith('http')) {
@@ -9035,7 +9007,6 @@ class _PlayerPageState extends State<PlayerPage>
       info = null;
     }
     if (!mounted) return;
-    setState(() => _audioFormatInfo = info);
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
