@@ -41,6 +41,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Podcast subscription management allows unsubscribing without removing existing episodes from the queue/library
 - Recursive folder scanning and M3U/M3U8 playlist import
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume
+- Configurable local-file crossfade with optional FFmpeg silence detection that adjusts transition timing from leading/trailing silence; streams retain the fixed-duration fallback
 - One-tap 15-second rewind and forward seek on Windows and Android
 - Customizable, reorderable player controls with persisted layouts on Windows and Android
 - Adjustable 0.5×–2× playback speed with persisted settings on Windows and Android
