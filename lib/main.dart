@@ -7839,7 +7839,6 @@ class _PlayerPageState extends State<PlayerPage>
         setDialogState(() => loading = false);
       }
     }
-  }
 
     try {
       await showDialog<void>(
