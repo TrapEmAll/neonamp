@@ -7802,6 +7802,45 @@ class _PlayerPageState extends State<PlayerPage>
     var results = <MediaServerTrack>[];
     var loading = false;
     var error = '';
+    Future<void> _search(StateSetter setDialogState) async {
+      final profile = MediaServerProfile(
+        kind: kind,
+        baseUrl: baseUrl.text.trim(),
+        username: username.text.trim(),
+        secret: secret.text,
+        userId: kind == 'jellyfin' ? userId.text.trim() : null,
+      );
+      if (profile.baseUrl.isEmpty || profile.username.isEmpty || profile.secret.isEmpty) {
+        setDialogState(() => error = 'Enter the server URL, username, and password/token.');
+        return;
+      }
+      if (profile.isJellyfin && (profile.userId == null || profile.userId!.isEmpty)) {
+        setDialogState(() => error = 'Enter the Jellyfin user ID.');
+        return;
+      }
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      final client = MediaServerClient(profile);
+      try {
+        final found = await client.search(query.text);
+        setState(() {
+          _mediaServerProfiles
+            ..clear()
+            ..add(profile);
+        });
+        await _saveQueue();
+        setDialogState(() => results = found);
+      } on Object catch (caught) {
+        setDialogState(() => error = caught.toString());
+      } finally {
+        client.close();
+        setDialogState(() => loading = false);
+      }
+    }
+  }
+
     try {
       await showDialog<void>(
         context: context,
@@ -7848,12 +7887,12 @@ class _PlayerPageState extends State<PlayerPage>
                         child: TextField(
                           controller: query,
                           decoration: const InputDecoration(labelText: 'Search remote library'),
-                          onSubmitted: (_) => _search(),
+                          onSubmitted: (_) => _search(setDialogState),
                         ),
                       ),
                       IconButton(
                         tooltip: 'Search',
-                        onPressed: loading ? null : _search,
+                        onPressed: loading ? null : () => _search(setDialogState),
                         icon: const Icon(Icons.search),
                       ),
                     ],
@@ -7917,46 +7956,6 @@ class _PlayerPageState extends State<PlayerPage>
       userId.dispose();
       query.dispose();
     }
-
-    Future<void> _search() async {
-      final profile = MediaServerProfile(
-        kind: kind,
-        baseUrl: baseUrl.text.trim(),
-        username: username.text.trim(),
-        secret: secret.text,
-        userId: kind == 'jellyfin' ? userId.text.trim() : null,
-      );
-      if (profile.baseUrl.isEmpty || profile.username.isEmpty || profile.secret.isEmpty) {
-        setDialogState(() => error = 'Enter the server URL, username, and password/token.');
-        return;
-      }
-      if (profile.isJellyfin && (profile.userId == null || profile.userId!.isEmpty)) {
-        setDialogState(() => error = 'Enter the Jellyfin user ID.');
-        return;
-      }
-      setDialogState(() {
-        loading = true;
-        error = '';
-      });
-      final client = MediaServerClient(profile);
-      try {
-        final found = await client.search(query.text);
-        setState(() {
-          _mediaServerProfiles
-            ..clear()
-            ..add(profile);
-        });
-        await _saveQueue();
-        setDialogState(() => results = found);
-      } on Object catch (caught) {
-        setDialogState(() => error = caught.toString());
-      } finally {
-        client.close();
-        setDialogState(() => loading = false);
-      }
-    }
-  }
-
   Future<void> _showSettings() async {
     await showDialog<void>(
       context: context,
