@@ -2505,6 +2505,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _libreFmSessionKey = '';
   String _libreFmSharedSecret = '';
   bool _scrobblingEnabled = false;
+  String? _scrobbledTrackIdentity;
   bool _remoteEnabled = false;
   bool _controllerOverlayVisible = false;
   int _remotePort = 8765;
@@ -2782,6 +2783,7 @@ class _PlayerPageState extends State<PlayerPage>
       final relative = _cueRelativePosition(track, value);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
+      unawaited(_maybeSubmitScrobble(relative));
       if (track?.cueStartMs == null &&
           !_casting &&
           _crossfade &&
@@ -2823,6 +2825,7 @@ class _PlayerPageState extends State<PlayerPage>
       final relative = _cueRelativePosition(track, value);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
+      unawaited(_maybeSubmitScrobble(relative));
       if (track?.cueStartMs == null &&
           !_casting &&
           _crossfade &&
@@ -4575,6 +4578,7 @@ class _PlayerPageState extends State<PlayerPage>
         await _seekCurrent(resumePosition ?? Duration.zero);
       }
       await _saveQueue();
+      _scrobbledTrackIdentity = null;
       unawaited(_submitNowPlaying(track));
       if (castDevice != null || airplayDevice != null || castRenderer != null) {
         try {
@@ -4594,6 +4598,42 @@ class _PlayerPageState extends State<PlayerPage>
       }
     } finally {
       _selectionInProgress = false;
+    }
+  }
+
+  Future<void> _maybeSubmitScrobble(Duration position) async {
+    final track = _current;
+    if (!_scrobblingEnabled || track == null || _duration <= Duration.zero) return;
+    final identity = track.identityKey;
+    if (_scrobbledTrackIdentity == identity) return;
+    final durationSeconds = _duration.inSeconds;
+    final thresholdSeconds = durationSeconds >= 240
+        ? 240
+        : math.max(30, durationSeconds ~/ 2);
+    if (position.inSeconds < thresholdSeconds) return;
+    _scrobbledTrackIdentity = identity;
+    final client = MultiServiceScrobbler(
+      ScrobbleProfile(
+        token: _listenBrainzToken,
+        enabled: true,
+        lastFmApiKey: _lastFmApiKey,
+        lastFmSessionKey: _lastFmSessionKey,
+        lastFmSharedSecret: _lastFmSharedSecret,
+        libreFmApiKey: _libreFmApiKey,
+        libreFmSessionKey: _libreFmSessionKey,
+        libreFmSharedSecret: _libreFmSharedSecret,
+      ),
+    );
+    try {
+      await client.submitScrobble(
+        title: track.name,
+        artist: track.artist,
+        album: track.album,
+        timestampSeconds: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        durationSeconds: durationSeconds,
+      );
+    } finally {
+      client.close();
     }
   }
 
@@ -4954,6 +4994,7 @@ class _PlayerPageState extends State<PlayerPage>
         _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
       }
     });
+    _scrobbledTrackIdentity = null;
     unawaited(_submitNowPlaying(track));
   }
 
