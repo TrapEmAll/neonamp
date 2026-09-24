@@ -45,11 +45,11 @@ void main() {
       ..setRange(0, 4, [0x44, 0x53, 0x44, 0x20])
       ..setRange(28, 32, [0x66, 0x6d, 0x74, 0x20]);
     final data = ByteData.sublistView(bytes);
-    data.setUint64(32, 48, Endian.little);
+    data.setUint64(32, 52, Endian.little);
     data.setUint32(40, 1, Endian.little);
-    data.setUint32(48, 2, Endian.little);
-    data.setUint32(52, 2822400, Endian.little);
-    data.setUint32(56, 1, Endian.little);
+    data.setUint32(52, 2, Endian.little);
+    data.setUint32(56, 2822400, Endian.little);
+    data.setUint32(60, 1, Endian.little);
     final info = parseAudioFormat(bytes, path: 'album.dsf')!;
     expect(info.codec, 'DSD');
     expect(info.sampleRate, 2822400);
