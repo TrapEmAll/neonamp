@@ -9198,30 +9198,37 @@ class _PlayerPageState extends State<PlayerPage>
     switch (action) {
       case ControllerAction.playPause:
         unawaited(_togglePlay());
+        break;
       case ControllerAction.next:
         unawaited(_next());
+        break;
       case ControllerAction.previous:
         unawaited(_previous());
+        break;
       case ControllerAction.seekForward:
         unawaited(_seekCurrent(
           (_position + const Duration(seconds: 15)) > _duration
               ? _duration
               : _position + const Duration(seconds: 15),
         ));
+        break;
       case ControllerAction.seekBackward:
         unawaited(_seekCurrent(
           (_position - const Duration(seconds: 15)) < Duration.zero
               ? Duration.zero
               : _position - const Duration(seconds: 15),
         ));
+        break;
       case ControllerAction.mute:
         final nextVolume = _volume > 0 ? 0.0 : 0.82;
         setState(() => _volume = nextVolume);
         unawaited(_player.setVolume(_volumeFor(_current)));
         unawaited(_dspPlayer.setVolume(_volumeFor(_current)));
         unawaited(_saveQueue());
+        break;
       case ControllerAction.toggleOverlay:
         setState(() => _controllerOverlayVisible = !_controllerOverlayVisible);
+        break;
     }
     return KeyEventResult.handled;
   }
