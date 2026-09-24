@@ -199,6 +199,32 @@ AudioFormatInfo? parseAudioFormat(
     }
   }
 
+  if (bytes.length >= 36 &&
+      bytes[0] == 0x44 &&
+      bytes[1] == 0x53 &&
+      bytes[2] == 0x44 &&
+      bytes[3] == 0x20) {
+    var offset = 28;
+    while (offset + 8 <= bytes.length) {
+      final chunk = String.fromCharCodes(bytes.sublist(offset, offset + 4));
+      final size = ByteData.sublistView(bytes, offset + 4, offset + 8)
+          .getUint64(0, Endian.little);
+      final start = offset + 12;
+      if (size < 12 || start > bytes.length || size - 12 > bytes.length - start) {
+        break;
+      }
+      if (chunk == 'fmt ' && size >= 32 && start + 24 <= bytes.length) {
+        return AudioFormatInfo(
+          codec: 'DSD',
+          channels: _u32(bytes, start + 12, Endian.little),
+          sampleRate: _u32(bytes, start + 16, Endian.little),
+          bitDepth: _u32(bytes, start + 20, Endian.little),
+        );
+      }
+      offset += size;
+    }
+  }
+
   final extension = path.split('.').last.toLowerCase();
   if (extension == 'dsf' || extension == 'dff' || extension == 'dsdiff') {
     return const AudioFormatInfo(codec: 'DSD');
