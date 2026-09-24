@@ -75,6 +75,25 @@ Map<String, dynamic> buildListenBrainzPayload({
   },
 };
 
+Map<String, dynamic> buildListenBrainzScrobblePayload({
+  required String title,
+  required String artist,
+  required String album,
+  required int timestampSeconds,
+  int? durationSeconds,
+}) => {
+  'listen_type': 'single',
+  'payload': [{
+    'listened_at': timestampSeconds,
+    'track_metadata': {
+      'track_name': title,
+      'artist_name': artist,
+      'release_name': album,
+      if (durationSeconds != null) 'additional_info': {'duration': durationSeconds},
+    },
+  }],
+};
+
 class ListenBrainzScrobbler {
   ListenBrainzScrobbler(this.profile, {HttpClient? httpClient})
       : _httpClient = httpClient ?? HttpClient();
@@ -122,18 +141,13 @@ class ListenBrainzScrobbler {
       request.headers
         ..set(HttpHeaders.authorizationHeader, 'Token ${profile.token.trim()}')
         ..contentType = ContentType.json;
-      request.write(jsonEncode({
-        'listen_type': 'single',
-        'payload': [{
-          'listened_at': timestampSeconds,
-          'track_metadata': {
-            'track_name': title,
-            'artist_name': artist,
-            'release_name': album,
-            if (durationSeconds != null) 'additional_info': {'duration': durationSeconds},
-          },
-        }],
-      }));
+      request.write(jsonEncode(buildListenBrainzScrobblePayload(
+        title: title,
+        artist: artist,
+        album: album,
+        timestampSeconds: timestampSeconds,
+        durationSeconds: durationSeconds,
+      )));
       final response = await request.close();
       await response.drain<void>();
       return response.statusCode >= 200 && response.statusCode < 300;
