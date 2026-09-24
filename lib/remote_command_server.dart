@@ -29,12 +29,12 @@ small{color:#aaa}.queue{max-height:260px;overflow:auto}
 <input id="seek" type="range" min="0" max="1" value="0" oninput="seek(this.value)">
 <label>Volume <input id="volume" type="range" min="0" max="1" step=".01" value=".8" oninput="volume(this.value)"></label>
 </div>
-<div class="card"><strong>Queue</strong><div id="queue" class="queue"></div></div>
+<div class="card"><strong>Queue</strong><button class="secondary" onclick="send('clearQueue')">Clear queue</button><div id="queue" class="queue"></div></div>
 <script>
 async function send(type,extra={}){await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type,...extra})});refresh()}
 async function seek(v){send('seek',{positionMs:Math.round(v*1000)})}
 async function volume(v){send('volume',{value:Number(v)})}
-async function refresh(){const r=await fetch('/api/state');const s=(await r.json()).state||{};const t=s.current||{};document.getElementById('track').textContent=t.title||'Nothing playing';document.getElementById('artist').textContent=t.artist||'';document.getElementById('seek').max=Math.max(1,Math.round((s.durationMs||0)/1000));document.getElementById('seek').value=Math.min(document.getElementById('seek').max,Math.round((s.positionMs||0)/1000));document.getElementById('volume').value=s.volume??.8;document.getElementById('queue').innerHTML=(s.queue||[]).map(x=>'<div>'+escapeHtml(x.title||'')+'<small> — '+escapeHtml(x.artist||'')+'</small></div>').join('')}
+async function refresh(){const r=await fetch('/api/state');const s=(await r.json()).state||{};const t=s.current||{};document.getElementById('track').textContent=t.title||'Nothing playing';document.getElementById('artist').textContent=t.artist||'';document.getElementById('seek').max=Math.max(1,Math.round((s.durationMs||0)/1000));document.getElementById('seek').value=Math.min(document.getElementById('seek').max,Math.round((s.positionMs||0)/1000));document.getElementById('volume').value=s.volume??.8;document.getElementById('queue').innerHTML=(s.queue||[]).map((x,i)=>'<button class="secondary" onclick="send(\'select\',{index:i})">'+escapeHtml(x.title||'')+'<small> — '+escapeHtml(x.artist||'')+'</small></button>').join('')}
 function escapeHtml(x){return x.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 refresh();setInterval(refresh,2000);
 </script>
