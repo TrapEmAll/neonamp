@@ -40,14 +40,22 @@ void main() {
     expect(info.bitDepth, 24);
   });
 
-  test('identifies DSD containers without inventing PCM details', () {
-    final info = parseAudioFormat(
-      Uint8List(4),
-      path: 'album.dsf',
-    )!;
+  test('parses DSF DSD sample rate, channels, and one-bit depth', () {
+    final bytes = Uint8List(64)
+      ..setRange(0, 4, [0x44, 0x53, 0x44, 0x20])
+      ..setRange(28, 32, [0x66, 0x6d, 0x74, 0x20]);
+    final data = ByteData.sublistView(bytes);
+    data.setUint64(32, 48, Endian.little);
+    data.setUint32(40, 1, Endian.little);
+    data.setUint32(48, 2, Endian.little);
+    data.setUint32(52, 2822400, Endian.little);
+    data.setUint32(56, 1, Endian.little);
+    final info = parseAudioFormat(bytes, path: 'album.dsf')!;
     expect(info.codec, 'DSD');
-    expect(info.sampleRate, isNull);
-    expect(info.bitDepth, isNull);
+    expect(info.sampleRate, 2822400);
+    expect(info.bitDepth, 1);
+    expect(info.channels, 2);
+    expect(info.summary, contains('stereo'));
   });
 
   test('output status distinguishes requested mode from hardware knowledge', () {
