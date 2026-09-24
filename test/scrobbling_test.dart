@@ -16,6 +16,23 @@ void main() {
     expect(decoded['payload']['track_metadata']['additional_info']['duration'], 240);
   });
 
+  test('builds a completed ListenBrainz listen payload', () {
+    final payload = buildListenBrainzScrobblePayload(
+      title: 'Track',
+      artist: 'Artist',
+      album: 'Album',
+      timestampSeconds: 1700000000,
+      durationSeconds: 240,
+    );
+    expect(payload['listen_type'], 'single');
+    expect(payload['payload'], hasLength(1));
+    expect(payload['payload'][0]['listened_at'], 1700000000);
+    expect(
+      payload['payload'][0]['track_metadata']['additional_info']['duration'],
+      240,
+    );
+  });
+
   test('Last.fm signatures are deterministic and sorted', () {
     final signature = buildLastFmApiSignature(
       {'track': 'Track', 'api_key': 'key', 'method': 'track.updateNowPlaying'},
