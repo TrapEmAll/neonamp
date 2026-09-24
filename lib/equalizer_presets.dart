@@ -44,6 +44,32 @@ Map<String, List<double>> decodeCustomEqualizerPresets(Object? value) {
   return presets;
 }
 
+Map<String, List<double>> decodeCustomEqualizerFrequencies(Object? value) {
+  if (value is! Map) return {};
+  final frequencies = <String, List<double>>{};
+  for (final entry in value.entries) {
+    final name = entry.key.toString().trim();
+    final values = entry.value;
+    if (name.isEmpty || values is! List || values.length != 10) continue;
+    final parsed = <double>[];
+    for (final value in values) {
+      if (value is! num || !value.isFinite) {
+        parsed.clear();
+        break;
+      }
+      parsed.add(value.toDouble());
+    }
+    if (parsed.length != 10 ||
+        parsed.any((value) => value < 20 || value > 20000) ||
+        !List.generate(9, (index) => parsed[index] < parsed[index + 1])
+            .every((value) => value)) {
+      continue;
+    }
+    frequencies[name] = parsed;
+  }
+  return frequencies;
+}
+
 bool canSaveEqualizerPresetName(
   String name, {
   Iterable<String> reservedNames = const [],
