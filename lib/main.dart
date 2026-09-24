@@ -2406,6 +2406,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _libraryFilter = 'All';
   String _librarySort = 'Added';
   bool _librarySortDescending = false;
+  String _visualizerMode = 'spectrum';
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
   final Map<String, List<double>> _customEqPresets = {};
@@ -3371,6 +3372,10 @@ class _PlayerPageState extends State<PlayerPage>
         _librarySort = settings['librarySort'] as String? ?? 'Added';
         _librarySortDescending =
             settings['librarySortDescending'] as bool? ?? false;
+        final savedVisualizerMode = settings['visualizerMode'] as String?;
+        if (visualizerModes.contains(savedVisualizerMode)) {
+          _visualizerMode = savedVisualizerMode!;
+        }
         final savedPlayerControls = settings['playerControls'];
         if (savedPlayerControls is List) {
           _playerControls = normalizePlayerControls(savedPlayerControls);
@@ -3435,6 +3440,7 @@ class _PlayerPageState extends State<PlayerPage>
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
+        'visualizerMode': _visualizerMode,
         'libraryRelativePaths': _libraryRelativePaths,
         if (_playerLayoutCustomized) 'playerControls': _playerControls,
       }),
@@ -6752,34 +6758,73 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       await showDialog<void>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Spectrum visualizer'),
-          content: SizedBox(
-            width: 560,
-            height: 220,
-            child: canVisualize
-                ? StreamBuilder<soloud.AudioVisualizationData>(
-                    stream: soloud.SoLoud.instance.audioVisualizationEvents,
-                    builder: (context, snapshot) => CustomPaint(
-                      painter: SpectrumPainter(
-                        fft: snapshot.data?.fftData,
-                        active: _isPlaying,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Visualizer'),
+            content: SizedBox(
+              width: 560,
+              height: 270,
+              child: Column(
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: _visualizerMode,
+                    decoration: const InputDecoration(labelText: 'Mode'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'spectrum',
+                        child: Text('Spectrum bars'),
                       ),
-                    ),
-                  )
-                : const Center(
-                    child: Text(
-                      'Audio-reactive visuals are available during local playback with the equalizer enabled.',
-                      textAlign: TextAlign.center,
-                    ),
+                      DropdownMenuItem(
+                        value: 'waveform',
+                        child: Text('Waveform'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'oscilloscope',
+                        child: Text('Oscilloscope'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => _visualizerMode = value);
+                      setDialogState(() {});
+                      unawaited(_saveQueue());
+                    },
                   ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Done'),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: canVisualize
+                        ? StreamBuilder<soloud.AudioVisualizationData>(
+                            stream: soloud
+                                .SoLoud
+                                .instance
+                                .audioVisualizationEvents,
+                            builder: (context, snapshot) => CustomPaint(
+                              painter: VisualizerPainter(
+                                mode: _visualizerMode,
+                                fft: snapshot.data?.fftData,
+                                wave: snapshot.data?.waveData,
+                                active: _isPlaying,
+                              ),
+                              child: const SizedBox.expand(),
+                            ),
+                          )
+                        : const Center(
+                            child: Text(
+                              'Audio-reactive visuals are available during local playback with the equalizer enabled.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                  ),
+                ],
+              ),
             ),
-          ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
         ),
       );
     } finally {
@@ -9083,15 +9128,34 @@ class _PlayerPageState extends State<PlayerPage>
   );
 }
 
-class SpectrumPainter extends CustomPainter {
-  const SpectrumPainter({required this.fft, required this.active});
+const visualizerModes = {'spectrum', 'waveform', 'oscilloscope'};
+
+class VisualizerPainter extends CustomPainter {
+  const VisualizerPainter({
+    required this.mode,
+    required this.fft,
+    required this.wave,
+    required this.active,
+  });
+  final String mode;
   final Float32List? fft;
+  final Float32List? wave;
   final bool active;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bins = fft;
-    if (!active || bins == null || bins.isEmpty) return;
+    final values = mode == 'spectrum' ? fft : wave;
+    if (!active || values == null || values.isEmpty) return;
+    if (mode == 'spectrum') {
+      _paintSpectrum(canvas, size, values);
+    } else if (mode == 'waveform') {
+      _paintWaveform(canvas, size, values, filled: true);
+    } else {
+      _paintWaveform(canvas, size, values, filled: false);
+    }
+  }
+
+  void _paintSpectrum(Canvas canvas, Size size, Float32List bins) {
     final paint = Paint()..strokeCap = StrokeCap.round;
     const count = 52;
     for (var i = 0; i < count; i++) {
@@ -9113,7 +9177,56 @@ class SpectrumPainter extends CustomPainter {
     }
   }
 
+  void _paintWaveform(
+    Canvas canvas,
+    Size size,
+    Float32List samples, {
+    required bool filled,
+  }) {
+    final path = Path();
+    final center = size.height / 2;
+    final amplitude = size.height * .43;
+    for (var index = 0; index < samples.length; index++) {
+      final x = samples.length == 1
+          ? 0.0
+          : index * size.width / (samples.length - 1);
+      final y = center - samples[index].clamp(-1.0, 1.0) * amplitude;
+      if (index == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final paint = Paint()
+      ..style = filled ? PaintingStyle.stroke : PaintingStyle.stroke
+      ..strokeWidth = filled ? 2.5 : 1.8
+      ..strokeCap = StrokeCap.round
+      ..color = filled
+          ? const Color(0xffff4ccf)
+          : const Color(0xff5b9dff);
+    canvas.drawLine(
+      Offset(0, center),
+      Offset(size.width, center),
+      Paint()
+        ..color = Colors.white12
+        ..strokeWidth = 1,
+    );
+    canvas.drawPath(path, paint);
+    if (filled) {
+      final glow = Paint()
+        ..color = const Color(0xffff4ccf).withOpacity(.16)
+        ..strokeWidth = 8
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke;
+      canvas.drawPath(path, glow);
+    }
+  }
+
   @override
-  bool shouldRepaint(covariant SpectrumPainter oldDelegate) =>
-      oldDelegate.fft != fft || oldDelegate.active != active;
+  bool shouldRepaint(covariant VisualizerPainter oldDelegate) =>
+      oldDelegate.mode != mode ||
+      oldDelegate.fft != fft ||
+      oldDelegate.wave != wave ||
+      oldDelegate.active != active;
 }
+
