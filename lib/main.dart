@@ -49,6 +49,7 @@ import 'loudness_scan.dart';
 import 'custom_metadata.dart';
 import 'remote_command_server.dart';
 import 'abx_test.dart';
+import 'track_auditor.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -6941,6 +6942,79 @@ class _PlayerPageState extends State<PlayerPage>
     return target.path;
   }
 
+  Future<void> _auditLibrary() async {
+    final entries = <AudioAuditEntry>[];
+    for (final track in _library) {
+      var sizeBytes = 0;
+      try {
+        final file = File(track.path);
+        if (await file.exists()) sizeBytes = await file.length();
+      } on Object {
+        // SAF and remote entries may not expose a local file length.
+      }
+      entries.add(
+        AudioAuditEntry(
+          path: track.path,
+          title: track.name,
+          artist: track.artist,
+          album: track.album,
+          extension: track.path.split('.').last,
+          sizeBytes: sizeBytes,
+        ),
+      );
+    }
+    final duplicates = findDuplicateAudioGroups(entries);
+    final missing = findMissingCoreTags(entries);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Library quality audit'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  duplicates.isEmpty
+                      ? 'No probable duplicates found.'
+                      : '${duplicates.length} probable duplicate group${duplicates.length == 1 ? '' : 's'}',
+                ),
+                for (final group in duplicates)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text(
+                      '${group.recommended.artist} — ${group.recommended.title}\n'
+                      'Keep: ${group.recommended.path}\n'
+                      'Lower-quality copies: ${group.lowerQuality.length}',
+                    ),
+                  ),
+                const SizedBox(height: 14),
+                Text(
+                  missing.isEmpty
+                      ? 'All tracks have title, artist, and album tags.'
+                      : '${missing.length} track${missing.length == 1 ? '' : 's'} missing core tags',
+                ),
+                for (final entry in missing.take(10))
+                  Text('• ${entry.path}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                if (missing.length > 10)
+                  Text('…and ${missing.length - 10} more'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showAbxTest() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -8730,6 +8804,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'eq') _showEqualizer();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
+              if (value == 'audit') _auditLibrary();
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'layout') _showPlayerLayout();
               if (value == 'theme') _showThemePicker();
@@ -8795,6 +8870,7 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'abx', child: Text('ABX blind listening test')),
+              PopupMenuItem(value: 'audit', child: Text('Audit library quality')),
               PopupMenuItem(
                 value: 'autoEq',
                 child: Text('Import AutoEQ headphone profile'),
