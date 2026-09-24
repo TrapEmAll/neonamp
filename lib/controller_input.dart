@@ -8,26 +8,48 @@ enum ControllerAction {
   toggleOverlay,
 }
 
-/// Android USB/Bluetooth gamepad key codes. Flutter forwards these key events
-/// to the focused player surface on Android and Windows-compatible controllers.
-ControllerAction? controllerActionForKeyId(int keyId) {
-  switch (keyId) {
-    case 96: // A / DPAD center
-    case 23:
-      return ControllerAction.playPause;
-    case 97: // B
-      return ControllerAction.previous;
-    case 99: // X
-      return ControllerAction.next;
-    case 100: // Y
-      return ControllerAction.mute;
-    case 21: // DPAD left
-      return ControllerAction.seekBackward;
-    case 22: // DPAD right
-      return ControllerAction.seekForward;
-    case 108: // START
-      return ControllerAction.toggleOverlay;
-    default:
-      return null;
+const defaultControllerBindings = <ControllerAction, int>{
+  ControllerAction.playPause: 96,
+  ControllerAction.next: 99,
+  ControllerAction.previous: 97,
+  ControllerAction.seekBackward: 21,
+  ControllerAction.seekForward: 22,
+  ControllerAction.mute: 100,
+  ControllerAction.toggleOverlay: 108,
+};
+
+const controllerActionLabels = <ControllerAction, String>{
+  ControllerAction.playPause: 'Play / pause',
+  ControllerAction.next: 'Next track',
+  ControllerAction.previous: 'Previous track',
+  ControllerAction.seekBackward: 'Seek backward',
+  ControllerAction.seekForward: 'Seek forward',
+  ControllerAction.mute: 'Mute',
+  ControllerAction.toggleOverlay: 'Toggle overlay',
+};
+
+ControllerAction? controllerActionForKeyId(
+  int keyId, {
+  Map<ControllerAction, int> bindings = defaultControllerBindings,
+}) {
+  for (final entry in bindings.entries) {
+    if (entry.value == keyId) return entry.key;
   }
+  return null;
+}
+
+Map<String, int> controllerBindingsToJson(
+  Map<ControllerAction, int> bindings,
+) => {
+  for (final entry in bindings.entries) entry.key.name: entry.value,
+};
+
+Map<ControllerAction, int> controllerBindingsFromJson(Object? value) {
+  final result = Map<ControllerAction, int>.from(defaultControllerBindings);
+  if (value is! Map) return result;
+  for (final action in ControllerAction.values) {
+    final key = value[action.name];
+    if (key is num && key.toInt() >= 0) result[action] = key.toInt();
+  }
+  return result;
 }
