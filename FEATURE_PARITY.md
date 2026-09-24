@@ -32,7 +32,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - CUE sheet import with virtual per-track queue entries backed by the original continuous audio file and segment-aware seek/progress on Windows and Android
 - HTTP audio stream / internet radio URL playback
 - Subsonic/Navidrome and Jellyfin remote-library search with persisted profiles and direct stream playback in the shared queue on Windows and Android
-- Optional ListenBrainz now-playing scrobbling with persisted token configuration and non-blocking submission on Windows and Android
+- Optional ListenBrainz, Last.fm, and Libre.fm now-playing scrobbling with persisted token/API/session configuration, signed Last.fm-compatible submissions, and non-blocking submission on Windows and Android
 - DLNA/UPnP renderer discovery and casting of HTTP(S) streams, local audio files, and segment-aware CUE virtual tracks on Windows and Android, with receiver transport controls, relative seek/progress, segment-boundary advancement, and byte-range file serving
 - Chromecast audio discovery and playback for MP3, AAC/M4A, WAV, OGG/Opus, and FLAC on Windows and Android, with remote play/pause/seek/volume/progress controls and CUE-segment-aware queue advancement; MIDI/KAR can be rendered through an imported SF2 SoundFont before casting
 - AirPlay discovery and playback for audio-capable receivers, compatible local and HTTP audio files on Windows and Android, with shared play/pause/seek/progress controls and persisted HAP pairing credentials
