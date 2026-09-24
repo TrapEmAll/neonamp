@@ -11,6 +11,7 @@ import 'tracker_modules.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
 import 'parametric_eq.dart';
+import 'convolution.dart';
 
 double dspGainForDb(double decibels) =>
     math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
@@ -70,11 +71,15 @@ class DspLocalPlayer {
     List<PortableAudioEffect> effects = const [],
     double balance = 0,
     bool deleteSourceOnStop = false,
+    String? convolutionImpulsePath,
   }) async {
     await _ensureInitialized();
     await stop();
     final isTrackerModule = isTrackerModulePath(path);
     var sourcePath = path;
+    final hasConvolution = convolutionImpulsePath != null &&
+        isSupportedImpulseResponsePath(convolutionImpulsePath) &&
+        File(convolutionImpulsePath).existsSync();
     final customFrequencyEq = equalizerEnabled &&
         !isTrackerModule &&
         bands.length == frequencies.length &&
@@ -92,9 +97,13 @@ class DspLocalPlayer {
       }
     }
     String? transcodedAudioPath;
-    if (customFrequencyEq) {
+    if (customFrequencyEq || hasConvolution) {
       try {
-        transcodedAudioPath = await _transcodeWithEqualizer(path, frequencies: frequencies, gains: bands);
+        transcodedAudioPath = await _transcodeWithProcessing(
+          path,
+          frequencies: customFrequencyEq ? frequencies : const [],
+          gains: customFrequencyEq ? bands : const [],
+          impulseResponsePath: hasConvolution ? convolutionImpulsePath : null,
         sourcePath = transcodedAudioPath;
       } on Object {
         transcodedAudioPath = null;
@@ -170,19 +179,39 @@ class DspLocalPlayer {
     _startPolling();
   }
 
-  Future<String> _transcodeWithEqualizer(
+  Future<String> _transcodeWithProcessing(
     String inputPath, {
     required List<double> frequencies,
     required List<double> gains,
+    String? impulseResponsePath,
   }) async {
     final outputPath = '${Directory.systemTemp.path}${Platform.pathSeparator}'
         'neonamp-autoeq-${DateTime.now().microsecondsSinceEpoch}.wav';
     try {
-      final session = await FFmpegKit.executeWithArguments([
+      final equalizerFilter = frequencies.isEmpty
+          ? null
+          : buildFfmpegParametricEqFilter(
+              frequencies: frequencies,
+              gains: gains,
+            );
+      final arguments = <String>[
         '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', inputPath,
-        '-map', '0:a:0', '-vn', '-af', buildFfmpegParametricEqFilter(frequencies: frequencies, gains: gains),
+      ];
+      if (impulseResponsePath != null) {
+        arguments.addAll(['-i', impulseResponsePath]);
+        arguments.addAll([
+          '-filter_complex',
+          buildConvolutionFilter(equalizerFilter: equalizerFilter),
+          '-map',
+          '[out]',
+        ]);
+      } else {
+        arguments.addAll(['-map', '0:a:0', '-vn', '-af', equalizerFilter ?? 'anull']);
+      }
+      arguments.addAll([
         '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', '-f', 'wav', outputPath,
       ]);
+      final session = await FFmpegKit.executeWithArguments(arguments);
       final returnCode = await session.getReturnCode();
       final output = File(outputPath);
       if (!ReturnCode.isSuccess(returnCode) || !await output.exists() || await output.length() <= 44) {
