@@ -35,6 +35,7 @@ import 'tracker_modules.dart';
 import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
 import 'auto_eq.dart';
+import 'lrc_lyrics.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
@@ -6898,22 +6899,91 @@ class _PlayerPageState extends State<PlayerPage>
       );
       return;
     }
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(track.name),
-        content: SizedBox(
-          width: 560,
-          child: SingleChildScrollView(child: SelectableText(lyrics)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Done'),
+    final synced = parseLrcLyrics(lyrics);
+    if (synced.isEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(track.name),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(child: SelectableText(lyrics)),
           ),
-        ],
-      ),
-    );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final controller = ScrollController();
+    Timer? ticker;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            ticker ??= Timer.periodic(const Duration(milliseconds: 250), (_) {
+              if (mounted) setDialogState(() {});
+            });
+            final active = activeLrcLine(synced, _position);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!controller.hasClients || active < 0) return;
+              final target = lrcScrollOffset(
+                active,
+                44,
+                controller.position.viewportDimension,
+              ).clamp(0.0, controller.position.maxScrollExtent);
+              controller.animateTo(
+                target,
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+              );
+            });
+            return AlertDialog(
+              title: Text(track.name),
+              content: SizedBox(
+                width: 560,
+                height: 360,
+                child: ListView.builder(
+                  controller: controller,
+                  itemCount: synced.length,
+                  itemBuilder: (context, index) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      synced[index].text.isEmpty ? '…' : synced[index].text,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: index == active
+                            ? const Color(0xffef4bff)
+                            : Colors.white60,
+                        fontWeight: index == active
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        fontSize: index == active ? 18 : 15,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Done'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    } finally {
+      ticker?.cancel();
+      controller.dispose();
+    }
   }
 
   Future<void> _showVisualizer() async {
