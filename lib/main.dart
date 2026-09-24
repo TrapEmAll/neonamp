@@ -9244,6 +9244,7 @@ class _PlayerPageState extends State<PlayerPage>
     ),
   );
 }
+}
 
 const visualizerModes = {'spectrum', 'waveform', 'oscilloscope'};
 
