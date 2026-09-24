@@ -9,8 +9,10 @@ class ScrobbleProfile {
     this.enabled = true,
     this.lastFmApiKey = '',
     this.lastFmSessionKey = '',
+    this.lastFmSharedSecret = '',
     this.libreFmApiKey = '',
     this.libreFmSessionKey = '',
+    this.libreFmSharedSecret = '',
   });
 
   /// ListenBrainz user token. Kept as [token] for backwards compatibility.
@@ -18,16 +20,20 @@ class ScrobbleProfile {
   final bool enabled;
   final String lastFmApiKey;
   final String lastFmSessionKey;
+  final String lastFmSharedSecret;
   final String libreFmApiKey;
   final String libreFmSessionKey;
+  final String libreFmSharedSecret;
 
   Map<String, dynamic> toJson() => {
     'token': token,
     'enabled': enabled,
     'lastFmApiKey': lastFmApiKey,
     'lastFmSessionKey': lastFmSessionKey,
+    'lastFmSharedSecret': lastFmSharedSecret,
     'libreFmApiKey': libreFmApiKey,
     'libreFmSessionKey': libreFmSessionKey,
+    'libreFmSharedSecret': libreFmSharedSecret,
   };
 
   factory ScrobbleProfile.fromJson(Map<String, dynamic> json) => ScrobbleProfile(
@@ -35,8 +41,10 @@ class ScrobbleProfile {
     enabled: json['enabled'] as bool? ?? true,
     lastFmApiKey: json['lastFmApiKey'] as String? ?? '',
     lastFmSessionKey: json['lastFmSessionKey'] as String? ?? '',
+    lastFmSharedSecret: json['lastFmSharedSecret'] as String? ?? '',
     libreFmApiKey: json['libreFmApiKey'] as String? ?? '',
     libreFmSessionKey: json['libreFmSessionKey'] as String? ?? '',
+    libreFmSharedSecret: json['libreFmSharedSecret'] as String? ?? '',
   );
 }
 
@@ -99,12 +107,14 @@ class LastFmScrobbler {
   LastFmScrobbler({
     required this.apiKey,
     required this.sessionKey,
+    required this.sharedSecret,
     this.endpoint = 'https://ws.audioscrobbler.com/2.0/',
     HttpClient? httpClient,
   }) : _httpClient = httpClient ?? HttpClient();
 
   final String apiKey;
   final String sessionKey;
+  final String sharedSecret;
   final String endpoint;
   final HttpClient _httpClient;
 
@@ -133,11 +143,8 @@ class LastFmScrobbler {
       final signatureInput = params.keys.toList()..sort();
       final signature = md5.convert(utf8.encode(
         '${signatureInput.map((key) => '$key${params[key]}').join()}'
-        'YOUR_SHARED_SECRET',
+        sharedSecret.trim(),
       )).toString();
-      // The API secret is deliberately supplied through the endpoint wrapper
-      // rather than persisted in the player profile. Callers must replace the
-      // placeholder with a signed profile secret before enabling submissions.
       if (signature.isEmpty) return false;
       final request = await _httpClient.postUrl(Uri.parse(endpoint));
       request.headers.contentType = ContentType(
@@ -178,19 +185,21 @@ class MultiServiceScrobbler {
         title: title, artist: artist, album: album, durationSeconds: durationSeconds,
       ));
     }
-    if (profile.lastFmApiKey.trim().isNotEmpty && profile.lastFmSessionKey.trim().isNotEmpty) {
+    if (profile.lastFmApiKey.trim().isNotEmpty && profile.lastFmSessionKey.trim().isNotEmpty && profile.lastFmSharedSecret.trim().isNotEmpty) {
       clients.add(LastFmScrobbler(
         apiKey: profile.lastFmApiKey,
         sessionKey: profile.lastFmSessionKey,
+        sharedSecret: profile.lastFmSharedSecret,
         httpClient: _httpClient,
       ).submitNowPlaying(
         title: title, artist: artist, album: album, durationSeconds: durationSeconds,
       ));
     }
-    if (profile.libreFmApiKey.trim().isNotEmpty && profile.libreFmSessionKey.trim().isNotEmpty) {
+    if (profile.libreFmApiKey.trim().isNotEmpty && profile.libreFmSessionKey.trim().isNotEmpty && profile.libreFmSharedSecret.trim().isNotEmpty) {
       clients.add(LastFmScrobbler(
         apiKey: profile.libreFmApiKey,
         sessionKey: profile.libreFmSessionKey,
+        sharedSecret: profile.libreFmSharedSecret,
         endpoint: 'https://turtle.libre.fm/2.0/',
         httpClient: _httpClient,
       ).submitNowPlaying(
