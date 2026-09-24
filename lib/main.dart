@@ -9748,7 +9748,7 @@ class _PlayerPageState extends State<PlayerPage>
                 const SizedBox(width: 4),
                 IconButton(
                   tooltip: 'Search local and remote sources',
-                  icon: const Icon(Icons.cloud_search, size: 19),
+                  icon: const Icon(Icons.search, size: 19),
                   onPressed: _showUnifiedSearch,
                 ),
                 const SizedBox(width: 8),
