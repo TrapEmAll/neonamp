@@ -213,7 +213,7 @@ Duration _chapterDuration(int value, (int, int) timebase) => Duration(
     );
 
 String _unescapeMetadataValue(String value) => value.replaceAllMapped(
-      RegExp(r'\\\\(.)'),
+      RegExp(r'\\(.)'),
       (match) => match.group(1)!,
     );
 
