@@ -57,6 +57,7 @@ import 'remote_command_server.dart';
 import 'abx_test.dart';
 import 'track_auditor.dart';
 import 'audio_formats.dart';
+import 'audio_format_info.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -2506,6 +2507,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _libreFmSharedSecret = '';
   bool _scrobblingEnabled = false;
   String? _scrobbledTrackIdentity;
+  AudioFormatInfo? _audioFormatInfo;
   bool _remoteEnabled = false;
   bool _controllerOverlayVisible = false;
   int _remotePort = 8765;
@@ -4579,6 +4581,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await _saveQueue();
       _scrobbledTrackIdentity = null;
+      unawaited(_refreshAudioFormatInfo(track));
       unawaited(_submitNowPlaying(track));
       if (castDevice != null || airplayDevice != null || castRenderer != null) {
         try {
@@ -4995,6 +4998,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _scrobbledTrackIdentity = null;
+    unawaited(_refreshAudioFormatInfo(track));
     unawaited(_submitNowPlaying(track));
   }
 
@@ -8980,6 +8984,77 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _refreshAudioFormatInfo(Track track) async {
+    if (track.path.startsWith('http')) {
+      if (mounted) setState(() => _audioFormatInfo = null);
+      return;
+    }
+    try {
+      final file = File(track.path);
+      if (!await file.exists()) return;
+      final handle = await file.open();
+      try {
+        final length = math.min(await file.length(), 128 * 1024);
+        final info = parseAudioFormat(await handle.read(length), path: track.path);
+        if (mounted && identical(_current, track)) {
+          setState(() => _audioFormatInfo = info);
+        }
+      } finally {
+        await handle.close();
+      }
+    } on Object {
+      if (mounted && identical(_current, track)) {
+        setState(() => _audioFormatInfo = null);
+      }
+    }
+  }
+
+  Future<void> _showAudioFormatInfo() async {
+    final track = _current;
+    if (track == null || track.path.startsWith('http')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Format details are available for local files.')),
+        );
+      }
+      return;
+    }
+    AudioFormatInfo? info;
+    try {
+      final file = File(track.path);
+      if (await file.exists()) {
+        final handle = await file.open();
+        try {
+          final length = math.min(await file.length(), 128 * 1024);
+          info = parseAudioFormat(await handle.read(length), path: track.path);
+        } finally {
+          await handle.close();
+        }
+      }
+    } on Object {
+      info = null;
+    }
+    if (!mounted) return;
+    setState(() => _audioFormatInfo = info);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Audio format diagnostics'),
+        content: Text(
+          info == null
+              ? 'The active decoder did not expose format details for this file.'
+              : '${info.summary}\n\nThis reports the source container. It does not prove hardware-exclusive output or DAC sample-rate lock.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _showControllerSettings() async {
     await showDialog<void>(
       context: context,
@@ -9757,6 +9832,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'layout') _showPlayerLayout();
               if (value == 'controller') _showControllerSettings();
+              if (value == 'formatInfo') _showAudioFormatInfo();
               if (value == 'theme') _showThemePicker();
               if (value == 'importSkin') _importSkin();
               if (value == 'midiSoundFont') _importMidiSoundFont();
@@ -9833,6 +9909,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'controller',
                 child: Text('Configure gamepad bindings'),
+              ),
+              PopupMenuItem(
+                value: 'formatInfo',
+                child: Text('Audio format diagnostics'),
               ),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
               PopupMenuItem(
