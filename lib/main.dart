@@ -7076,7 +7076,7 @@ class _PlayerPageState extends State<PlayerPage>
                   }
                   final bytes = await output.readAsBytes();
                   await FilePicker.saveFile(
-                    fileName: '${track.title}-clip.wav',
+                    fileName: '${track.name}-clip.wav',
                     bytes: bytes,
                     mimeType: 'audio/wav',
                     type: FileType.custom,
