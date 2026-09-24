@@ -199,6 +199,54 @@ AudioFormatInfo? parseAudioFormat(
     }
   }
 
+  if (bytes.length >= 12 &&
+      bytes[0] == 0x46 &&
+      bytes[1] == 0x52 &&
+      bytes[2] == 0x4d &&
+      bytes[3] == 0x38 &&
+      String.fromCharCodes(bytes.sublist(8, 12)) == 'DSD ') {
+    var offset = 12;
+    int? sampleRate;
+    int? channels;
+    while (offset + 12 <= bytes.length) {
+      final chunk = String.fromCharCodes(bytes.sublist(offset, offset + 4));
+      final size = ByteData.sublistView(bytes, offset + 4, offset + 12)
+          .getUint64(0, Endian.big);
+      final start = offset + 12;
+      if (size > bytes.length - start) break;
+      final end = start + size;
+      if (chunk == 'PROP' && size >= 4) {
+        var propertyOffset = start + 4;
+        while (propertyOffset + 12 <= end) {
+          final property = String.fromCharCodes(
+            bytes.sublist(propertyOffset, propertyOffset + 4),
+          );
+          final propertySize = ByteData.sublistView(
+            bytes,
+            propertyOffset + 4,
+            propertyOffset + 12,
+          ).getUint64(0, Endian.big);
+          final propertyStart = propertyOffset + 12;
+          if (propertySize > end - propertyStart) break;
+          if (property == 'FS  ' && propertySize >= 4) {
+            sampleRate = _u32(bytes, propertyStart, Endian.big);
+          } else if (property == 'CHNL' && propertySize >= 2) {
+            channels = _u16(bytes, propertyStart, Endian.big);
+          }
+          propertyOffset =
+              propertyStart + propertySize + (propertySize.isOdd ? 1 : 0);
+        }
+      }
+      offset = end + (size.isOdd ? 1 : 0);
+    }
+    return AudioFormatInfo(
+      codec: 'DSD',
+      sampleRate: sampleRate,
+      bitDepth: 1,
+      channels: channels,
+    );
+  }
+
   if (bytes.length >= 36 &&
       bytes[0] == 0x44 &&
       bytes[1] == 0x53 &&
