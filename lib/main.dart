@@ -25,6 +25,7 @@ import 'cue_sheet.dart';
 import 'dlna_cast.dart';
 import 'chromecast_cast.dart';
 import 'airplay_cast.dart';
+import 'cast_audio_transcoder.dart';
 
 import 'package:dart_cast/dart_cast.dart'
     show CastDevice, NeedsPairingException;
@@ -2423,7 +2424,7 @@ class _PlayerPageState extends State<PlayerPage>
   Timer? _resumeSaveTimer;
   Timer? _castPositionTimer;
   bool _castPositionPollInProgress = false;
-  String? _castRenderedMidiPath;
+  String? _castRenderedMediaPath;
   DateTime? _sleepDeadline;
 
   bool get _casting =>
@@ -2443,12 +2444,12 @@ class _PlayerPageState extends State<PlayerPage>
     } else {
       await _airplayCast.stop();
     }
-    await _deleteCastMidiRender();
+    await _deleteCastRenderedMedia();
   }
 
-  Future<void> _deleteCastMidiRender() async {
-    final renderedPath = _castRenderedMidiPath;
-    _castRenderedMidiPath = null;
+  Future<void> _deleteCastRenderedMedia() async {
+    final renderedPath = _castRenderedMediaPath;
+    _castRenderedMediaPath = null;
     if (renderedPath == null) return;
     final renderedFile = File(renderedPath);
     if (await renderedFile.exists()) await renderedFile.delete();
@@ -2462,6 +2463,7 @@ class _PlayerPageState extends State<PlayerPage>
   }) async {
     var mediaPath = track.path;
     String? generatedMidiPath;
+    String? transcodedPath;
     if (isMidiFilePath(track.path)) {
       final soundFontPath = await _ensureMidiSoundFont();
       if (soundFontPath == null) {
@@ -2483,6 +2485,8 @@ class _PlayerPageState extends State<PlayerPage>
       }
     }
     try {
+      transcodedPath = await prepareCastAudio(mediaPath);
+      if (transcodedPath != null) mediaPath = transcodedPath;
       if (chromecastDevice != null) {
         await _chromecastCast.play(
           device: chromecastDevice,
@@ -2526,9 +2530,18 @@ class _PlayerPageState extends State<PlayerPage>
         final generatedFile = File(generatedMidiPath);
         if (await generatedFile.exists()) await generatedFile.delete();
       }
+      if (transcodedPath != null) {
+        final transcodedFile = File(transcodedPath);
+        if (await transcodedFile.exists()) await transcodedFile.delete();
+      }
       rethrow;
     }
-    _castRenderedMidiPath = generatedMidiPath;
+    if (generatedMidiPath != null && transcodedPath != null) {
+      final generatedFile = File(generatedMidiPath);
+      if (await generatedFile.exists()) await generatedFile.delete();
+      generatedMidiPath = null;
+    }
+    _castRenderedMediaPath = transcodedPath ?? generatedMidiPath;
 
     if (_dspActive) {
       await _dspPlayer.pause();
@@ -7501,7 +7514,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _dlnaCast.dispose();
       await _chromecastCast.dispose();
       await _airplayCast.dispose();
-      await _deleteCastMidiRender();
+      await _deleteCastRenderedMedia();
     }());
     _castPositionTimer?.cancel();
     _sleepTimer?.cancel();
