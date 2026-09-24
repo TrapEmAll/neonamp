@@ -26,6 +26,15 @@ void main() {
     expect(group.lowerQuality.single.path, 'low.mp3');
   });
 
+  test('flags sampled sources that reach digital full scale', () {
+    final clipped = findClippedTracks([
+      const AudioAuditEntry(path: 'clip.wav', title: 'Clip', artist: 'Artist', peakDb: 0),
+      const AudioAuditEntry(path: 'safe.wav', title: 'Safe', artist: 'Artist', peakDb: -1.2),
+      const AudioAuditEntry(path: 'unknown.mp3', title: 'Unknown', artist: 'Artist'),
+    ]);
+    expect(clipped.map((entry) => entry.path), ['clip.wav']);
+  });
+
   test('flags missing core tags', () {
     expect(
       findMissingCoreTags([
