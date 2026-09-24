@@ -199,6 +199,27 @@ bool trackRequiresDspPlayback(
         isDsdAudioPath(path) ||
         isCrossPlatformFallbackAudioPath(path));
 
+bool shouldUseDspPlayback(
+  String path, {
+  required bool bitPerfectMode,
+  required bool equalizerEnabled,
+  double preamp = 0,
+  bool renderedMidi = false,
+}) {
+  final formatRequiresDsp =
+      isTrackerModulePath(path) ||
+      isDsdAudioPath(path) ||
+      isCrossPlatformFallbackAudioPath(path);
+  return renderedMidi ||
+      formatRequiresDsp ||
+      (!bitPerfectMode &&
+          trackRequiresDspPlayback(
+            path,
+            equalizerEnabled: equalizerEnabled,
+            preamp: preamp,
+          ));
+}
+
 int nextQueueIndex({
   required int selected,
   required int length,
@@ -4528,19 +4549,13 @@ class _PlayerPageState extends State<PlayerPage>
           }
         }
       }
-      final formatRequiresDsp =
-          isTrackerModulePath(track.path) ||
-          isDsdAudioPath(track.path) ||
-          isCrossPlatformFallbackAudioPath(track.path);
-      final shouldUseDsp =
-          renderedMidiPath != null ||
-          formatRequiresDsp ||
-          (!_bitPerfectMode &&
-              trackRequiresDspPlayback(
-                track.path,
-                equalizerEnabled: _equalizerEnabled,
-                preamp: _eqPreamp,
-              ));
+      final shouldUseDsp = shouldUseDspPlayback(
+        track.path,
+        bitPerfectMode: _bitPerfectMode,
+        equalizerEnabled: _equalizerEnabled,
+        preamp: _eqPreamp,
+        renderedMidi: renderedMidiPath != null,
+      );
       if (Platform.isWindows &&
           isMidiFilePath(track.path) &&
           renderedMidiPath == null) {
