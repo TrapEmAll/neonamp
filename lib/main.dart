@@ -37,6 +37,7 @@ import 'equalizer_presets.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
+import 'audio_effects.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -1606,6 +1607,7 @@ class NeonAmpPlugin {
     required this.description,
     required this.capabilities,
     required this.equalizerPresets,
+    this.audioEffects = const [],
     this.enabled = true,
   });
 
@@ -1638,6 +1640,18 @@ class NeonAmpPlugin {
         equalizerPresets[presetName] = bands;
       }
     }
+    final rawEffects = json['audioEffects'];
+    final audioEffects = <PortableAudioEffect>[];
+    if (rawEffects is List) {
+      for (final value in rawEffects) {
+        if (value is! Map) {
+          throw const FormatException('Audio effects must be objects.');
+        }
+        audioEffects.add(
+          PortableAudioEffect.fromJson(value.cast<String, dynamic>()),
+        );
+      }
+    }
     return NeonAmpPlugin(
       id: id,
       name: name,
@@ -1653,6 +1667,7 @@ class NeonAmpPlugin {
               .toList() ??
           const [],
       equalizerPresets: equalizerPresets,
+      audioEffects: audioEffects,
       enabled: json['enabled'] as bool? ?? true,
     );
   }
@@ -1663,6 +1678,7 @@ class NeonAmpPlugin {
   final String description;
   final List<String> capabilities;
   final Map<String, List<double>> equalizerPresets;
+  final List<PortableAudioEffect> audioEffects;
   final bool enabled;
 
   NeonAmpPlugin copyWith({bool? enabled}) => NeonAmpPlugin(
@@ -1672,6 +1688,7 @@ class NeonAmpPlugin {
     description: description,
     capabilities: capabilities,
     equalizerPresets: equalizerPresets,
+    audioEffects: audioEffects,
     enabled: enabled ?? this.enabled,
   );
 
@@ -1682,6 +1699,7 @@ class NeonAmpPlugin {
     'description': description,
     'capabilities': capabilities,
     'equalizerPresets': equalizerPresets,
+    'audioEffects': audioEffects.map((effect) => effect.toJson()).toList(),
     'enabled': enabled,
   };
 }
@@ -2436,6 +2454,11 @@ class _PlayerPageState extends State<PlayerPage>
       _chromecastCast.deviceName ??
       _dlnaCast.rendererName ??
       _airplayCast.deviceName;
+
+  List<PortableAudioEffect> get _enabledPluginEffects => [
+    for (final plugin in _plugins.values.where((plugin) => plugin.enabled))
+      ...plugin.audioEffects,
+  ];
 
   Future<void> _stopCasting() async {
     if (_chromecastCast.isConnected) {
@@ -4096,6 +4119,7 @@ class _PlayerPageState extends State<PlayerPage>
           playbackSpeed: _playbackSpeed,
           equalizerEnabled: _equalizerEnabled,
           bands: _eqBands,
+          effects: _enabledPluginEffects,
           balance: _balance,
           deleteSourceOnStop: renderedMidiPath != null,
         );
@@ -4290,6 +4314,7 @@ class _PlayerPageState extends State<PlayerPage>
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
+        effects: _enabledPluginEffects,
         balance: _balance,
       );
       final incomingDuration = incomingPlayer.duration;
@@ -4394,6 +4419,7 @@ class _PlayerPageState extends State<PlayerPage>
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
+        effects: _enabledPluginEffects,
         balance: _balance,
       );
       final incomingDuration = incomingPlayer.duration;
@@ -6647,6 +6673,8 @@ class _PlayerPageState extends State<PlayerPage>
                                 plugin.description,
                                 if (plugin.capabilities.isNotEmpty)
                                   plugin.capabilities.join(', '),
+                                if (plugin.audioEffects.isNotEmpty)
+                                  'Effects: ${plugin.audioEffects.map((effect) => effect.type).join(', ')}',
                               ].where((value) => value.isNotEmpty).join(' · '),
                             ),
                             trailing: Row(

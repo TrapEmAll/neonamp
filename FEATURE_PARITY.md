@@ -55,7 +55,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Spectrum bars, waveform, and oscilloscope visualization with persisted mode selection
 - Built-in Neon, Aurora, Amber, and Classic skins with persisted selection
 - User-importable JSON skin packages with persisted selection on Windows and Android
-- Portable JSON plugin packages with validated manifests, persisted enablement, and plugin-provided equalizer presets on Windows and Android
+- Portable JSON plugin packages with validated manifests, persisted enablement, plugin-provided equalizer presets, and native bass-boost/echo/reverb effects on Windows and Android
 - Portable-device folder sync for local tracks with collision-safe copies and an M3U8 manifest on Windows and Android
 - Native M4A conversion using Media Foundation on Windows and MediaCodec/MediaMuxer on Android, with metadata restoration
 - Audio CD track discovery and WAV ripping through the native Windows CD-ROM API and Android USB-host MMC/CDDA transport, with SAF-compatible Android rip destinations
@@ -66,7 +66,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 
 ## Next parity milestones
 
-- Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests, validated metadata, and plugin-provided equalizer presets
+- Native binary plugin compatibility remains outside the portable cross-platform API; the supported plugin contract is JSON manifests, validated metadata, equalizer presets, and portable DSP effects
 - Hardware-specific CD ripping for optical drives that do not expose USB Mass Storage Bulk-Only Transport with MMC/SCSI commands
 - AirPlay receiver-specific codec and pairing coverage beyond the bundled HTTP media path, plus other non-DLNA/non-Chromecast casting protocols
 

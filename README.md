@@ -21,7 +21,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
-- Import portable JSON plugin packages on Windows or Android; enablement and plugin-provided 10-band equalizer presets persist across launches.
+- Import portable JSON plugin packages on Windows or Android; enablement, plugin-provided 10-band equalizer presets, and native bass-boost/echo/reverb effects persist across launches.
 - Sync local library tracks to a user-selected device folder on Windows or Android with collision-safe names and an M3U8 manifest.
 - Convert local tracks to M4A using native Media Foundation on Windows or MediaCodec on Android, with source metadata restored when supported.
 - Import audio CD tracks to standard WAV on Windows and Android USB-host devices; Android requests optical-drive permission, reads the disc TOC, and rips CDDA tracks to a selected SAF folder.

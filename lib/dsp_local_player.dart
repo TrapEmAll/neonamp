@@ -8,6 +8,7 @@ import 'package:ffmpeg_kit_flutter_new_audio/return_code.dart';
 import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 
 import 'tracker_modules.dart';
+import 'audio_effects.dart';
 
 double dspGainForDb(double decibels) =>
     math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
@@ -59,6 +60,7 @@ class DspLocalPlayer {
     required double playbackSpeed,
     required bool equalizerEnabled,
     required List<double> bands,
+    List<PortableAudioEffect> effects = const [],
     double balance = 0,
     bool deleteSourceOnStop = false,
   }) async {
@@ -115,6 +117,7 @@ class DspLocalPlayer {
       final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
       equalizer.bandGain(index, soundHandle: handle).value = gain;
     }
+    _applyPortableEffects(source, handle, effects);
     soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
     _source = source;
     _temporaryAudioPath = isTrackerModule || transcodedAudioPath != null
@@ -272,6 +275,34 @@ class DspLocalPlayer {
     }
   }
 
+  void _applyPortableEffects(
+    soloud.AudioSource source,
+    soloud.SoundHandle handle,
+    List<PortableAudioEffect> effects,
+  ) {
+    for (final effect in effects) {
+      switch (effect.type) {
+        case 'bassBoost':
+          final filter = source.filters.bassBoostFilter..activate();
+          filter.wet(soundHandle: handle).value = effect.value('wet');
+          filter.boost(soundHandle: handle).value = effect.value('boost');
+        case 'echo':
+          final filter = source.filters.echoFilter..activate();
+          filter.wet(soundHandle: handle).value = effect.value('wet');
+          filter.delay(soundHandle: handle).value = effect.value('delay');
+          filter.decay(soundHandle: handle).value = effect.value('decay');
+          filter.filter(soundHandle: handle).value = effect.value('filter');
+        case 'reverb':
+          final filter = source.filters.freeverbFilter..activate();
+          filter.wet(soundHandle: handle).value = effect.value('wet');
+          filter.freeze(soundHandle: handle).value = effect.value('freeze');
+          filter.roomSize(soundHandle: handle).value = effect.value('roomSize');
+          filter.damp(soundHandle: handle).value = effect.value('damp');
+          filter.width(soundHandle: handle).value = effect.value('width');
+      }
+    }
+  }
+
   Future<void> stop() async {
     _pollTimer?.cancel();
     final handle = _handle;
@@ -302,3 +333,4 @@ class DspLocalPlayer {
     await _completeController.close();
   }
 }
+
