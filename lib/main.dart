@@ -3488,18 +3488,29 @@ class _PlayerPageState extends State<PlayerPage>
       ]..sort(),
     );
     if (result.isEmpty) return;
+    var added = 0;
     for (final file in result) {
-      final path = file.path;
-      if (path == null || _queue.any((track) => track.path == path)) continue;
-      final track = await _readTrack(path, file.name);
-      if (!mounted) return;
-      setState(() {
-        _queue.add(track);
-        if (!_library.any((item) => item.path == path)) _library.add(track);
-      });
+      final materialized = await _materializePickedFile(file);
+      if (materialized == null) continue;
+      final path = materialized.path;
+      try {
+        if (_queue.any((track) => track.path == path)) continue;
+        final track = await _readTrack(path, file.name);
+        if (!mounted) return;
+        setState(() {
+          _queue.add(track);
+          if (!_library.any((item) => item.path == path)) _library.add(track);
+        });
+        added++;
+      } finally {
+        if (materialized.temporary) {
+          final temporary = File(materialized.path);
+          if (await temporary.exists()) await temporary.delete();
+        }
+      }
     }
     await _saveQueue();
-    if (_queue.length == result.length && _queue.isNotEmpty) await _select(0);
+    if (added > 0 && _queue.isNotEmpty) await _select(0);
   }
 
   Future<void> _addFolder() async {
