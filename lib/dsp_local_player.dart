@@ -104,6 +104,7 @@ class DspLocalPlayer {
           frequencies: customFrequencyEq ? frequencies : const [],
           gains: customFrequencyEq ? bands : const [],
           impulseResponsePath: hasConvolution ? convolutionImpulsePath : null,
+        );
         sourcePath = transcodedAudioPath;
       } on Object {
         transcodedAudioPath = null;
