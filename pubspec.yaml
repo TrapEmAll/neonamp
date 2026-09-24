@@ -34,18 +34,22 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  crypto: ^3.0.6
   audioplayers: ^6.8.1
   file_picker: ^13.1.0
   shared_preferences: ^2.5.5
   audio_metadata_reader: ^1.8.0
   audio_service: ^0.18.19
   flutter_soloud: ^5.1.2
+  ffmpeg_kit_flutter_new_audio: ^2.5.2
   path_provider: ^2.1.5
   video_player: ^2.14.0
   video_player_win: ^3.3.0
   xml: ^7.0.1
   upnp_client: ^1.5.0
   dart_melty_soundfont: 2.0.0
+  dart_cast:
+    path: third_party/dart_cast
 
 dev_dependencies:
   flutter_test:
@@ -68,6 +72,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/soundfonts/FluidR3_GM.sf2
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -99,3 +106,4 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+

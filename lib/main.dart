@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/return_code.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -23,12 +25,42 @@ import 'player_layout.dart';
 import 'podcast_opml.dart';
 import 'cue_sheet.dart';
 import 'dlna_cast.dart';
+import 'chromecast_cast.dart';
+import 'airplay_cast.dart';
+import 'cast_audio_transcoder.dart';
+
+import 'package:dart_cast/dart_cast.dart'
+    show CastDevice, NeedsPairingException;
+
 import 'playlist_formats.dart';
 import 'tracker_modules.dart';
 import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
+import 'auto_eq.dart';
+import 'lrc_lyrics.dart';
+import 'audio_trimmer.dart';
+import 'visualizer_metrics.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
+import 'media_artwork_cache.dart';
+import 'audio_effects.dart';
+import 'audio_loudness.dart';
+import 'convolution.dart';
+import 'silence_detection.dart';
+import 'media_server.dart';
+import 'unified_search.dart';
+import 'controller_input.dart';
+import 'scrobbling.dart';
+import 'loudness_scan.dart';
+import 'custom_metadata.dart';
+import 'remote_command_server.dart';
+import 'abx_test.dart';
+import 'track_auditor.dart';
+import 'audio_formats.dart';
+import 'audio_format_info.dart';
+
+const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
+const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
 
 const supportedVideoExtensions = {
   'avi',
@@ -51,7 +83,7 @@ int wrappedVideoIndex(int index, int length) {
 
 bool isVorbisAudioPath(String path) {
   final extension = path.split('.').last.toLowerCase();
-  return extension == 'ogg' || extension == 'opus';
+  return extension == 'ogg' || extension == 'oga' || extension == 'opus';
 }
 
 bool isAiffAudioPath(String path) {
@@ -75,32 +107,117 @@ bool isMatroskaAudioPath(String path) {
   return extension == 'webm' || extension == 'mkv' || extension == 'mka';
 }
 
+bool isCrossPlatformFallbackAudioPath(String path) {
+  final extension = path.split('.').last.toLowerCase();
+  return const {
+    'ac3',
+    'ape',
+    'au',
+    'wma',
+    'aif',
+    'aiff',
+    'aifc',
+    'mka',
+    'mkv',
+    'webm',
+    'm4b',
+    '3gp',
+    'oga',
+    'ogx',
+    'mp1',
+    'mp2',
+    'amr',
+    'awb',
+    'caf',
+    'dts',
+    'snd',
+    'tak',
+    'tta',
+    'voc',
+    'spx',
+  }.contains(extension);
+}
+
+const supportedLibraryAudioExtensions = <String>{
+  '3gp',
+  'ac3',
+  'aac',
+  'aif',
+  'aiff',
+  'aifc',
+  'amr',
+  'ape',
+  'au',
+  'awb',
+  'caf',
+  'dts',
+  'dff',
+  'dsf',
+  'dsdiff',
+  'flac',
+  'm4a',
+  'm4b',
+  'mka',
+  'mkv',
+  'mov',
+  'mp1',
+  'mp2',
+  'mp3',
+  'mp4',
+  'oga',
+  'ogg',
+  'ogx',
+  'opus',
+  'spx',
+  'snd',
+  'tak',
+  'tta',
+  'voc',
+  'wav',
+  'webm',
+  'wma',
+};
+
 bool isSupportedLibraryAudioPath(String path) {
-  const extensions = <String>{
-    '.mp3',
-    '.flac',
-    '.wav',
-    '.ogg',
-    '.m4a',
-    '.mp4',
-    '.aac',
-    '.wma',
-    '.opus',
-    '.ape',
-    '.aif',
-    '.aiff',
-    '.aifc',
-    '.mov',
-    '.webm',
-    '.mkv',
-    '.mka',
-  };
   final lowerPath = path.toLowerCase();
   final dot = lowerPath.lastIndexOf('.');
   return dot >= 0 &&
-      (extensions.contains(lowerPath.substring(dot)) ||
+      (supportedLibraryAudioExtensions.contains(lowerPath.substring(dot + 1)) ||
           trackerModuleExtensions.contains(lowerPath.substring(dot + 1)) ||
           midiFileExtensions.contains(lowerPath.substring(dot + 1)));
+}
+
+bool trackRequiresDspPlayback(
+  String path, {
+  required bool equalizerEnabled,
+  double preamp = 0,
+}) =>
+    !path.startsWith('http') &&
+    !isMidiFilePath(path) &&
+    (equalizerEnabled || preamp != 0 ||
+        isTrackerModulePath(path) ||
+        isDsdAudioPath(path) ||
+        isCrossPlatformFallbackAudioPath(path));
+
+bool shouldUseDspPlayback(
+  String path, {
+  required bool bitPerfectMode,
+  required bool equalizerEnabled,
+  double preamp = 0,
+  bool renderedMidi = false,
+}) {
+  final formatRequiresDsp =
+      isTrackerModulePath(path) ||
+      isDsdAudioPath(path) ||
+      isCrossPlatformFallbackAudioPath(path);
+  return renderedMidi ||
+      formatRequiresDsp ||
+      (!bitPerfectMode &&
+          trackRequiresDspPlayback(
+            path,
+            equalizerEnabled: equalizerEnabled,
+            preamp: preamp,
+          ));
 }
 
 int nextQueueIndex({
@@ -1411,6 +1528,14 @@ Future<void> writeTrackMetadata(File file, List<String> values) async {
   _updateCommonTrackMetadata(file, values);
 }
 
+Future<void> _syncAndroidLibraryCache(File file) async {
+  if (!Platform.isAndroid) return;
+  await const MethodChannel('neonamp/library').invokeMethod<bool>(
+    'replaceCachedFile',
+    {'sourcePath': file.path},
+  );
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const NeonAmpApp());
@@ -1539,6 +1664,7 @@ class NeonAmpPlugin {
     required this.description,
     required this.capabilities,
     required this.equalizerPresets,
+    this.audioEffects = const [],
     this.enabled = true,
   });
 
@@ -1571,6 +1697,18 @@ class NeonAmpPlugin {
         equalizerPresets[presetName] = bands;
       }
     }
+    final rawEffects = json['audioEffects'];
+    final audioEffects = <PortableAudioEffect>[];
+    if (rawEffects is List) {
+      for (final value in rawEffects) {
+        if (value is! Map) {
+          throw const FormatException('Audio effects must be objects.');
+        }
+        audioEffects.add(
+          PortableAudioEffect.fromJson(value.cast<String, dynamic>()),
+        );
+      }
+    }
     return NeonAmpPlugin(
       id: id,
       name: name,
@@ -1586,6 +1724,7 @@ class NeonAmpPlugin {
               .toList() ??
           const [],
       equalizerPresets: equalizerPresets,
+      audioEffects: audioEffects,
       enabled: json['enabled'] as bool? ?? true,
     );
   }
@@ -1596,6 +1735,7 @@ class NeonAmpPlugin {
   final String description;
   final List<String> capabilities;
   final Map<String, List<double>> equalizerPresets;
+  final List<PortableAudioEffect> audioEffects;
   final bool enabled;
 
   NeonAmpPlugin copyWith({bool? enabled}) => NeonAmpPlugin(
@@ -1605,6 +1745,7 @@ class NeonAmpPlugin {
     description: description,
     capabilities: capabilities,
     equalizerPresets: equalizerPresets,
+    audioEffects: audioEffects,
     enabled: enabled ?? this.enabled,
   );
 
@@ -1615,6 +1756,7 @@ class NeonAmpPlugin {
     'description': description,
     'capabilities': capabilities,
     'equalizerPresets': equalizerPresets,
+    'audioEffects': audioEffects.map((effect) => effect.toJson()).toList(),
     'enabled': enabled,
   };
 }
@@ -1704,6 +1846,7 @@ class Track {
     this.favorite = false,
     this.artwork,
     this.replayGainDb,
+    this.customMetadata = const {},
     this.cueStartMs,
     this.cueEndMs,
   });
@@ -1723,6 +1866,7 @@ class Track {
   final bool favorite;
   final Uint8List? artwork;
   final double? replayGainDb;
+  final Map<String, String> customMetadata;
   final int? cueStartMs;
   final int? cueEndMs;
 
@@ -1750,6 +1894,7 @@ class Track {
     bool? favorite,
     Uint8List? artwork,
     double? replayGainDb,
+    Map<String, String>? customMetadata,
     int? cueStartMs,
     int? cueEndMs,
   }) => Track(
@@ -1769,6 +1914,7 @@ class Track {
     favorite: favorite ?? this.favorite,
     artwork: artwork ?? this.artwork,
     replayGainDb: replayGainDb ?? this.replayGainDb,
+    customMetadata: customMetadata ?? this.customMetadata,
     cueStartMs: cueStartMs ?? this.cueStartMs,
     cueEndMs: cueEndMs ?? this.cueEndMs,
   );
@@ -1790,6 +1936,7 @@ class Track {
     'favorite': favorite,
     if (artwork != null) 'artwork': base64Encode(artwork!),
     if (replayGainDb != null) 'replayGainDb': replayGainDb,
+    if (customMetadata.isNotEmpty) 'customMetadata': customMetadata,
     if (cueStartMs != null) 'cueStartMs': cueStartMs,
     if (cueEndMs != null) 'cueEndMs': cueEndMs,
   };
@@ -1813,6 +1960,10 @@ class Track {
         ? base64Decode(json['artwork'] as String)
         : null,
     replayGainDb: (json['replayGainDb'] as num?)?.toDouble(),
+    customMetadata: (json['customMetadata'] as Map?)?.map(
+          (key, value) => MapEntry(key.toString(), value.toString()),
+        ) ??
+        const {},
     cueStartMs: (json['cueStartMs'] as num?)?.toInt(),
     cueEndMs: (json['cueEndMs'] as num?)?.toInt(),
   );
@@ -2014,6 +2165,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   double _playbackSpeed = 1.0;
   Duration _trackStart = Duration.zero;
   Duration? _trackEnd;
+  Duration _lastPosition = Duration.zero;
 
   void _bindPlayerStreams() {
     _positionSubscription = player.onPositionChanged.listen(
@@ -2048,13 +2200,14 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     final duration = track.cueEnd == null
         ? null
         : track.cueEnd! - track.cueStart;
+    final artworkUri = await _artworkUri(track);
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
         title: track.name,
         artist: track.artist,
         album: track.album,
-        artUri: null,
+        artUri: artworkUri,
         duration: duration,
       ),
     );
@@ -2072,18 +2225,31 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _broadcast();
   }
 
-  void publishTrack(Track track) {
+  Future<void> publishTrack(Track track) async {
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
+    final artworkUri = await _artworkUri(track);
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
         title: track.name,
         artist: track.artist,
         album: track.album,
-        artUri: null,
+        artUri: artworkUri,
       ),
     );
+  }
+
+  Future<Uri?> _artworkUri(Track track) async {
+    try {
+      return await cacheMediaArtwork(
+        track.artwork,
+        directory: await getTemporaryDirectory(),
+      );
+    } on Object catch (error) {
+      debugPrint('Could not cache notification artwork: $error');
+      return null;
+    }
   }
 
   Duration _relativePosition(Duration source) {
@@ -2101,6 +2267,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     Duration? duration,
     required PlayerState state,
   }) {
+    if (position != null) _lastPosition = position;
     final current = mediaItem.value;
     if (current != null && duration != null) {
       mediaItem.add(current.copyWith(duration: duration));
@@ -2132,6 +2299,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   void _broadcast({Duration? position, PlayerState? state}) {
+    if (position != null) _lastPosition = position;
     final currentState = state ?? player.state;
     playbackState.add(
       PlaybackState(
@@ -2153,7 +2321,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             ? AudioProcessingState.completed
             : AudioProcessingState.ready,
         playing: currentState == PlayerState.playing,
-        updatePosition: position ?? Duration.zero,
+        updatePosition: _lastPosition,
         speed: _playbackSpeed,
       ),
     );
@@ -2274,6 +2442,8 @@ class _PlayerPageState extends State<PlayerPage>
     with SingleTickerProviderStateMixin {
   AudioPlayer _activePlayer = AudioPlayer();
   final DlnaCast _dlnaCast = DlnaCast();
+  final ChromecastCast _chromecastCast = ChromecastCast();
+  final AirPlayCast _airplayCast = AirPlayCast();
   DspLocalPlayer _dspPlayer = DspLocalPlayer();
   final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
   NeonAudioHandler? _audioHandler;
@@ -2289,6 +2459,11 @@ class _PlayerPageState extends State<PlayerPage>
   final List<SmartPlaylist> _smartPlaylists = [];
   final Map<String, NeonAmpPlugin> _plugins = {};
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _controllerFocusNode = FocusNode();
+  Map<ControllerAction, int> _controllerBindings =
+      Map<ControllerAction, int>.from(defaultControllerBindings);
+  ControllerAction? _bindingAction;
+  StateSetter? _controllerDialogState;
   late final AnimationController _pulse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 950),
@@ -2311,6 +2486,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _repeat = false;
   bool _repeatOne = false;
   bool _crossfade = false;
+  bool _silenceAwareCrossfade = false;
+  bool _bitPerfectMode = false;
   int _crossfadeSeconds = 3;
   bool _equalizerEnabled = false;
   List<String> _playerControls = List<String>.from(defaultPlayerControls);
@@ -2320,8 +2497,14 @@ class _PlayerPageState extends State<PlayerPage>
   String _libraryFilter = 'All';
   String _librarySort = 'Added';
   bool _librarySortDescending = false;
+  String _visualizerMode = 'spectrum';
+  final SpectrumPeakHold _visualizerPeakHold = SpectrumPeakHold();
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
+  final List<double> _eqFrequencies = List<double>.from(autoEqCenterFrequencies);
+  double _eqPreamp = 0;
+  final Map<String, List<double>> _customEqPresets = {};
+  final Map<String, List<double>> _customEqFrequencies = {};
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
   bool _cueTransitioning = false;
@@ -2333,13 +2516,164 @@ class _PlayerPageState extends State<PlayerPage>
   String? _midiSoundFontPath;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
+  bool _r128NormalizationEnabled = false;
+  final Map<String, double?> _measuredLufs = <String, double?>{};
+  bool _truePeakLimiterEnabled = true;
+  String? _convolutionImpulsePath;
+  final List<MediaServerProfile> _mediaServerProfiles = [];
+  String _listenBrainzToken = '';
+  String _lastFmApiKey = '';
+  String _lastFmSessionKey = '';
+  String _lastFmSharedSecret = '';
+  String _libreFmApiKey = '';
+  String _libreFmSessionKey = '';
+  String _libreFmSharedSecret = '';
+  bool _scrobblingEnabled = false;
+  String? _scrobbledTrackIdentity;
+  bool _remoteEnabled = false;
+  bool _controllerOverlayVisible = false;
+  int _remotePort = 8765;
+  RemoteCommandServer? _remoteServer;
   Timer? _sleepTimer;
   Timer? _resumeSaveTimer;
   Timer? _castPositionTimer;
   bool _castPositionPollInProgress = false;
+  String? _castRenderedMediaPath;
   DateTime? _sleepDeadline;
 
-  bool get _casting => _dlnaCast.isConnected;
+  bool get _casting =>
+      _dlnaCast.isConnected ||
+      _chromecastCast.isConnected ||
+      _airplayCast.isConnected;
+  String? get _castDeviceName =>
+      _chromecastCast.deviceName ??
+      _dlnaCast.rendererName ??
+      _airplayCast.deviceName;
+
+  List<PortableAudioEffect> get _enabledPluginEffects => [
+    for (final plugin in _plugins.values.where((plugin) => plugin.enabled))
+      ...plugin.audioEffects,
+  ];
+
+  Future<void> _stopCasting() async {
+    if (_chromecastCast.isConnected) {
+      await _chromecastCast.stop();
+    } else if (_dlnaCast.isConnected) {
+      await _dlnaCast.stop();
+    } else {
+      await _airplayCast.stop();
+    }
+    await _deleteCastRenderedMedia();
+  }
+
+  Future<void> _deleteCastRenderedMedia() async {
+    final renderedPath = _castRenderedMediaPath;
+    _castRenderedMediaPath = null;
+    if (renderedPath == null) return;
+    final renderedFile = File(renderedPath);
+    if (await renderedFile.exists()) await renderedFile.delete();
+  }
+
+  Future<void> _castTrack(
+    Track track, {
+    CastDevice? chromecastDevice,
+    CastDevice? airplayDevice,
+    MediaRenderer? dlnaRenderer,
+  }) async {
+    var mediaPath = track.path;
+    String? generatedMidiPath;
+    String? transcodedPath;
+    if (isMidiFilePath(track.path)) {
+      final soundFontPath = await _ensureMidiSoundFont();
+      if (soundFontPath == null) {
+        throw StateError('The bundled MIDI SoundFont could not be prepared.');
+      }
+      generatedMidiPath =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'neonamp-cast-midi-${DateTime.now().microsecondsSinceEpoch}.wav';
+      try {
+        mediaPath = await renderMidiToWav(
+          midiPath: track.path,
+          soundFontPath: soundFontPath,
+          outputPath: generatedMidiPath,
+        );
+      } on Object {
+        final partialFile = File(generatedMidiPath);
+        if (await partialFile.exists()) await partialFile.delete();
+        rethrow;
+      }
+    }
+    try {
+      transcodedPath = await prepareCastAudio(mediaPath);
+      if (transcodedPath != null) mediaPath = transcodedPath;
+      if (chromecastDevice != null) {
+        await _chromecastCast.play(
+          device: chromecastDevice,
+          path: mediaPath,
+          title: track.name,
+          duration: _duration,
+          segmentStart: track.cueStart,
+          startPosition: _position,
+        );
+      } else if (airplayDevice != null) {
+        final contentType = audioContentType(mediaPath);
+        if (contentType == null) {
+          throw UnsupportedError(
+            'This audio format is not supported by AirPlay.',
+          );
+        }
+        await _airplayCast.play(
+          device: airplayDevice,
+          path: mediaPath,
+          title: track.name,
+          contentType: contentType,
+          duration: _duration,
+          startPosition: _position,
+        );
+      } else if (dlnaRenderer != null) {
+        await _dlnaCast.play(
+          renderer: dlnaRenderer,
+          path: mediaPath,
+          title: track.name,
+          artist: track.artist,
+          album: track.album,
+          duration: track.cueStart + _duration,
+          segmentStart: track.cueStart,
+          segmentEnd: track.cueEnd,
+        );
+      } else {
+        throw StateError('The network player is no longer available.');
+      }
+    } catch (_) {
+      if (generatedMidiPath != null) {
+        final generatedFile = File(generatedMidiPath);
+        if (await generatedFile.exists()) await generatedFile.delete();
+      }
+      if (transcodedPath != null) {
+        final transcodedFile = File(transcodedPath);
+        if (await transcodedFile.exists()) await transcodedFile.delete();
+      }
+      rethrow;
+    }
+    if (generatedMidiPath != null && transcodedPath != null) {
+      final generatedFile = File(generatedMidiPath);
+      if (await generatedFile.exists()) await generatedFile.delete();
+      generatedMidiPath = null;
+    }
+    _castRenderedMediaPath = transcodedPath ?? generatedMidiPath;
+
+    if (_dspActive) {
+      await _dspPlayer.pause();
+    } else if (_midiActive) {
+      await _midiPlayer.pause();
+    } else {
+      await _player.pause();
+    }
+    if (mounted) {
+      setState(() => _playerState = PlayerState.playing);
+      _startCastPositionPolling();
+    }
+  }
 
   AudioPlayer get _player => _activePlayer;
 
@@ -2347,11 +2681,37 @@ class _PlayerPageState extends State<PlayerPage>
       _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
   bool get _isPlaying => _playerState == PlayerState.playing;
 
-  double _volumeFor(Track? track) => playbackVolume(
-    volume: _volume,
-    replayGainDb: track?.replayGainDb,
-    replayGainEnabled: _replayGainEnabled,
-  );
+  double _volumeFor(Track? track) {
+    var result = playbackVolume(
+      volume: _volume,
+      replayGainDb: track?.replayGainDb,
+      replayGainEnabled: _replayGainEnabled,
+    );
+    final measured = track == null ? null : _measuredLufs[track.path];
+    if (_r128NormalizationEnabled &&
+        track?.replayGainDb == null &&
+        measured != null) {
+      result = playbackVolume(
+        volume: result,
+        replayGainDb: gainDbToLoudnessTarget(measured),
+        replayGainEnabled: true,
+      );
+    }
+    return result;
+  }
+
+  Future<void> _ensureLoudnessMeasured(Track track) async {
+    if (!_r128NormalizationEnabled ||
+        track.replayGainDb != null ||
+        track.path.startsWith('http://') ||
+        track.path.startsWith('https://') ||
+        _measuredLufs.containsKey(track.path)) {
+      return;
+    }
+    _measuredLufs[track.path] = await measureIntegratedLufsWithFfmpeg(
+      track.path,
+    );
+  }
 
   bool get _midiEqualizerUnavailable =>
       _current != null &&
@@ -2447,8 +2807,11 @@ class _PlayerPageState extends State<PlayerPage>
       final relative = _cueRelativePosition(track, value);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
+      unawaited(_maybeSubmitScrobble(relative));
       if (track?.cueStartMs == null &&
+          !_casting &&
           _crossfade &&
+          !_bitPerfectMode &&
           !_crossfadeInProgress &&
           _isPlaying) {
         final remaining = _duration - relative;
@@ -2487,7 +2850,9 @@ class _PlayerPageState extends State<PlayerPage>
       final relative = _cueRelativePosition(track, value);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
+      unawaited(_maybeSubmitScrobble(relative));
       if (track?.cueStartMs == null &&
+          !_casting &&
           _crossfade &&
           !_crossfadeInProgress &&
           _isPlaying) {
@@ -2564,7 +2929,7 @@ class _PlayerPageState extends State<PlayerPage>
       final stop = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Casting to ${_dlnaCast.rendererName ?? 'device'}'),
+          title: Text('Casting to ${_castDeviceName ?? 'device'}'),
           content: const Text('Audio is playing on your network device.'),
           actions: [
             TextButton(
@@ -2580,12 +2945,14 @@ class _PlayerPageState extends State<PlayerPage>
       );
       if (stop == true) {
         _castPositionTimer?.cancel();
-        await _dlnaCast.stop();
+        await _stopCasting();
         if (mounted) setState(() => _playerState = PlayerState.paused);
       }
       return;
     }
     List<MediaRenderer> devices = [];
+    List<CastDevice> chromecastDevices = [];
+    List<CastDevice> airplayDevices = [];
     var scanning = true;
     var scanStarted = false;
     String? error;
@@ -2602,7 +2969,24 @@ class _PlayerPageState extends State<PlayerPage>
               error = null;
             });
             try {
-              devices = await _dlnaCast.discover();
+              // Both Android discovery paths share a non-reference-counted
+              // multicast lock. Scan serially so the first scan cannot release
+              // it while the second is still listening for mDNS/SSDP.
+              try {
+                devices = await _dlnaCast.discover();
+              } catch (_) {
+                devices = [];
+              }
+              try {
+                chromecastDevices = await _chromecastCast.discover();
+              } catch (_) {
+                chromecastDevices = [];
+              }
+              try {
+                airplayDevices = await _airplayCast.discover();
+              } catch (_) {
+                airplayDevices = [];
+              }
             } catch (e) {
               error = 'Could not scan the local network: $e';
             } finally {
@@ -2633,80 +3017,107 @@ class _PlayerPageState extends State<PlayerPage>
                     )
                   : error != null
                   ? Text(error!)
-                  : devices.isEmpty
+                  : devices.isEmpty &&
+                        chromecastDevices.isEmpty &&
+                        airplayDevices.isEmpty
                   ? const Text(
-                      'No DLNA/UPnP players found. Make sure your device is on the same Wi-Fi network.',
+                      'No compatible network players found. Make sure your device is on the same Wi-Fi network.',
                     )
                   : ListView(
                       shrinkWrap: true,
-                      children: devices
-                          .map(
-                            (device) => ListTile(
-                              leading: const Icon(Icons.speaker_rounded),
-                              title: Text(
-                                device.description?.friendlyName ??
-                                    'Network player',
-                              ),
-                              subtitle: Text(
-                                device.avTransport == null
-                                    ? 'Playback not supported'
-                                    : 'DLNA / UPnP',
-                              ),
-                              enabled: device.avTransport != null,
-                              onTap: () async {
-                                final track = _current;
-                                if (track == null) return;
-                                if (isMidiFilePath(track.path)) {
+                      children: [
+                        ...chromecastDevices.map(
+                          (device) => ListTile(
+                            leading: const Icon(Icons.cast_rounded),
+                            title: Text(device.name),
+                            subtitle: const Text('Chromecast audio'),
+                            onTap: () async {
+                              final track = _current;
+                              if (track == null) return;
+                              Navigator.pop(dialogContext);
+                              try {
+                                await _castTrack(
+                                  track,
+                                  chromecastDevice: device,
+                                );
+                              } catch (e) {
+                                if (mounted)
                                   ScaffoldMessenger.of(this.context)
                                       .showSnackBar(
-                                        const SnackBar(
+                                        SnackBar(
                                           content: Text(
-                                            'MIDI/KAR casting is not supported yet.',
+                                            'Could not start casting: $e',
                                           ),
                                         ),
                                       );
-                                  return;
-                                }
-                                Navigator.pop(dialogContext);
-                                try {
-                                  await _dlnaCast.play(
-                                    renderer: device,
-                                    path: track.path,
-                                    title: track.name,
-                                    artist: track.artist,
-                                    album: track.album,
-                                    duration: track.cueStart + _duration,
-                                    segmentStart: track.cueStart,
-                                    segmentEnd: track.cueEnd,
-                                  );
-                                  if (_dspActive) {
-                                    await _dspPlayer.pause();
-                                  } else if (_midiActive) {
-                                    await _midiPlayer.pause();
-                                  } else {
-                                    await _player.pause();
-                                  }
-                                  if (mounted) {
-                                    setState(
-                                      () => _playerState = PlayerState.playing,
-                                    );
-                                    _startCastPositionPolling();
-                                  }
-                                } catch (e) {
-                                  if (mounted)
-                                    ScaffoldMessenger.of(this.context)
-                                        .showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              'Could not start casting: $e',
-                                            ),
+                              }
+                            },
+                          ),
+                        ),
+                        ...airplayDevices.map(
+                          (device) => ListTile(
+                            leading: const Icon(Icons.airplay_rounded),
+                            title: Text(device.name),
+                            subtitle: const Text('AirPlay'),
+                            onTap: () async {
+                              final track = _current;
+                              if (track == null) return;
+                              Navigator.pop(dialogContext);
+                              try {
+                                await _startAirPlayCast(track, device);
+                              } catch (e) {
+                                if (mounted)
+                                  ScaffoldMessenger.of(this.context)
+                                      .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Could not start casting: $e',
                                           ),
-                                        );
-                                }
-                              },
-                            ),
-                          )
-                          .toList(),
+                                        ),
+                                      );
+                              }
+                            },
+                          ),
+                        ),
+                        ...devices
+                            .map(
+                              (device) => ListTile(
+                                leading: const Icon(Icons.speaker_rounded),
+                                title: Text(
+                                  device.description?.friendlyName ??
+                                      'Network player',
+                                ),
+                                subtitle: Text(
+                                  device.avTransport == null
+                                      ? 'Playback not supported'
+                                      : 'DLNA / UPnP',
+                                ),
+                                enabled: device.avTransport != null,
+                                onTap: () async {
+                                  final track = _current;
+                                  if (track == null) return;
+                                  Navigator.pop(dialogContext);
+                                  try {
+                                    await _castTrack(
+                                      track,
+                                      dlnaRenderer: device,
+                                    );
+                                  } catch (e) {
+                                    if (mounted)
+                                      ScaffoldMessenger.of(this.context)
+                                          .showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                'Could not start casting: $e',
+                                              ),
+                                            ),
+                                          );
+                                  }
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ],
                     ),
             ),
             actions: [
@@ -2725,7 +3136,13 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _playCurrent() async {
     if (_casting) {
-      await _dlnaCast.resume();
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.resume();
+      } else if (_dlnaCast.isConnected) {
+        await _dlnaCast.resume();
+      } else {
+        await _airplayCast.resume();
+      }
       if (mounted) setState(() => _playerState = PlayerState.playing);
       return;
     }
@@ -2740,7 +3157,13 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _pauseCurrent() async {
     if (_casting) {
-      await _dlnaCast.pause();
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.pause();
+      } else if (_dlnaCast.isConnected) {
+        await _dlnaCast.pause();
+      } else {
+        await _airplayCast.pause();
+      }
       if (mounted) setState(() => _playerState = PlayerState.paused);
       return;
     }
@@ -2756,7 +3179,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _stopCurrent() async {
     if (_casting) {
       _castPositionTimer?.cancel();
-      await _dlnaCast.stop();
+      await _stopCasting();
       if (mounted) setState(() => _playerState = PlayerState.stopped);
     }
     if (_midiActive) {
@@ -2770,7 +3193,13 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _seekCurrent(Duration position) async {
     if (_casting) {
-      await _dlnaCast.seek(position);
+      if (_chromecastCast.isConnected) {
+        await _chromecastCast.seek(position);
+      } else if (_dlnaCast.isConnected) {
+        await _dlnaCast.seek(position);
+      } else {
+        await _airplayCast.seek(position);
+      }
       if (mounted) setState(() => _position = position);
       return;
     }
@@ -2846,6 +3275,152 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _setR128NormalizationEnabled(bool enabled) async {
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _r128NormalizationEnabled = enabled);
+    if (_current != null && enabled) {
+      await _ensureLoudnessMeasured(_current!);
+    }
+    if (_current != null && (wasPlaying || _dspActive)) {
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
+  }
+
+  Map<String, dynamic> _remoteState() => {
+    'playing': _isPlaying,
+    'positionMs': _position.inMilliseconds,
+    'durationMs': _duration.inMilliseconds,
+    'volume': _volume,
+    'currentIndex': _current == null ? null : _selected,
+    'current': _current == null
+        ? null
+        : {
+            'title': _current!.name,
+            'artist': _current!.artist,
+            'album': _current!.album,
+          },
+    'queue': [
+      for (final track in _queue)
+        {'title': track.name, 'artist': track.artist},
+    ],
+  };
+
+  Future<Map<String, dynamic>> _handleRemoteCommand(
+    Map<String, dynamic> command,
+  ) async {
+    switch (command['type']) {
+      case 'play':
+        await _playCurrent();
+      case 'pause':
+        await _pauseCurrent();
+      case 'toggle':
+        await _togglePlay();
+      case 'next':
+        await _next(useCrossfade: false);
+      case 'previous':
+        await _previous();
+      case 'select':
+        final index = (command['index'] as num?)?.toInt();
+        if (index == null || index < 0 || index >= _queue.length) {
+          throw const FormatException('a valid queue index is required');
+        }
+        await _select(index);
+      case 'clearQueue':
+        await _clearQueue();
+      case 'seek':
+        final position = (command['positionMs'] as num?)?.toInt();
+        if (position == null) throw const FormatException('positionMs is required');
+        await _seekCurrent(Duration(milliseconds: position));
+      case 'volume':
+        final volume = (command['value'] as num?)?.toDouble();
+        if (volume == null || !volume.isFinite) {
+          throw const FormatException('value is required');
+        }
+        final next = volume.clamp(0.0, 1.0).toDouble();
+        setState(() => _volume = next);
+        if (_dspActive) {
+          await _dspPlayer.setVolume(_volumeFor(_current));
+        } else {
+          await _player.setVolume(_volumeFor(_current));
+        }
+        await _saveQueue();
+      default:
+        throw FormatException(
+          'Unknown remote command: ' + command['type'].toString(),
+        );
+    }
+    return _remoteState();
+  }
+
+  Future<void> _setRemoteEnabled(bool enabled) async {
+    if (!enabled) {
+      await _remoteServer?.stop();
+      _remoteServer = null;
+      if (mounted) setState(() => _remoteEnabled = false);
+      await _saveQueue();
+      return;
+    }
+    final server = RemoteCommandServer();
+    try {
+      final port = await server.start(
+        port: _remotePort,
+        state: _remoteState,
+        command: _handleRemoteCommand,
+      );
+      _remoteServer = server;
+      if (mounted) {
+        setState(() {
+          _remoteEnabled = true;
+          _remotePort = port;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Remote control listening on port ' + port.toString())),
+        );
+      }
+      await _saveQueue();
+    } on Object catch (error) {
+      await server.stop();
+      if (mounted) {
+        setState(() => _remoteEnabled = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start remote control: ' + error.toString())),
+        );
+      }
+    }
+  }
+
+  Future<void> _setBitPerfectMode(bool enabled) async {
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _bitPerfectMode = enabled);
+    if (_current != null && (wasPlaying || _dspActive)) {
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
+  }
+
+  Future<void> _setSilenceAwareCrossfade(bool enabled) async {
+    setState(() => _silenceAwareCrossfade = enabled);
+    await _saveQueue();
+  }
+
+  Future<void> _setTruePeakLimiter(bool enabled) async {
+    setState(() => _truePeakLimiterEnabled = enabled);
+    _dspPlayer.setTruePeakLimiter(enabled);
+    _crossfadeDspPlayer?.setTruePeakLimiter(enabled);
+    await _saveQueue();
+  }
+
   Future<void> _handleComplete() async {
     if (_crossfadeInProgress) return;
     final identity = _current?.identityKey;
@@ -2878,7 +3453,11 @@ class _PlayerPageState extends State<PlayerPage>
     }
     _castPositionPollInProgress = true;
     try {
-      final position = await _dlnaCast.getPosition();
+      final position = _chromecastCast.isConnected
+          ? await _chromecastCast.getPosition()
+          : _dlnaCast.isConnected
+          ? await _dlnaCast.getPosition()
+          : await _airplayCast.getPosition();
       if (position == null || !mounted || !_casting) return;
       if (_duration > Duration.zero && position >= _duration) {
         _castPositionTimer?.cancel();
@@ -3069,13 +3648,51 @@ class _PlayerPageState extends State<PlayerPage>
           (settings['balance'] as num?)?.toDouble() ?? _balance,
         );
         _crossfade = settings['crossfade'] as bool? ?? false;
+        _silenceAwareCrossfade = settings['silenceAwareCrossfade'] as bool? ?? false;
+        _bitPerfectMode = settings['bitPerfectMode'] as bool? ?? false;
         _crossfadeSeconds =
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
+        _eqPreamp = ((settings['eqPreamp'] as num?)?.toDouble() ?? 0).clamp(-12, 12).toDouble();
         _midiSoundFontPath = settings['midiSoundFontPath'] as String?;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+        _customEqPresets.addAll(
+          decodeCustomEqualizerPresets(settings['customEqPresets']),
+        );
+        _customEqFrequencies.addAll(
+          decodeCustomEqualizerFrequencies(settings['customEqFrequencies']),
+        );
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
+        _r128NormalizationEnabled = settings['r128NormalizationEnabled'] as bool? ?? false;
+        _truePeakLimiterEnabled = settings['truePeakLimiterEnabled'] as bool? ?? true;
+        final savedImpulse = settings['convolutionImpulsePath'] as String?;
+        _convolutionImpulsePath = savedImpulse != null &&
+                isSupportedImpulseResponsePath(savedImpulse)
+            ? savedImpulse
+            : null;
+        final savedServers = settings['mediaServerProfiles'];
+        if (savedServers is List) {
+          _mediaServerProfiles.addAll(
+            savedServers.whereType<Map>().map(
+              (item) => MediaServerProfile.fromJson(Map<String, dynamic>.from(item)),
+            ),
+          );
+        }
+        final savedScrobble = settings['scrobbleProfile'];
+        if (savedScrobble is Map) {
+          final profile = ScrobbleProfile.fromJson(Map<String, dynamic>.from(savedScrobble));
+          _listenBrainzToken = profile.token;
+          _lastFmApiKey = profile.lastFmApiKey;
+          _lastFmSessionKey = profile.lastFmSessionKey;
+          _lastFmSharedSecret = profile.lastFmSharedSecret;
+          _libreFmApiKey = profile.libreFmApiKey;
+          _libreFmSessionKey = profile.libreFmSessionKey;
+          _libreFmSharedSecret = profile.libreFmSharedSecret;
+          _scrobblingEnabled = profile.enabled && _hasScrobbleCredentials(profile);
+        }
+        _controllerBindings = controllerBindingsFromJson(settings['controllerBindings']);
+        _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
             ? null
@@ -3083,12 +3700,22 @@ class _PlayerPageState extends State<PlayerPage>
         _librarySort = settings['librarySort'] as String? ?? 'Added';
         _librarySortDescending =
             settings['librarySortDescending'] as bool? ?? false;
+        final savedVisualizerMode = settings['visualizerMode'] as String?;
+        if (visualizerModes.contains(savedVisualizerMode)) {
+          _visualizerMode = savedVisualizerMode!;
+        }
         final savedPlayerControls = settings['playerControls'];
         if (savedPlayerControls is List) {
           _playerControls = normalizePlayerControls(savedPlayerControls);
           _playerLayoutCustomized = true;
         }
         final savedBands = (settings['eqBands'] as List?)?.cast<num>();
+        final savedFrequencies = (settings['eqFrequencies'] as List?)?.cast<num>();
+        if (savedFrequencies != null && savedFrequencies.length == _eqFrequencies.length) {
+          for (var i = 0; i < _eqFrequencies.length; i++) {
+            _eqFrequencies[i] = savedFrequencies[i].toDouble();
+          }
+        }
         if (savedBands != null && savedBands.length == _eqBands.length) {
           for (var i = 0; i < _eqBands.length; i++) {
             _eqBands[i] = savedBands[i].toDouble();
@@ -3097,6 +3724,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _armSleepTimer();
+    if (_remoteEnabled) unawaited(_setRemoteEnabled(true));
   }
 
   Future<void> _saveQueue() async {
@@ -3136,16 +3764,39 @@ class _PlayerPageState extends State<PlayerPage>
         'volume': _volume,
         'balance': _balance,
         'crossfade': _crossfade,
+        'silenceAwareCrossfade': _silenceAwareCrossfade,
+        'bitPerfectMode': _bitPerfectMode,
         'crossfadeSeconds': _crossfadeSeconds,
         'equalizerEnabled': _equalizerEnabled,
+        'eqPreamp': _eqPreamp,
         'midiSoundFontPath': _midiSoundFontPath,
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
+        'eqFrequencies': _eqFrequencies,
+        'customEqPresets': _customEqPresets,
+        'customEqFrequencies': _customEqFrequencies,
         'playbackSpeed': _playbackSpeed,
         'replayGainEnabled': _replayGainEnabled,
+        'r128NormalizationEnabled': _r128NormalizationEnabled,
+        'truePeakLimiterEnabled': _truePeakLimiterEnabled,
+        'convolutionImpulsePath': _convolutionImpulsePath,
+        'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
+        'scrobbleProfile': ScrobbleProfile(
+          token: _listenBrainzToken,
+          enabled: _scrobblingEnabled,
+          lastFmApiKey: _lastFmApiKey,
+          lastFmSessionKey: _lastFmSessionKey,
+          lastFmSharedSecret: _lastFmSharedSecret,
+          libreFmApiKey: _libreFmApiKey,
+          libreFmSessionKey: _libreFmSessionKey,
+          libreFmSharedSecret: _libreFmSharedSecret,
+        ).toJson(),
+        'controllerBindings': controllerBindingsToJson(_controllerBindings),
+        'remoteEnabled': _remoteEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
+        'visualizerMode': _visualizerMode,
         'libraryRelativePaths': _libraryRelativePaths,
         if (_playerLayoutCustomized) 'playerControls': _playerControls,
       }),
@@ -3156,40 +3807,35 @@ class _PlayerPageState extends State<PlayerPage>
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: [
-        'mp3',
-        'flac',
-        'wav',
-        'ogg',
-        'm4a',
-        'mp4',
-        'aac',
-        'wma',
-        'opus',
-        'ape',
-        'aif',
-        'aiff',
-        'aifc',
-        'mov',
-        'webm',
-        'mkv',
-        'mka',
+        ...supportedLibraryAudioExtensions,
         ...midiFileExtensions,
         ...trackerModuleExtensions,
-      ],
+      ]..sort(),
     );
     if (result.isEmpty) return;
+    var added = 0;
     for (final file in result) {
-      final path = file.path;
-      if (path == null || _queue.any((track) => track.path == path)) continue;
-      final track = await _readTrack(path, file.name);
-      if (!mounted) return;
-      setState(() {
-        _queue.add(track);
-        if (!_library.any((item) => item.path == path)) _library.add(track);
-      });
+      final materialized = await _materializePickedFile(file);
+      if (materialized == null) continue;
+      final path = materialized.path;
+      try {
+        if (_queue.any((track) => track.path == path)) continue;
+        final track = await _readTrack(path, file.name);
+        if (!mounted) return;
+        setState(() {
+          _queue.add(track);
+          if (!_library.any((item) => item.path == path)) _library.add(track);
+        });
+        added++;
+      } finally {
+        if (materialized.temporary) {
+          final temporary = File(materialized.path);
+          if (await temporary.exists()) await temporary.delete();
+        }
+      }
     }
     await _saveQueue();
-    if (_queue.length == result.length && _queue.isNotEmpty) await _select(0);
+    if (added > 0 && _queue.isNotEmpty) await _select(0);
   }
 
   Future<void> _addFolder() async {
@@ -3197,8 +3843,19 @@ class _PlayerPageState extends State<PlayerPage>
       final directory = await _pickFolderLocation('Choose a music folder');
       if (directory == null) return;
       if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
-      await _scanFolder(directory);
+      final found = await _scanFolder(directory);
       await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              found == 0
+                  ? 'No supported audio files were found. Select the folder that contains the music files.'
+                  : 'Found $found supported audio file(s).',
+            ),
+          ),
+        );
+      }
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3214,6 +3871,33 @@ class _PlayerPageState extends State<PlayerPage>
       return selection?['uri'] as String?;
     }
     return FilePicker.getDirectoryPath(dialogTitle: dialogTitle);
+  }
+
+  Future<Uint8List?> _readPickedBytes(PlatformFile file) async {
+    try {
+      return await file.readAsBytes();
+    } on Object {
+      final path = file.path;
+      if (path == null) return null;
+      return File(path).readAsBytes();
+    }
+  }
+
+  Future<({String path, bool temporary})?> _materializePickedFile(
+    PlatformFile file,
+  ) async {
+    final path = file.path;
+    if (path != null) return (path: path, temporary: false);
+    final bytes = await _readPickedBytes(file);
+    if (bytes == null) return null;
+    final extension = (file.extension ?? 'dat').toLowerCase();
+    final directory = await getTemporaryDirectory();
+    final temporary = File(
+      '${directory.path}${Platform.pathSeparator}'
+      'neonamp-import-${DateTime.now().microsecondsSinceEpoch}.$extension',
+    );
+    await temporary.writeAsBytes(bytes, flush: true);
+    return (path: temporary.path, temporary: true);
   }
 
   Future<void> _copyFileToFolder(
@@ -3247,7 +3931,7 @@ class _PlayerPageState extends State<PlayerPage>
         .writeAsString(contents);
   }
 
-  Future<void> _scanFolder(String directory) async {
+  Future<int> _scanFolder(String directory) async {
     final List<({String path, String name, String relativePath})> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
@@ -3288,13 +3972,14 @@ class _PlayerPageState extends State<PlayerPage>
       final alreadyInLibrary = _library.any((track) => track.path == file.path);
       if (alreadyQueued && alreadyInLibrary) continue;
       final track = await _readTrack(file.path, file.name);
-      if (!mounted) return;
+      if (!mounted) return 0;
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
         if (!alreadyQueued) _queue.add(track);
         if (!alreadyInLibrary) _library.add(track);
       });
     }
+    return files.length;
   }
 
   Future<void> _rescanFolders() async {
@@ -3320,10 +4005,17 @@ class _PlayerPageState extends State<PlayerPage>
               'Choose a saved music folder again',
             );
             if (directory == null) return;
-            await _scanFolder(directory);
+            final found = await _scanFolder(directory);
             final index = _libraryFolders.indexOf(oldFolder);
             if (index >= 0) _libraryFolders[index] = directory;
             await _saveQueue();
+            if (mounted && found == 0) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('No new supported audio files were found.'),
+                ),
+              );
+            }
           } on Object catch (error) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -3335,13 +4027,16 @@ class _PlayerPageState extends State<PlayerPage>
             return;
           }
         }
-        return;
+        // Continue below so folders that already have valid SAF permissions
+        // are rescanned in the same operation. Previously this early return
+        // silently skipped them whenever one legacy folder needed recovery.
       }
     }
+    var found = 0;
     for (final folder in List<String>.from(_libraryFolders)) {
       try {
         if (Platform.isAndroid || Directory(folder).existsSync()) {
-          await _scanFolder(folder);
+          found += await _scanFolder(folder);
         }
       } on Object catch (error) {
         if (!mounted) return;
@@ -3354,7 +4049,11 @@ class _PlayerPageState extends State<PlayerPage>
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Rescanned ${_libraryFolders.length} folder(s)'),
+          content: Text(
+            found == 0
+                ? 'Folders rescanned; no supported audio files found.'
+                : 'Folders rescanned; found $found supported track(s).',
+          ),
         ),
       );
     }
@@ -3365,8 +4064,11 @@ class _PlayerPageState extends State<PlayerPage>
       type: FileType.custom,
       allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
     );
-    if (result.isEmpty || result.first.path == null) return;
-    final playlistPath = result.first.path!;
+    final file = result.firstOrNull;
+    if (file == null) return;
+    final materialized = await _materializePickedFile(file);
+    if (materialized == null) return;
+    final playlistPath = materialized.path;
     try {
       final extension = playlistPath.split('.').last.toLowerCase();
       final document = parsePlaylistDocument(
@@ -3436,6 +4138,11 @@ class _PlayerPageState extends State<PlayerPage>
           SnackBar(content: Text('Could not import playlist: $error')),
         );
       }
+    } finally {
+      if (materialized.temporary) {
+        final temporary = File(materialized.path);
+        if (await temporary.exists()) await temporary.delete();
+      }
     }
   }
 
@@ -3445,10 +4152,14 @@ class _PlayerPageState extends State<PlayerPage>
       allowedExtensions: ['xml'],
       dialogTitle: 'Import an iTunes XML library',
     );
-    final path = picked.firstOrNull?.path;
-    if (path == null) return;
+    final file = picked.firstOrNull;
+    if (file == null) return;
     try {
-      final imported = parseItunesLibrary(await File(path).readAsString());
+      final bytes = await _readPickedBytes(file);
+      if (bytes == null) return;
+      final imported = parseItunesLibrary(
+        utf8.decode(bytes, allowMalformed: true),
+      );
       var addedTracks = 0;
       var addedPlaylists = 0;
       setState(() {
@@ -3502,6 +4213,74 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _importEmbeddedChapters() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      dialogTitle: 'Select an audio file with embedded chapters',
+      allowedExtensions: [
+        'm4a', 'mp4', 'mka', 'mkv', 'mp3', 'flac', 'ogg', 'opus', 'wav', 'webm',
+      ],
+    );
+    final selected = picked.firstOrNull;
+    final inputPath = selected?.path;
+    if (inputPath == null) return;
+    final temporaryDirectory = await getTemporaryDirectory();
+    final metadataPath =
+        '${temporaryDirectory.path}${Platform.pathSeparator}'
+        'neonamp-chapters-${DateTime.now().microsecondsSinceEpoch}.txt';
+    try {
+      final session = await FFmpegKit.executeWithArguments([
+        '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+        '-i', inputPath, '-map_metadata', '0', '-f', 'ffmetadata', metadataPath,
+      ]);
+      final returnCode = await session.getReturnCode();
+      final metadataFile = File(metadataPath);
+      if (!ReturnCode.isSuccess(returnCode) || !await metadataFile.exists()) {
+        throw StateError('Could not read embedded chapter metadata.');
+      }
+      final chapters = parseEmbeddedChapters(
+        await metadataFile.readAsString(),
+        inputPath,
+      );
+      final source = await _readTrack(inputPath, selected!.name);
+      final tracks = [
+        for (final chapter in chapters)
+          source.copyWith(
+            name: chapter.title?.trim().isNotEmpty == true
+                ? chapter.title!.trim()
+                : '${source.name} · ${chapter.trackNumber.toString().padLeft(2, '0')}',
+            trackNumber: chapter.trackNumber,
+            cueStartMs: chapter.start.inMilliseconds,
+            cueEndMs: chapter.end?.inMilliseconds,
+          ),
+      ];
+      var added = 0;
+      setState(() {
+        if (!_library.any((item) => item.path == source.path)) _library.add(source);
+        for (final track in tracks) {
+          if (_queue.any((item) => item.identityKey == track.identityKey)) continue;
+          _queue.add(track);
+          added++;
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imported $added embedded chapter(s)')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import embedded chapters: $error')),
+        );
+      }
+    } finally {
+      final output = File(metadataPath);
+      if (await output.exists()) await output.delete();
+    }
+  }
+
   Future<void> _importCueSheet() async {
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -3530,13 +4309,20 @@ class _PlayerPageState extends State<PlayerPage>
     final cueInfo = picked
         .where((file) => file.extension?.toLowerCase() == 'cue')
         .firstOrNull;
-    if (cueInfo?.path == null) return;
+    if (cueInfo == null) return;
+    String? temporaryCuePath;
     try {
-      final cueFile = File(cueInfo!.path!);
-      final text = utf8.decode(
-        await cueFile.readAsBytes(),
-        allowMalformed: true,
-      );
+      final cueBytes = await _readPickedBytes(cueInfo);
+      if (cueBytes == null) return;
+      final cuePath = cueInfo.path ??
+          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}'
+          'neonamp-${DateTime.now().microsecondsSinceEpoch}.cue';
+      if (cueInfo.path == null) {
+        temporaryCuePath = cuePath;
+        await File(cuePath).writeAsBytes(cueBytes, flush: true);
+      }
+      final cueFile = File(cuePath);
+      final text = utf8.decode(cueBytes, allowMalformed: true);
       final entries = parseCueSheet(text, cueFile.path);
       final selectedAudio = picked
           .where(
@@ -3613,6 +4399,11 @@ class _PlayerPageState extends State<PlayerPage>
           SnackBar(content: Text('Could not import CUE sheet: $error')),
         );
       }
+    } finally {
+      if (temporaryCuePath != null) {
+        final temporary = File(temporaryCuePath);
+        if (await temporary.exists()) await temporary.delete();
+      }
     }
   }
 
@@ -3631,6 +4422,9 @@ class _PlayerPageState extends State<PlayerPage>
               'Tracker module${module.format.trim().isEmpty ? '' : ' · ${module.format.trim()}'}',
           album: 'Tracker modules',
         );
+      }
+      if (isDsdAudioPath(path)) {
+        return Track(path: path, name: fallback, artist: 'DSD audio');
       }
       final metadata = readTrackMetadata(File(path), getImage: true);
       final replayGainDb = readReplayGainDb(File(path));
@@ -3681,8 +4475,11 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    final castDevice = _chromecastCast.device;
+    final airplayDevice = _airplayCast.device;
+    final castRenderer = _dlnaCast.renderer;
     _castPositionTimer?.cancel();
-    if (_casting) await _dlnaCast.stop();
+    if (_casting) await _stopCasting();
     _selectionInProgress = true;
     try {
       setState(() {
@@ -3705,9 +4502,23 @@ class _PlayerPageState extends State<PlayerPage>
       final resumePosition = restoreResumePosition(
         _resumePositions[track.identityKey],
       );
+      await _ensureLoudnessMeasured(track);
       final trackVolume = _volumeFor(track);
       String? renderedMidiPath;
-      final soundFontPath = _midiSoundFontPath;
+      var soundFontPath = _midiSoundFontPath;
+      if (isMidiFilePath(track.path) &&
+          (soundFontPath == null ||
+              !FileSystemEntity.isFileSync(soundFontPath))) {
+        try {
+          soundFontPath = await _ensureMidiSoundFont();
+        } on Object catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not prepare MIDI SoundFont: $error')),
+            );
+          }
+        }
+      }
       if (isMidiFilePath(track.path) &&
           soundFontPath != null &&
           FileSystemEntity.isFileSync(soundFontPath)) {
@@ -3743,11 +4554,13 @@ class _PlayerPageState extends State<PlayerPage>
           }
         }
       }
-      final shouldUseDsp =
-          renderedMidiPath != null ||
-          (!track.path.startsWith('http') &&
-              !isMidiFilePath(track.path) &&
-              (_equalizerEnabled || isTrackerModulePath(track.path)));
+      final shouldUseDsp = shouldUseDspPlayback(
+        track.path,
+        bitPerfectMode: _bitPerfectMode,
+        equalizerEnabled: _equalizerEnabled,
+        preamp: _eqPreamp,
+        renderedMidi: renderedMidiPath != null,
+      );
       if (Platform.isWindows &&
           isMidiFilePath(track.path) &&
           renderedMidiPath == null) {
@@ -3758,7 +4571,7 @@ class _PlayerPageState extends State<PlayerPage>
         if (!_midiActive) await _player.stop();
         _midiActive = true;
         await _midiPlayer.play(track.path, playbackSpeed: _playbackSpeed);
-        _audioHandler?.publishTrack(track);
+        unawaited(_audioHandler?.publishTrack(track));
       } else if (shouldUseDsp) {
         if (_midiActive) {
           await _midiPlayer.stop();
@@ -3774,10 +4587,15 @@ class _PlayerPageState extends State<PlayerPage>
           playbackSpeed: _playbackSpeed,
           equalizerEnabled: _equalizerEnabled,
           bands: _eqBands,
+          frequencies: _eqFrequencies,
+          convolutionImpulsePath: _convolutionImpulsePath,
+          preamp: _eqPreamp,
+          truePeakLimiterEnabled: _truePeakLimiterEnabled,
+          effects: _enabledPluginEffects,
           balance: _balance,
           deleteSourceOnStop: renderedMidiPath != null,
         );
-        _audioHandler?.publishTrack(track);
+        unawaited(_audioHandler?.publishTrack(track));
       } else {
         if (_midiActive) {
           await _midiPlayer.stop();
@@ -3798,15 +4616,69 @@ class _PlayerPageState extends State<PlayerPage>
                 ? UrlSource(track.path)
                 : DeviceFileSource(track.path),
           );
-          await _player.setPlaybackRate(_playbackSpeed);
+          await _player.setPlaybackRate(_bitPerfectMode ? 1.0 : _playbackSpeed);
         }
       }
       if (resumePosition != null || track.cueStartMs != null) {
         await _seekCurrent(resumePosition ?? Duration.zero);
       }
       await _saveQueue();
+      _scrobbledTrackIdentity = null;
+      unawaited(_submitNowPlaying(track));
+      if (castDevice != null || airplayDevice != null || castRenderer != null) {
+        try {
+          await _castTrack(
+            track,
+            chromecastDevice: castDevice,
+            airplayDevice: airplayDevice,
+            dlnaRenderer: castRenderer,
+          );
+        } catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not continue casting: $error')),
+            );
+          }
+        }
+      }
     } finally {
       _selectionInProgress = false;
+    }
+  }
+
+  Future<void> _maybeSubmitScrobble(Duration position) async {
+    final track = _current;
+    if (!_scrobblingEnabled || track == null || _duration <= Duration.zero) return;
+    final identity = track.identityKey;
+    if (_scrobbledTrackIdentity == identity) return;
+    final durationSeconds = _duration.inSeconds;
+    final thresholdSeconds = durationSeconds >= 240
+        ? 240
+        : math.max(30, durationSeconds ~/ 2);
+    if (position.inSeconds < thresholdSeconds) return;
+    _scrobbledTrackIdentity = identity;
+    final client = MultiServiceScrobbler(
+      ScrobbleProfile(
+        token: _listenBrainzToken,
+        enabled: true,
+        lastFmApiKey: _lastFmApiKey,
+        lastFmSessionKey: _lastFmSessionKey,
+        lastFmSharedSecret: _lastFmSharedSecret,
+        libreFmApiKey: _libreFmApiKey,
+        libreFmSessionKey: _libreFmSessionKey,
+        libreFmSharedSecret: _libreFmSharedSecret,
+      ),
+    );
+    try {
+      await client.submitScrobble(
+        title: track.name,
+        artist: track.artist,
+        album: track.album,
+        timestampSeconds: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        durationSeconds: durationSeconds,
+      );
+    } finally {
+      client.close();
     }
   }
 
@@ -3836,6 +4708,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _next({bool useCrossfade = true}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_casting) useCrossfade = false;
     final next = _targetNextIndex();
     final cueTransition =
         _current?.cueStartMs != null || _queue[next].cueStartMs != null;
@@ -3843,6 +4716,7 @@ class _PlayerPageState extends State<PlayerPage>
       useCrossfade = false;
     }
     if (useCrossfade &&
+        !_bitPerfectMode &&
         !cueTransition &&
         _crossfade &&
         _isPlaying &&
@@ -3864,8 +4738,28 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _crossfadeToNext({int? targetIndex}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_casting || _bitPerfectMode) return;
     final next = targetIndex ?? _targetNextIndex();
-    if (_current?.cueStartMs != null || _queue[next].cueStartMs != null) {
+    final track = _queue[next];
+    await _ensureLoudnessMeasured(track);
+    if (_current?.cueStartMs != null || track.cueStartMs != null) {
+      return;
+    }
+    if (_midiActive || isMidiFilePath(track.path)) {
+      await _select(next);
+      return;
+    }
+    final targetUsesDsp = !_bitPerfectMode && trackRequiresDspPlayback(
+      track.path,
+      equalizerEnabled: _equalizerEnabled,
+      preamp: _eqPreamp,
+    );
+    if (_dspActive && !targetUsesDsp) {
+      await _crossfadeDspToAudio(next);
+      return;
+    }
+    if (!_dspActive && targetUsesDsp) {
+      await _crossfadeAudioToDsp(next);
       return;
     }
     if (_dspActive) {
@@ -3875,26 +4769,10 @@ class _PlayerPageState extends State<PlayerPage>
     _crossfadeInProgress = true;
     final previousPlayer = _player;
     final previousTrack = _queue[_selected];
-    final track = _queue[next];
     final incomingPlayer = AudioPlayer();
     _crossfadeAudioPlayer = incomingPlayer;
     try {
       await incomingPlayer.setBalance(_balance);
-      setState(() {
-        _selected = next;
-        _position = Duration.zero;
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.path));
-        final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
-        );
-        if (libraryIndex >= 0) {
-          _library[libraryIndex] = track.copyWith(
-            playCount: track.playCount + 1,
-          );
-        }
-      });
       await incomingPlayer.setVolume(0);
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
@@ -3902,22 +4780,135 @@ class _PlayerPageState extends State<PlayerPage>
             ? UrlSource(track.path)
             : DeviceFileSource(track.path),
       );
-      final steps = math.max(1, _crossfadeSeconds * 10);
-      for (var step = 1; step <= steps; step++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        final progress = step / steps;
-        await previousPlayer.setVolume(
-          _volumeFor(previousTrack) * (1 - progress),
-        );
-        await incomingPlayer.setVolume(_volumeFor(track) * progress);
-      }
+      final incomingDuration =
+          await incomingPlayer.getDuration() ?? Duration.zero;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        incomingDuration: incomingDuration,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
       await previousPlayer.stop();
       await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
       _activePlayer = incomingPlayer;
       _bindPlayerStreams();
       await _audioHandler?.switchPlayer(incomingPlayer);
       await _saveQueue();
     } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      if (identical(_crossfadeAudioPlayer, incomingPlayer)) {
+        _crossfadeAudioPlayer = null;
+      }
+      _crossfadeInProgress = false;
+    }
+  }
+
+  Future<void> _crossfadeAudioToDsp(int next) async {
+    _crossfadeInProgress = true;
+    final previousPlayer = _player;
+    final previousTrack = _queue[_selected];
+    final track = _queue[next];
+    final incomingPlayer = DspLocalPlayer();
+    _crossfadeDspPlayer = incomingPlayer;
+    try {
+      await incomingPlayer.play(
+        track.path,
+        volume: 0,
+        playbackSpeed: _playbackSpeed,
+        equalizerEnabled: _equalizerEnabled,
+        bands: _eqBands,
+        frequencies: _eqFrequencies,
+        convolutionImpulsePath: _convolutionImpulsePath,
+
+        preamp: _eqPreamp,
+        truePeakLimiterEnabled: _truePeakLimiterEnabled,
+        effects: _enabledPluginEffects,
+        balance: _balance,
+      );
+      final incomingDuration = incomingPlayer.duration;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        incomingDuration: incomingDuration,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
+      await previousPlayer.stop();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
+      _dspPlayer = incomingPlayer;
+      _dspActive = true;
+      _midiActive = false;
+      _bindDspStreams();
+      unawaited(_audioHandler?.publishTrack(track));
+      await _saveQueue();
+    } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
+      await incomingPlayer.dispose();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Crossfade could not start the next track.'),
+          ),
+        );
+      }
+    } finally {
+      if (identical(_crossfadeDspPlayer, incomingPlayer)) {
+        _crossfadeDspPlayer = null;
+      }
+      _crossfadeInProgress = false;
+    }
+  }
+
+  Future<void> _crossfadeDspToAudio(int next) async {
+    _crossfadeInProgress = true;
+    final previousPlayer = _dspPlayer;
+    final previousTrack = _queue[_selected];
+    final track = _queue[next];
+    final incomingPlayer = AudioPlayer();
+    _crossfadeAudioPlayer = incomingPlayer;
+    try {
+      await incomingPlayer.setBalance(_balance);
+      await incomingPlayer.setVolume(0);
+      await incomingPlayer.setPlaybackRate(_playbackSpeed);
+      await incomingPlayer.play(
+        track.path.startsWith('http')
+            ? UrlSource(track.path)
+            : DeviceFileSource(track.path),
+      );
+      final incomingDuration =
+          await incomingPlayer.getDuration() ?? Duration.zero;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        incomingDuration: incomingDuration,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
+      await previousPlayer.stop();
+      await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
+      final replacedAudioPlayer = _activePlayer;
+      _activePlayer = incomingPlayer;
+      _dspActive = false;
+      _bindPlayerStreams();
+      await _audioHandler?.switchPlayer(incomingPlayer);
+      if (!identical(replacedAudioPlayer, incomingPlayer)) {
+        await replacedAudioPlayer.dispose();
+      }
+      await _saveQueue();
+    } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
       await incomingPlayer.dispose();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3943,45 +4934,35 @@ class _PlayerPageState extends State<PlayerPage>
     final incomingPlayer = DspLocalPlayer();
     _crossfadeDspPlayer = incomingPlayer;
     try {
-      setState(() {
-        _selected = next;
-        _position = Duration.zero;
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.path));
-        final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
-        );
-        if (libraryIndex >= 0) {
-          _library[libraryIndex] = track.copyWith(
-            playCount: track.playCount + 1,
-          );
-        }
-      });
       await incomingPlayer.play(
         track.path,
         volume: 0,
         playbackSpeed: _playbackSpeed,
-        equalizerEnabled: true,
+        equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
+
+        preamp: _eqPreamp,
+        truePeakLimiterEnabled: _truePeakLimiterEnabled,
+        effects: _enabledPluginEffects,
         balance: _balance,
       );
-      final steps = math.max(1, _crossfadeSeconds * 10);
-      for (var step = 1; step <= steps; step++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        final progress = step / steps;
-        await previousPlayer.setVolume(
-          _volumeFor(previousTrack) * (1 - progress),
-        );
-        await incomingPlayer.setVolume(_volumeFor(track) * progress);
-      }
+      final incomingDuration = incomingPlayer.duration;
+      await _fadeBetweenTracks(
+        outgoing: previousTrack,
+        incoming: track,
+        incomingDuration: incomingDuration,
+        setOutgoingVolume: previousPlayer.setVolume,
+        setIncomingVolume: incomingPlayer.setVolume,
+      );
       await previousPlayer.stop();
       await previousPlayer.dispose();
+      _recordCrossfadeTrack(next, track, duration: incomingDuration);
       _dspPlayer = incomingPlayer;
       _bindDspStreams();
-      _audioHandler?.publishTrack(track);
+      unawaited(_audioHandler?.publishTrack(track));
       await _saveQueue();
     } catch (_) {
+      await previousPlayer.setVolume(_volumeFor(previousTrack));
       await incomingPlayer.dispose();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3996,6 +4977,71 @@ class _PlayerPageState extends State<PlayerPage>
       }
       _crossfadeInProgress = false;
     }
+  }
+
+  Future<Duration> _transitionDuration(
+    Track outgoing,
+    Track incoming,
+    Duration incomingDuration,
+  ) async {
+    final base = Duration(seconds: _crossfadeSeconds);
+    if (!_silenceAwareCrossfade ||
+        outgoing.path.startsWith('http://') ||
+        outgoing.path.startsWith('https://') ||
+        incoming.path.startsWith('http://') ||
+        incoming.path.startsWith('https://')) {
+      return base;
+    }
+    final profiles = await Future.wait<SilenceProfile?>([
+      detectSilenceWithFfmpeg(outgoing.path, duration: _duration),
+      detectSilenceWithFfmpeg(incoming.path, duration: incomingDuration),
+    ]);
+    return adjustSilenceAwareCrossfade(
+      base: base,
+      outgoing: profiles[0] ?? const SilenceProfile(),
+      incoming: profiles[1] ?? const SilenceProfile(),
+    );
+  }
+
+  Future<void> _fadeBetweenTracks({
+    required Track outgoing,
+    required Track incoming,
+    required Future<void> Function(double volume) setOutgoingVolume,
+    required Duration incomingDuration,
+    required Future<void> Function(double volume) setIncomingVolume,
+  }) async {
+    final transition = await _transitionDuration(outgoing, incoming, incomingDuration);
+    final steps = math.max(1, (transition.inMilliseconds / 100).round());
+    for (var step = 1; step <= steps; step++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      final progress = step / steps;
+      await setOutgoingVolume(_volumeFor(outgoing) * (1 - progress));
+      await setIncomingVolume(_volumeFor(incoming) * progress);
+    }
+  }
+
+  void _recordCrossfadeTrack(
+    int index,
+    Track track, {
+    required Duration duration,
+  }) {
+    setState(() {
+      _selected = index;
+      _position = Duration.zero;
+      _duration = duration;
+      _playerState = PlayerState.playing;
+      _playHistory
+        ..clear()
+        ..addAll(addToPlayHistory(_playHistory, track.path));
+      final libraryIndex = _library.indexWhere(
+        (item) => item.path == track.path,
+      );
+      if (libraryIndex >= 0) {
+        _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
+      }
+    });
+    _scrobbledTrackIdentity = null;
+    unawaited(_submitNowPlaying(track));
   }
 
   Future<void> _previous() async {
@@ -4945,9 +5991,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       );
       if (selection == null) return;
-      final destination = await FilePicker.getDirectoryPath(
-        dialogTitle: 'Choose a CD rip folder',
-      );
+      final destination = await _pickFolderLocation('Choose a CD rip folder');
       if (destination == null) return;
       final drive = selection['drive'] as String;
       final trackNumber = selection['track'] as int;
@@ -4955,14 +5999,21 @@ class _PlayerPageState extends State<PlayerPage>
         'CD ${drive.replaceAll(':', '')} Track $trackNumber.wav',
         <String>{},
       );
-      final output = '$destination${Platform.pathSeparator}$outputName';
+      final output = Platform.isAndroid
+          ? '${(await getApplicationSupportDirectory()).path}'
+                '${Platform.pathSeparator}cd-rips${Platform.pathSeparator}$outputName'
+          : '$destination${Platform.pathSeparator}$outputName';
+      if (Platform.isAndroid) await Directory(output).parent.create(recursive: true);
       final ripped = await const MethodChannel('neonamp/system_controls')
           .invokeMethod<bool>('ripAudioCd', {
             'drive': drive,
             'track': trackNumber,
             'outputPath': output,
-          });
+      });
       if (ripped != true) throw const FormatException('CD rip failed.');
+      if (Platform.isAndroid) {
+        await _copyFileToFolder(destination, output, outputName);
+      }
       final track = await _readTrack(output, outputName);
       if (!mounted) return;
       setState(() {
@@ -5049,6 +6100,8 @@ class _PlayerPageState extends State<PlayerPage>
             return track.genre.toLowerCase() == value;
           case 'Artist':
             return track.artist.toLowerCase() == value;
+          case 'Metadata equals':
+            return customMetadataMatches(track.customMetadata, criterion.value);
           default:
             return false;
         }
@@ -5104,6 +6157,9 @@ class _PlayerPageState extends State<PlayerPage>
       text: track.discTotal?.toString() ?? '',
     );
     final lyrics = TextEditingController(text: track.lyrics ?? '');
+    final customMetadata = TextEditingController(
+      text: serializeCustomMetadata(track.customMetadata),
+    );
     var rating = track.rating;
     final values = await showDialog<List<String>>(
       context: context,
@@ -5179,6 +6235,15 @@ class _PlayerPageState extends State<PlayerPage>
                   maxLines: 5,
                   decoration: const InputDecoration(labelText: 'Lyrics'),
                 ),
+                TextField(
+                  controller: customMetadata,
+                  minLines: 2,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    labelText: 'Custom fields',
+                    hintText: 'One Field=Value per line',
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -5216,6 +6281,7 @@ class _PlayerPageState extends State<PlayerPage>
                 discNumber.text.trim(),
                 discTotal.text.trim(),
                 lyrics.text,
+                customMetadata.text,
               ]),
               child: const Text('Save'),
             ),
@@ -5223,9 +6289,10 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
-    if (values == null || values.length != 11) return;
+    if (values == null || values.length != 12) return;
     try {
       await writeTrackMetadata(File(track.path), values);
+      await _syncAndroidLibraryCache(File(track.path));
       final written = readTrackMetadata(File(track.path));
       final titleMatches =
           values[0].isEmpty || written.title?.trim() == values[0];
@@ -5293,6 +6360,7 @@ class _PlayerPageState extends State<PlayerPage>
       discNumber: int.tryParse(values[8]) ?? track.discNumber,
       discTotal: int.tryParse(values[9]) ?? track.discTotal,
       lyrics: values[10].trim().isEmpty ? track.lyrics : values[10],
+      customMetadata: parseCustomMetadata(values[11]),
     );
     setState(() {
       final libraryIndex = _library.indexWhere(
@@ -5412,6 +6480,7 @@ class _PlayerPageState extends State<PlayerPage>
       ];
       try {
         await writeTrackMetadata(File(track.path), metadataValues);
+        await _syncAndroidLibraryCache(File(track.path));
         updatedTracks[track.path] = updated;
         updatedCount++;
       } catch (_) {
@@ -5549,6 +6618,7 @@ class _PlayerPageState extends State<PlayerPage>
           ]);
         });
       }
+      await _syncAndroidLibraryCache(File(track.path));
       final updated = track.copyWith(artwork: bytes);
       setState(() {
         final libraryIndex = _library.indexWhere(
@@ -5779,6 +6849,10 @@ class _PlayerPageState extends State<PlayerPage>
                     value: 'Played at least',
                     child: Text('Played at least'),
                   ),
+                  DropdownMenuItem(
+                    value: 'Metadata equals',
+                    child: Text('Custom field equals'),
+                  ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => rule = value);
@@ -5787,7 +6861,8 @@ class _PlayerPageState extends State<PlayerPage>
               if (rule == 'Genre' ||
                   rule == 'Artist' ||
                   rule == 'Rating at least' ||
-                  rule == 'Played at least')
+                  rule == 'Played at least' ||
+                  rule == 'Metadata equals')
                 TextField(
                   controller: valueController,
                   keyboardType:
@@ -5799,6 +6874,7 @@ class _PlayerPageState extends State<PlayerPage>
                       'Genre' => 'Genre',
                       'Artist' => 'Artist',
                       'Rating at least' => 'Minimum rating (1-5)',
+                      'Metadata equals' => 'Field=Value',
                       _ => 'Minimum play count',
                     },
                   ),
@@ -5833,6 +6909,10 @@ class _PlayerPageState extends State<PlayerPage>
                     value: 'Played at least',
                     child: Text('Played at least'),
                   ),
+                  DropdownMenuItem(
+                    value: 'Metadata equals',
+                    child: Text('Custom field equals'),
+                  ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => secondRule = value);
@@ -5842,7 +6922,8 @@ class _PlayerPageState extends State<PlayerPage>
                   (secondRule == 'Genre' ||
                       secondRule == 'Artist' ||
                       secondRule == 'Rating at least' ||
-                      secondRule == 'Played at least'))
+                      secondRule == 'Played at least' ||
+                      secondRule == 'Metadata equals'))
                 TextField(
                   controller: secondValueController,
                   keyboardType:
@@ -5855,6 +6936,7 @@ class _PlayerPageState extends State<PlayerPage>
                       'Genre' => 'Second genre',
                       'Artist' => 'Second artist',
                       'Rating at least' => 'Second minimum rating',
+                      'Metadata equals' => 'Second Field=Value',
                       _ => 'Second minimum play count',
                     },
                   ),
@@ -5916,12 +6998,16 @@ class _PlayerPageState extends State<PlayerPage>
                     ((rule == 'Genre' || rule == 'Artist') && value.isEmpty) ||
                     ((rule == 'Rating at least' || rule == 'Played at least') &&
                         int.tryParse(value) == null) ||
+                    (rule == 'Metadata equals' &&
+                        !customMetadataMatches(const {}, value)) ||
                     (secondRule != 'None' &&
                         ((secondRule == 'Genre' || secondRule == 'Artist') &&
                                 secondValue.isEmpty ||
                             (secondRule == 'Rating at least' ||
                                     secondRule == 'Played at least') &&
-                                int.tryParse(secondValue) == null)) ||
+                                int.tryParse(secondValue) == null ||
+                            secondRule == 'Metadata equals' &&
+                                !customMetadataMatches(const {}, secondValue))) ||
                     limit < 0) {
                   return;
                 }
@@ -5959,11 +7045,14 @@ class _PlayerPageState extends State<PlayerPage>
       type: FileType.custom,
       allowedExtensions: ['json'],
     );
-    final path = result.isEmpty ? null : result.first.path;
-    if (path == null) return;
+    final file = result.firstOrNull;
+    if (file == null) return;
     try {
+      final bytes = await _readPickedBytes(file);
+      if (bytes == null) return;
       final skin = ThemeSkin.fromJson(
-        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+        jsonDecode(utf8.decode(bytes, allowMalformed: true))
+            as Map<String, dynamic>,
       );
       await widget.onSkinImported?.call(skin);
       if (mounted) {
@@ -6043,6 +7132,371 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _startAirPlayCast(Track track, CastDevice device) async {
+    try {
+      await _castTrack(track, airplayDevice: device);
+    } on NeedsPairingException {
+      if (!await _pairAirPlayDevice(device)) return;
+      await _castTrack(track, airplayDevice: device);
+    }
+  }
+
+  Future<bool> _pairAirPlayDevice(CastDevice device) async {
+    final controller = TextEditingController();
+    final pin = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Pair with ${device.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          maxLength: 4,
+          decoration: const InputDecoration(
+            labelText: 'AirPlay PIN',
+            hintText: 'Enter the PIN shown on the receiver',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Pair'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final value = pin?.trim() ?? '';
+    if (value.length != 4 || int.tryParse(value) == null) return false;
+    try {
+      await _airplayCast.pair(device, value);
+      return true;
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not pair with AirPlay receiver: $error')),
+        );
+      }
+      return false;
+    }
+  }
+
+  Future<String?> _ensureMidiSoundFont() async {
+    final configured = _midiSoundFontPath;
+    if (configured != null && FileSystemEntity.isFileSync(configured)) {
+      return configured;
+    }
+
+    final support = await getApplicationSupportDirectory();
+    final directory = Directory(
+      '${support.path}${Platform.pathSeparator}soundfonts',
+    );
+    await directory.create(recursive: true);
+    final target = File(
+      '${directory.path}${Platform.pathSeparator}$_bundledMidiSoundFontFileName',
+    );
+    if (!await target.exists() || await target.length() == 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Preparing the built-in MIDI SoundFont…')),
+        );
+      }
+      final data = await rootBundle.load(_bundledMidiSoundFontAsset);
+      await target.writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+        flush: true,
+      );
+    }
+    await validateMidiSoundFont(target.path);
+    _midiSoundFontPath = target.path;
+    await _saveQueue();
+    return target.path;
+  }
+
+  Future<void> _auditLibrary() async {
+    final entries = <AudioAuditEntry>[];
+    for (final track in _library) {
+      var sizeBytes = 0;
+      double? peakDb;
+      try {
+        final file = File(track.path);
+        if (await file.exists()) {
+          sizeBytes = await file.length();
+          final handle = await file.open();
+          try {
+            final bytes = await handle.read(math.min(sizeBytes, 128 * 1024));
+            peakDb = parseAudioFormat(bytes, path: track.path)?.peakDb;
+          } finally {
+            await handle.close();
+          }
+        }
+      } on Object {
+        // SAF and remote entries may not expose local file details.
+      }
+      entries.add(
+        AudioAuditEntry(
+          path: track.path,
+          title: track.name,
+          artist: track.artist,
+          album: track.album,
+          extension: track.path.split('.').last,
+          sizeBytes: sizeBytes,
+          peakDb: peakDb,
+        ),
+      );
+    }
+    final duplicates = findDuplicateAudioGroups(entries);
+    final missing = findMissingCoreTags(entries);
+    final clipped = findClippedTracks(entries);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Library quality audit'),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  duplicates.isEmpty
+                      ? 'No probable duplicates found.'
+                      : '${duplicates.length} probable duplicate group${duplicates.length == 1 ? '' : 's'}',
+                ),
+                for (final group in duplicates)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Text(
+                      '${group.recommended.artist} — ${group.recommended.title}\n'
+                      'Keep: ${group.recommended.path}\n'
+                      'Lower-quality copies: ${group.lowerQuality.length}',
+                    ),
+                  ),
+                const SizedBox(height: 14),
+                Text(
+                  clipped.isEmpty
+                      ? 'No sampled PCM clipping detected.'
+                      : '${clipped.length} WAV track${clipped.length == 1 ? '' : 's'} reach digital full scale',
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  missing.isEmpty
+                      ? 'All tracks have title, artist, and album tags.'
+                      : '${missing.length} track${missing.length == 1 ? '' : 's'} missing core tags',
+                ),
+                for (final entry in missing.take(10))
+                  Text('• ${entry.path}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                if (missing.length > 10)
+                  Text('…and ${missing.length - 10} more'),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showAbxTest() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: supportedLibraryAudioExtensions.toList(),
+    );
+    final paths = result.map((file) => file.path).whereType<String>().toList();
+    if (paths.length != 2) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select exactly two local audio files.')),
+        );
+      }
+      return;
+    }
+    final player = DspLocalPlayer();
+    final session = AbxSession(roundCount: 10);
+    var selected = -1;
+    var message = 'Listen to A, B, and X, then decide whether X is A or B.';
+    Future<void> playPath(int index) async {
+      selected = index;
+      await player.play(
+        paths[index],
+        volume: _volume,
+        playbackSpeed: 1,
+        equalizerEnabled: false,
+        bands: _eqBands,
+        truePeakLimiterEnabled: _truePeakLimiterEnabled,
+        balance: _balance,
+      );
+    }
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            final complete = session.isComplete;
+            return AlertDialog(
+              title: const Text('ABX blind listening test'),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      complete
+                          ? 'Finished: ${session.correctAnswers}/${session.roundCount} correct '
+                              '(${(session.score * 100).round()}%)'
+                          : 'Round ${session.currentRound + 1} of ${session.roundCount}',
+                    ),
+                    const SizedBox(height: 10),
+                    Text(message),
+                    const SizedBox(height: 16),
+                    if (!complete)
+                      Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 8,
+                        children: [
+                          OutlinedButton(
+                            onPressed: () async {
+                              await playPath(0);
+                              setDialogState(() {});
+                            },
+                            child: const Text('Play A'),
+                          ),
+                          OutlinedButton(
+                            onPressed: () async {
+                              await playPath(1);
+                              setDialogState(() {});
+                            },
+                            child: const Text('Play B'),
+                          ),
+                          FilledButton(
+                            onPressed: () async {
+                              await playPath(session.current.x);
+                              setDialogState(() {});
+                            },
+                            child: const Text('Play X'),
+                          ),
+                        ],
+                      ),
+                    if (!complete) ...[
+                      const SizedBox(height: 12),
+                      const Text('Your answer'),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          FilledButton.tonal(
+                            onPressed: () async {
+                              final correct = session.submit(xIsA: true);
+                              message = correct ? 'Correct.' : 'Incorrect.';
+                              if (!session.isComplete) {
+                                await playPath(session.current.x);
+                              }
+                              setDialogState(() {});
+                            },
+                            child: const Text('X = A'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.tonal(
+                            onPressed: () async {
+                              final correct = session.submit(xIsA: false);
+                              message = correct ? 'Correct.' : 'Incorrect.';
+                              if (!session.isComplete) {
+                                await playPath(session.current.x);
+                              }
+                              setDialogState(() {});
+                            },
+                            child: const Text('X = B'),
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (selected >= 0 && !complete)
+                      Text(
+                        'Playing ' +
+                            (selected == 0 ? 'A' : selected == 1 ? 'B' : 'X'),
+                        style: const TextStyle(color: Colors.white54),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(complete ? 'Done' : 'Stop'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    } finally {
+      await player.dispose();
+    }
+  }
+
+  Future<void> _importAutoEqProfile() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json', 'csv', 'txt'],
+    );
+    final file = result.firstOrNull;
+    if (file == null) return;
+    try {
+      final bytes = await _readPickedBytes(file);
+      if (bytes == null) return;
+      final fallbackName = file.name.split('.').first;
+      final profile = parseAutoEqProfile(
+        utf8.decode(bytes, allowMalformed: true),
+        fallbackName: fallbackName.isEmpty ? 'AutoEQ profile' : fallbackName,
+      );
+      var name = profile.name.trim();
+      if (!canSaveEqualizerPresetName(
+        name,
+        reservedNames: _plugins.values.expand((plugin) => plugin.equalizerPresets.keys),
+      )) {
+        name = 'AutoEQ - ' + name;
+      }
+      setState(() {
+        _customEqPresets[name] = profile.gains;
+        _customEqFrequencies[name] = List<double>.from(profile.frequencies);
+        _eqPreset = name;
+        _eqBands.setAll(0, profile.gains);
+        _eqFrequencies
+          ..clear()
+          ..addAll(profile.frequencies);
+      });
+      if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
+        await _setEqualizerEnabled(true);
+      } else if (_dspActive) {
+        _dspPlayer.applyEqualizer(
+          enabled: true,
+          bands: _eqBands,
+          frequencies: _eqFrequencies,
+        );
+      }
+      await _saveQueue();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported AutoEQ profile: ' + name)),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import AutoEQ profile: ' + error.toString())),
+      );
+    }
+  }
   Future<void> _importPlugin() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -6090,6 +7544,8 @@ class _PlayerPageState extends State<PlayerPage>
                                 plugin.description,
                                 if (plugin.capabilities.isNotEmpty)
                                   plugin.capabilities.join(', '),
+                                if (plugin.audioEffects.isNotEmpty)
+                                  'Effects: ${plugin.audioEffects.map((effect) => effect.type).join(', ')}',
                               ].where((value) => value.isNotEmpty).join(' · '),
                             ),
                             trailing: Row(
@@ -6177,51 +7633,15 @@ class _PlayerPageState extends State<PlayerPage>
       );
       return;
     }
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(track.name),
-        content: SizedBox(
-          width: 560,
-          child: SingleChildScrollView(child: SelectableText(lyrics)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Done'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showVisualizer() async {
-    final canVisualize = _dspActive && soloud.SoLoud.instance.isInitialized;
-    if (canVisualize) _dspPlayer.setVisualizationEnabled(true);
-    try {
+    final synced = parseLrcLyrics(lyrics);
+    if (synced.isEmpty) {
       await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Spectrum visualizer'),
+          title: Text(track.name),
           content: SizedBox(
             width: 560,
-            height: 220,
-            child: canVisualize
-                ? StreamBuilder<soloud.AudioVisualizationData>(
-                    stream: soloud.SoLoud.instance.audioVisualizationEvents,
-                    builder: (context, snapshot) => CustomPaint(
-                      painter: SpectrumPainter(
-                        fft: snapshot.data?.fftData,
-                        active: _isPlaying,
-                      ),
-                    ),
-                  )
-                : const Center(
-                    child: Text(
-                      'Audio-reactive visuals are available during local playback with the equalizer enabled.',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
+            child: SingleChildScrollView(child: SelectableText(lyrics)),
           ),
           actions: [
             TextButton(
@@ -6231,8 +7651,789 @@ class _PlayerPageState extends State<PlayerPage>
           ],
         ),
       );
+      return;
+    }
+
+    final controller = ScrollController();
+    Timer? ticker;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            ticker ??= Timer.periodic(const Duration(milliseconds: 250), (_) {
+              if (mounted) setDialogState(() {});
+            });
+            final active = activeLrcLine(synced, _position);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!controller.hasClients || active < 0) return;
+              final target = lrcScrollOffset(
+                active,
+                44,
+                controller.position.viewportDimension,
+              ).clamp(0.0, controller.position.maxScrollExtent);
+              controller.animateTo(
+                target,
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+              );
+            });
+            return AlertDialog(
+              title: Text(track.name),
+              content: SizedBox(
+                width: 560,
+                height: 360,
+                child: ListView.builder(
+                  controller: controller,
+                  itemCount: synced.length,
+                  itemBuilder: (context, index) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      synced[index].text.isEmpty ? '…' : synced[index].text,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: index == active
+                            ? const Color(0xffef4bff)
+                            : Colors.white60,
+                        fontWeight: index == active
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        fontSize: index == active ? 18 : 15,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Done'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    } finally {
+      ticker?.cancel();
+      controller.dispose();
+    }
+  }
+
+  Future<void> _showAudioTrimmer() async {
+    final track = _current;
+    if (track == null || !File(track.path).existsSync()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select a local audio track to trim.')),
+        );
+      }
+      return;
+    }
+    final duration = _duration;
+    if (duration <= Duration.zero) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('The selected track has no readable duration.')),
+      );
+      return;
+    }
+    final startController = TextEditingController(text: '0');
+    final endController = TextEditingController(
+      text: (duration.inMilliseconds / 1000).toStringAsFixed(3),
+    );
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Trim audio snippet'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Export a WAV clip from ${track.name}.'),
+              TextField(
+                controller: startController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Start (seconds)'),
+              ),
+              TextField(
+                controller: endController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'End (seconds)'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final start = double.tryParse(startController.text.trim());
+                final end = double.tryParse(endController.text.trim());
+                final range = start == null || end == null
+                    ? null
+                    : (
+                        start: Duration(microseconds: (start * 1000000).round()),
+                        end: Duration(microseconds: (end * 1000000).round()),
+                      );
+                if (range == null ||
+                    !isValidTrimRange(range.start, range.end, duration)) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(content: Text('Enter a valid range within the track.')),
+                  );
+                  return;
+                }
+                final outputPath =
+                    '${Directory.systemTemp.path}${Platform.pathSeparator}'
+                    'neonamp-clip-${DateTime.now().microsecondsSinceEpoch}.wav';
+                try {
+                  final session = await FFmpegKit.executeWithArguments(
+                    buildAudioTrimArguments(
+                      inputPath: track.path,
+                      outputPath: outputPath,
+                      start: range.start,
+                      end: range.end,
+                    ),
+                  );
+                  final returnCode = await session.getReturnCode();
+                  final output = File(outputPath);
+                  if (!ReturnCode.isSuccess(returnCode) ||
+                      !await output.exists() ||
+                      await output.length() <= 44) {
+                    throw StateError('Could not export the selected audio range.');
+                  }
+                  final bytes = await output.readAsBytes();
+                  await FilePicker.saveFile(
+                    fileName: '${track.name}-clip.wav',
+                    bytes: bytes,
+                    mimeType: 'audio/wav',
+                    type: FileType.custom,
+                    allowedExtensions: ['wav'],
+                  );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                } on Object catch (error) {
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      SnackBar(content: Text('Could not export clip: $error')),
+                    );
+                  }
+                } finally {
+                  final output = File(outputPath);
+                  if (await output.exists()) await output.delete();
+                }
+              },
+              child: const Text('Export WAV'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      startController.dispose();
+      endController.dispose();
+    }
+  }
+
+  Future<void> _showVisualizer() async {
+    final canVisualize = _dspActive && soloud.SoLoud.instance.isInitialized;
+    if (canVisualize) _dspPlayer.setVisualizationEnabled(true);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Visualizer'),
+            content: SizedBox(
+              width: 560,
+              height: 270,
+              child: Column(
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: _visualizerMode,
+                    decoration: const InputDecoration(labelText: 'Mode'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'spectrum',
+                        child: Text('Spectrum bars'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'waveform',
+                        child: Text('Waveform'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'oscilloscope',
+                        child: Text('Oscilloscope'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'meter',
+                        child: Text('Peak / RMS meter'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'dynamicRange',
+                        child: Text('Dynamic range meter (peak/RMS)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'goniometer',
+                        child: Text('Stereo goniometer'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => _visualizerMode = value);
+                      setDialogState(() {});
+                      unawaited(_saveQueue());
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: canVisualize
+                        ? StreamBuilder<soloud.AudioVisualizationData>(
+                            stream: soloud
+                                .SoLoud
+                                .instance
+                                .audioVisualizationEvents,
+                            builder: (context, snapshot) {
+                              final fft = snapshot.data?.fftData;
+                              final peakHold = _visualizerPeakHold.update(
+                                fft?.toList() ?? const <double>[],
+                              );
+                              final waves = snapshot.data?.wave;
+                              return CustomPaint(
+                                painter: VisualizerPainter(
+                                  mode: _visualizerMode,
+                                  fft: fft,
+                                  wave: snapshot.data?.waveData,
+                                  waves: waves,
+                                  peakHold: peakHold,
+                                  active: _isPlaying,
+                                ),
+                                child: const SizedBox.expand(),
+                              );
+                            },
+                          )
+                        : const Center(
+                            child: Text(
+                              'Audio-reactive visuals are available during local playback with the equalizer enabled.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      );
     } finally {
       if (canVisualize) _dspPlayer.setVisualizationEnabled(false);
+    }
+  }
+
+  Future<void> _chooseConvolutionImpulse() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['wav', 'flac', 'aif', 'aiff', 'ogg', 'oga', 'opus'],
+    );
+    if (picked.isEmpty || !mounted) return;
+    final path = picked.first.path;
+    if (path == null || !isSupportedImpulseResponsePath(path)) return;
+    setState(() => _convolutionImpulsePath = path);
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Impulse response enabled for local playback.')),
+      );
+    }
+  }
+
+  Future<void> _clearConvolutionImpulse() async {
+    setState(() => _convolutionImpulsePath = null);
+    await _saveQueue();
+  }
+
+  Future<void> _queueUnifiedSearchItem(UnifiedSearchItem item) async {
+    final path = item.path ?? item.streamUrl;
+    if (path == null || path.isEmpty) return;
+    var index = _queue.indexWhere((track) => track.path == path);
+    if (index < 0) {
+      final track = Track(
+        path: path,
+        name: item.title,
+        artist: item.artist,
+        album: item.album,
+      );
+      setState(() {
+        _queue.add(track);
+        if (!_library.any((existing) => existing.path == track.path)) {
+          _library.add(track);
+        }
+        index = _queue.length - 1;
+      });
+      await _saveQueue();
+    }
+    await _select(index);
+  }
+
+  Future<void> _showUnifiedSearch() async {
+    final query = TextEditingController(text: _searchQuery);
+    var results = <UnifiedSearchItem>[];
+    var loading = false;
+    var error = '';
+    Future<void> runSearch(StateSetter setDialogState) async {
+      final normalized = query.text.trim();
+      if (normalized.isEmpty) {
+        setDialogState(() {
+          results = [];
+          error = 'Enter a title, artist, or album.';
+        });
+        return;
+      }
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      final local = filterUnifiedSearch(
+        _library.map(
+          (track) => UnifiedSearchItem(
+            id: track.path,
+            title: track.name,
+            artist: track.artist,
+            album: track.album,
+            source: 'Local library',
+            path: track.path,
+          ),
+        ),
+        normalized,
+      );
+      final remoteResults = <UnifiedSearchItem>[];
+      final remoteRequests = <Future<void>>[];
+      for (var i = 0; i < _mediaServerProfiles.length; i++) {
+        final profile = _mediaServerProfiles[i];
+        remoteRequests.add(() async {
+          final client = MediaServerClient(profile);
+          try {
+            final found = await client.search(normalized);
+            remoteResults.addAll(
+              found.map(
+                (track) => UnifiedSearchItem(
+                  id: track.id,
+                  title: track.name,
+                  artist: track.artist,
+                  album: track.album,
+                  source: '${profile.kind} #${i + 1}',
+                  streamUrl: track.streamUrl,
+                  durationMs: track.durationMs,
+                ),
+              ),
+            );
+          } catch (_) {
+            // A disconnected or invalid remote profile must not hide local results.
+          } finally {
+            client.close();
+          }
+        }());
+      }
+      await Future.wait(remoteRequests);
+      if (!mounted) return;
+      setDialogState(() {
+        results = deduplicateUnifiedSearch([...local, ...remoteResults]);
+        loading = false;
+        if (results.isEmpty) error = 'No matching local or remote tracks found.';
+      });
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Search all sources'),
+          content: SizedBox(
+            width: math.min(MediaQuery.sizeOf(context).width - 48, 620),
+            height: math.min(MediaQuery.sizeOf(context).height * .65, 520),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: query,
+                        autofocus: true,
+                        onSubmitted: (_) => runSearch(setDialogState),
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
+                          hintText: 'Title, artist, or album',
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Search',
+                      onPressed: () => runSearch(setDialogState),
+                      icon: const Icon(Icons.arrow_forward),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (loading) const LinearProgressIndicator(),
+                if (error.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(error, textAlign: TextAlign.center),
+                  ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: results.length,
+                    itemBuilder: (context, index) {
+                      final item = results[index];
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(
+                          item.path == null ? Icons.cloud : Icons.music_note,
+                        ),
+                        title: Text(item.title),
+                        subtitle: Text(
+                          '${item.artist} · ${item.album} · ${item.source}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () async {
+                          Navigator.pop(dialogContext);
+                          await _queueUnifiedSearchItem(item);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+    query.dispose();
+  }
+
+  Future<void> _showMediaServers() async {
+    final saved = _mediaServerProfiles.firstOrNull;
+    var kind = saved?.kind ?? 'subsonic';
+    final baseUrl = TextEditingController(text: saved?.baseUrl ?? '');
+    final username = TextEditingController(text: saved?.username ?? '');
+    final secret = TextEditingController(text: saved?.secret ?? '');
+    final userId = TextEditingController(text: saved?.userId ?? '');
+    final query = TextEditingController();
+    var results = <MediaServerTrack>[];
+    var loading = false;
+    var error = '';
+    Future<void> _search(StateSetter setDialogState) async {
+      final profile = MediaServerProfile(
+        kind: kind,
+        baseUrl: baseUrl.text.trim(),
+        username: username.text.trim(),
+        secret: secret.text,
+        userId: kind == 'jellyfin' ? userId.text.trim() : null,
+      );
+      if (profile.baseUrl.isEmpty || profile.username.isEmpty || profile.secret.isEmpty) {
+        setDialogState(() => error = 'Enter the server URL, username, and password/token.');
+        return;
+      }
+      if (profile.isJellyfin && (profile.userId == null || profile.userId!.isEmpty)) {
+        setDialogState(() => error = 'Enter the Jellyfin user ID.');
+        return;
+      }
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      final client = MediaServerClient(profile);
+      try {
+        final found = await client.search(query.text);
+        setState(() {
+          _mediaServerProfiles
+            ..clear()
+            ..add(profile);
+        });
+        await _saveQueue();
+        setDialogState(() => results = found);
+      } on Object catch (caught) {
+        setDialogState(() => error = caught.toString());
+      } finally {
+        client.close();
+        setDialogState(() => loading = false);
+      }
+    }
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Remote media servers'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    value: kind,
+                    decoration: const InputDecoration(labelText: 'Server type'),
+                    items: const [
+                      DropdownMenuItem(value: 'subsonic', child: Text('Subsonic / Navidrome')),
+                      DropdownMenuItem(value: 'jellyfin', child: Text('Jellyfin')),
+                    ],
+                    onChanged: (value) => setDialogState(() => kind = value ?? kind),
+                  ),
+                  TextField(
+                    controller: baseUrl,
+                    decoration: const InputDecoration(labelText: 'Server URL (HTTPS recommended)'),
+                    keyboardType: TextInputType.url,
+                  ),
+                  TextField(
+                    controller: username,
+                    decoration: const InputDecoration(labelText: 'Username'),
+                  ),
+                  TextField(
+                    controller: secret,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password or API token'),
+                  ),
+                  if (kind == 'jellyfin')
+                    TextField(
+                      controller: userId,
+                      decoration: const InputDecoration(labelText: 'Jellyfin user ID'),
+                    ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: query,
+                          decoration: const InputDecoration(labelText: 'Search remote library'),
+                          onSubmitted: (_) => _search(setDialogState),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Search',
+                        onPressed: loading ? null : () => _search(setDialogState),
+                        icon: const Icon(Icons.search),
+                      ),
+                    ],
+                  ),
+                  if (loading) const LinearProgressIndicator(),
+                  if (error.isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(error, style: const TextStyle(color: Colors.redAccent)),
+                    ),
+                  if (results.isNotEmpty)
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final result in results)
+                            ListTile(
+                              dense: true,
+                              title: Text(result.name),
+                              subtitle: Text('${result.artist} · ${result.album}'),
+                              trailing: IconButton(
+                                tooltip: 'Add to queue',
+                                icon: const Icon(Icons.playlist_add),
+                                onPressed: () {
+                                  final track = Track(
+                                    path: result.streamUrl,
+                                    name: result.name,
+                                    artist: result.artist,
+                                    album: result.album,
+                                    year: result.year,
+                                  );
+                                  setState(() {
+                                    _queue.add(track);
+                                    if (!_library.any((item) => item.path == track.path)) {
+                                      _library.add(track);
+                                    }
+                                  });
+                                  unawaited(_saveQueue());
+                                },
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      baseUrl.dispose();
+      username.dispose();
+      secret.dispose();
+      userId.dispose();
+      query.dispose();
+    }
+  }
+
+  bool _hasScrobbleCredentials(ScrobbleProfile profile) =>
+      profile.token.trim().isNotEmpty ||
+      (profile.lastFmApiKey.trim().isNotEmpty &&
+          profile.lastFmSessionKey.trim().isNotEmpty &&
+          profile.lastFmSharedSecret.trim().isNotEmpty) ||
+      (profile.libreFmApiKey.trim().isNotEmpty &&
+          profile.libreFmSessionKey.trim().isNotEmpty &&
+          profile.libreFmSharedSecret.trim().isNotEmpty);
+
+  Future<void> _showScrobblingSettings() async {
+    final listenBrainzToken = TextEditingController(text: _listenBrainzToken);
+    final lastFmApiKey = TextEditingController(text: _lastFmApiKey);
+    final lastFmSessionKey = TextEditingController(text: _lastFmSessionKey);
+    final lastFmSharedSecret = TextEditingController(text: _lastFmSharedSecret);
+    final libreFmApiKey = TextEditingController(text: _libreFmApiKey);
+    final libreFmSessionKey = TextEditingController(text: _libreFmSessionKey);
+    final libreFmSharedSecret = TextEditingController(text: _libreFmSharedSecret);
+    var enabled = _scrobblingEnabled;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Scrobbling services'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Enable scrobbling'),
+                  value: enabled,
+                  onChanged: (value) => setDialogState(() => enabled = value),
+                ),
+                TextField(
+                  controller: listenBrainzToken,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'ListenBrainz user token',
+                    helperText: 'Create one at listenbrainz.org/profile/',
+                  ),
+                ),
+                TextField(
+                  controller: lastFmApiKey,
+                  decoration: const InputDecoration(labelText: 'Last.fm API key'),
+                ),
+                TextField(
+                  controller: lastFmSessionKey,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Last.fm session key'),
+                ),
+                TextField(
+                  controller: lastFmSharedSecret,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Last.fm shared secret'),
+                ),
+                TextField(
+                  controller: libreFmApiKey,
+                  decoration: const InputDecoration(labelText: 'Libre.fm API key'),
+                ),
+                TextField(
+                  controller: libreFmSessionKey,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Libre.fm session key'),
+                ),
+                TextField(
+                  controller: libreFmSharedSecret,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Libre.fm shared secret'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final profile = ScrobbleProfile(
+                  token: listenBrainzToken.text.trim(),
+                  enabled: enabled,
+                  lastFmApiKey: lastFmApiKey.text.trim(),
+                  lastFmSessionKey: lastFmSessionKey.text.trim(),
+                  lastFmSharedSecret: lastFmSharedSecret.text.trim(),
+                  libreFmApiKey: libreFmApiKey.text.trim(),
+                  libreFmSessionKey: libreFmSessionKey.text.trim(),
+                  libreFmSharedSecret: libreFmSharedSecret.text.trim(),
+                );
+                setState(() {
+                  _listenBrainzToken = profile.token;
+                  _lastFmApiKey = profile.lastFmApiKey;
+                  _lastFmSessionKey = profile.lastFmSessionKey;
+                  _lastFmSharedSecret = profile.lastFmSharedSecret;
+                  _libreFmApiKey = profile.libreFmApiKey;
+                  _libreFmSessionKey = profile.libreFmSessionKey;
+                  _libreFmSharedSecret = profile.libreFmSharedSecret;
+                  _scrobblingEnabled = profile.enabled && _hasScrobbleCredentials(profile);
+                });
+                unawaited(_saveQueue());
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    for (final controller in [
+      listenBrainzToken,
+      lastFmApiKey,
+      lastFmSessionKey,
+      lastFmSharedSecret,
+      libreFmApiKey,
+      libreFmSessionKey,
+      libreFmSharedSecret,
+    ]) {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _submitNowPlaying(Track track) async {
+    if (!_scrobblingEnabled) return;
+    final client = MultiServiceScrobbler(
+      ScrobbleProfile(
+        token: _listenBrainzToken,
+        enabled: true,
+        lastFmApiKey: _lastFmApiKey,
+        lastFmSessionKey: _lastFmSessionKey,
+        lastFmSharedSecret: _lastFmSharedSecret,
+        libreFmApiKey: _libreFmApiKey,
+        libreFmSessionKey: _libreFmSessionKey,
+        libreFmSharedSecret: _libreFmSharedSecret,
+      ),
+    );
+    try {
+      await client.submitNowPlaying(
+        title: track.name,
+        artist: track.artist,
+        album: track.album,
+        durationSeconds: _duration.inSeconds > 0 ? _duration.inSeconds : null,
+      );
+    } finally {
+      client.close();
     }
   }
 
@@ -6278,12 +8479,98 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
+                title: const Text('Silence-aware crossfade'),
+                subtitle: const Text('Use FFmpeg silence detection for local tracks'),
+                value: _silenceAwareCrossfade,
+                onChanged: (value) {
+                  unawaited(_setSilenceAwareCrossfade(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Bit-perfect best-effort mode'),
+                subtitle: const Text(
+                  'Bypass NeonAmp DSP, resampling controls, and crossfade; '
+                  'exclusive hardware output is not guaranteed by the backend.',
+                ),
+                value: _bitPerfectMode,
+                onChanged: (value) {
+                  unawaited(_setBitPerfectMode(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
                 title: const Text('ReplayGain normalization'),
                 value: _replayGainEnabled,
                 onChanged: (value) {
                   unawaited(_setReplayGainEnabled(value));
                   setDialogState(() {});
                 },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Measured loudness normalization'),
+                subtitle: const Text('Analyze local tracks to target -14 LUFS'),
+                value: _r128NormalizationEnabled,
+                onChanged: (value) {
+                  unawaited(_setR128NormalizationEnabled(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Local web remote'),
+                subtitle: Text('Phone controls on port ' + _remotePort.toString()),
+                value: _remoteEnabled,
+                onChanged: (value) {
+                  unawaited(_setRemoteEnabled(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('True-peak limiter'),
+                subtitle: const Text('Keep local playback below -1 dBFS'),
+                value: _truePeakLimiterEnabled,
+                onChanged: (value) {
+                  unawaited(_setTruePeakLimiter(value));
+                  setDialogState(() {});
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Convolution impulse response'),
+                subtitle: Text(
+                  _convolutionImpulsePath == null
+                      ? 'Disabled'
+                      : _convolutionImpulsePath!.split(Platform.pathSeparator).last,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: Wrap(
+                  spacing: 4,
+                  children: [
+                    if (_convolutionImpulsePath != null)
+                      IconButton(
+                        tooltip: 'Clear impulse response',
+                        onPressed: () {
+                          unawaited(_clearConvolutionImpulse());
+                          setDialogState(() {});
+                        },
+                        icon: const Icon(Icons.clear),
+                      ),
+                    IconButton(
+                      tooltip: 'Choose impulse response',
+                      onPressed: () {
+                        unawaited(_chooseConvolutionImpulse());
+                        setDialogState(() {});
+                      },
+                      icon: const Icon(Icons.file_open_outlined),
+                    ),
+                  ],
+                ),
               ),
               const ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -6349,40 +8636,122 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _saveEqualizerPreset(
+    StateSetter setDialogState,
+    Set<String> reservedNames,
+  ) async {
+    final controller = TextEditingController();
+    var validationError = '';
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setPromptState) => AlertDialog(
+          title: const Text('Save equalizer preset'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 40,
+            decoration: InputDecoration(
+              labelText: 'Preset name',
+              errorText: validationError.isEmpty ? null : validationError,
+            ),
+            onSubmitted: (_) {},
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final requestedName = controller.text.trim();
+                if (!canSaveEqualizerPresetName(
+                  requestedName,
+                  reservedNames: reservedNames,
+                )) {
+                  setPromptState(() {
+                    validationError = requestedName.isEmpty
+                        ? 'Enter a preset name.'
+                        : 'That name is already used by a built-in or plugin preset.';
+                  });
+                  return;
+                }
+                Navigator.pop(dialogContext, requestedName);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (name == null || !mounted) return;
+
+    var storedName = name;
+    for (final existingName in _customEqPresets.keys) {
+      if (existingName.toLowerCase() == name.toLowerCase()) {
+        storedName = existingName;
+        break;
+      }
+    }
+    setState(() {
+      _customEqPresets[storedName] = List<double>.from(_eqBands);
+      _customEqFrequencies[storedName] = List<double>.from(_eqFrequencies);
+      _eqPreset = storedName;
+    });
+    if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
+      unawaited(_setEqualizerEnabled(true));
+    } else if (_dspActive) {
+      _dspPlayer.applyEqualizer(enabled: _equalizerEnabled, bands: _eqBands);
+    }
+    setDialogState(() {});
+    await _saveQueue();
+  }
+
   Future<void> _showEqualizer() async {
-    final builtInPresets = builtInEqualizerPresets.keys.toList();
     final pluginPresets = <String, List<double>>{};
+    final reservedPluginNames = <String>{};
+    for (final plugin in _plugins.values) {
+      reservedPluginNames.addAll(plugin.equalizerPresets.keys);
+    }
     for (final plugin in _plugins.values.where((plugin) => plugin.enabled)) {
       pluginPresets.addAll(plugin.equalizerPresets);
     }
-    final presets = [...builtInPresets, ...pluginPresets.keys];
+    final customPresets = {...pluginPresets, ..._customEqPresets};
+    final presets = [...builtInEqualizerPresets.keys, ...customPresets.keys];
     final selectedPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
     if (_eqPreset != selectedPreset) _eqPreset = selectedPreset;
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Row(
-            children: [
-              const Text('10-band equalizer'),
-              const Spacer(),
-              Switch(
-                value: _equalizerEnabled,
-                onChanged: _midiEqualizerUnavailable
-                    ? null
-                    : (value) {
-                        unawaited(_setEqualizerEnabled(value));
-                        setDialogState(() {});
-                      },
-              ),
-            ],
+          constraints: BoxConstraints(
+            maxWidth: math.min(
+              560.0,
+              MediaQuery.sizeOf(this.context).width - 24.0,
+            ),
           ),
+          title: const Text('10-band equalizer'),
           content: SizedBox(
-            width: 560,
+            width: math.min(
+              560.0,
+              math.max(200.0, MediaQuery.sizeOf(this.context).width - 128.0),
+            ),
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Enable equalizer'),
+                    value: _equalizerEnabled,
+                    onChanged: _midiEqualizerUnavailable
+                        ? null
+                        : (value) {
+                            unawaited(_setEqualizerEnabled(value));
+                            setDialogState(() {});
+                          },
+                  ),
                   if (_midiEqualizerUnavailable)
                     const Padding(
                       padding: EdgeInsets.only(bottom: 12),
@@ -6393,12 +8762,17 @@ class _PlayerPageState extends State<PlayerPage>
                     ),
                   DropdownButtonFormField<String>(
                     initialValue: selectedPreset,
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Preset'),
                     items: presets
                         .map(
                           (preset) => DropdownMenuItem(
                             value: preset,
-                            child: Text(preset),
+                            child: Text(
+                              preset,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         )
                         .toList(),
@@ -6408,25 +8782,59 @@ class _PlayerPageState extends State<PlayerPage>
                             if (value == null) return;
                             setState(() {
                               _eqPreset = value;
+                              _eqFrequencies
+                                ..clear()
+                                ..addAll(
+                                  _customEqFrequencies[value] ??
+                                      autoEqCenterFrequencies,
+                                );
                               _eqBands.setAll(
                                 0,
                                 equalizerPresetBands(
                                   value,
-                                  pluginPresets: pluginPresets,
+                                  pluginPresets: customPresets,
                                   bandCount: _eqBands.length,
                                 ),
                               );
                             });
-                            if (_dspActive) {
+                            if (!_equalizerEnabled) {
+                              unawaited(_setEqualizerEnabled(true));
+                            } else if (_dspActive) {
                               _dspPlayer.applyEqualizer(
                                 enabled: _equalizerEnabled,
                                 bands: _eqBands,
+                                frequencies: _eqFrequencies,
                               );
                             }
                             setDialogState(() {});
                           },
                   ),
                   Row(
+                     children: [
+                       const Text('Preamp', style: TextStyle(color: Colors.white54)),
+                       Expanded(
+                         child: Slider(
+                           value: _eqPreamp,
+                           min: -12,
+                           max: 12,
+                           divisions: 48,
+                           label: '${_eqPreamp.toStringAsFixed(1)} dB',
+                           onChanged: (value) {
+                             setState(() => _eqPreamp = value);
+                             if (_dspActive) _dspPlayer.setPreamp(value);
+                             _crossfadeDspPlayer?.setPreamp(value);
+                             setDialogState(() {});
+                           },
+                         ),
+                       ),
+                       Text(
+                         '${_eqPreamp >= 0 ? '+' : ''}${_eqPreamp.toStringAsFixed(1)} dB',
+                         style: const TextStyle(color: Colors.white54),
+                       ),
+                     ],
+                   ),
+                   const SizedBox(height: 4),
+                   Row(
                     children: [
                       const Text('L', style: TextStyle(color: Colors.white54)),
                       Expanded(
@@ -6473,6 +8881,28 @@ class _PlayerPageState extends State<PlayerPage>
                     value: _replayGainEnabled,
                     onChanged: (value) {
                       unawaited(_setReplayGainEnabled(value));
+                      setDialogState(() {});
+                    },
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Measured loudness normalization'),
+                    subtitle: const Text(
+                      'Analyze local tracks to target -14 LUFS',
+                    ),
+                    value: _r128NormalizationEnabled,
+                    onChanged: (value) {
+                      unawaited(_setR128NormalizationEnabled(value));
+                      setDialogState(() {});
+                    },
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Local web remote'),
+                    subtitle: Text('Phone controls on port ' + _remotePort.toString()),
+                    value: _remoteEnabled,
+                    onChanged: (value) {
+                      unawaited(_setRemoteEnabled(value));
                       setDialogState(() {});
                     },
                   ),
@@ -6554,6 +8984,12 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           ),
           actions: [
+            TextButton.icon(
+              onPressed: () =>
+                  _saveEqualizerPreset(setDialogState, reservedPluginNames),
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save preset'),
+            ),
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Done'),
@@ -6624,6 +9060,128 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
+  }
+
+  Future<void> _showAudioFormatInfo() async {
+    final track = _current;
+    if (track == null || track.path.startsWith('http')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Format details are available for local files.')),
+        );
+      }
+      return;
+    }
+    AudioFormatInfo? info;
+    try {
+      final file = File(track.path);
+      if (await file.exists()) {
+        final handle = await file.open();
+        try {
+          final length = math.min(await file.length(), 128 * 1024);
+          info = parseAudioFormat(await handle.read(length), path: track.path);
+        } finally {
+          await handle.close();
+        }
+      }
+    } on Object {
+      info = null;
+    }
+    if (!mounted) return;
+    final outputStatus = AudioOutputStatus(
+      backend: _casting
+          ? 'Network cast'
+          : _midiActive
+          ? 'MIDI backend'
+          : _dspActive
+          ? 'NeonAmp DSP backend'
+          : 'Native audio backend',
+      bitPerfectRequested: _bitPerfectMode,
+      softwareDspActive: _dspActive,
+      sourceFormat: info,
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Audio format diagnostics'),
+        content: Text(
+          info == null
+              ? 'The active decoder did not expose format details for this file.\n\n${outputStatus.summary}'
+              : '${info.summary}\n\n${outputStatus.summary}\n\nSource metadata does not prove hardware-exclusive output or DAC sample-rate lock.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showControllerSettings() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          _controllerDialogState = setDialogState;
+          return AlertDialog(
+            title: const Text('Controller bindings'),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Choose Assign, then press the desired gamepad button. '
+                    'Bindings are saved for Windows and Android.',
+                    style: TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                  const SizedBox(height: 12),
+                  for (final action in ControllerAction.values)
+                    ListTile(
+                      dense: true,
+                      title: Text(controllerActionLabels[action]!),
+                      subtitle: Text(
+                        _bindingAction == action
+                            ? 'Press a controller button…'
+                            : 'Key code ${_controllerBindings[action]}',
+                      ),
+                      trailing: TextButton(
+                        onPressed: () {
+                          setDialogState(() => _bindingAction = action);
+                          _controllerFocusNode.requestFocus();
+                        },
+                        child: Text(_bindingAction == action ? 'Listening' : 'Assign'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _controllerBindings =
+                        Map<ControllerAction, int>.from(defaultControllerBindings);
+                    _bindingAction = null;
+                  });
+                  setDialogState(() {});
+                },
+                child: const Text('Reset defaults'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    _bindingAction = null;
+    _controllerDialogState = null;
+    await _saveQueue();
   }
 
   Future<void> _showPlayerLayout() async {
@@ -6865,7 +9423,12 @@ class _PlayerPageState extends State<PlayerPage>
 
   @override
   void dispose() {
-    unawaited(_dlnaCast.dispose());
+    unawaited(() async {
+      await _dlnaCast.dispose();
+      await _chromecastCast.dispose();
+      await _airplayCast.dispose();
+      await _deleteCastRenderedMedia();
+    }());
     _castPositionTimer?.cancel();
     _sleepTimer?.cancel();
     _resumeSaveTimer?.cancel();
@@ -6874,6 +9437,8 @@ class _PlayerPageState extends State<PlayerPage>
     _stateSub?.cancel();
     _completeSub?.cancel();
     _searchController.dispose();
+    _controllerFocusNode.dispose();
+    unawaited(_remoteServer?.stop());
     _pulse.dispose();
     _player.dispose();
     unawaited(_midiPlayer.dispose());
@@ -6886,8 +9451,103 @@ class _PlayerPageState extends State<PlayerPage>
 
   String _ratingLabel(int rating) => '${'★' * rating}${'☆' * (5 - rating)}';
 
+  KeyEventResult _handleControllerKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (_bindingAction != null) {
+      setState(() {
+        _controllerBindings[_bindingAction!] = event.logicalKey.keyId;
+        _bindingAction = null;
+      });
+      _controllerDialogState?.call(() {});
+      return KeyEventResult.handled;
+    }
+    final action = controllerActionForKeyId(
+      event.logicalKey.keyId,
+      bindings: _controllerBindings,
+    );
+    if (action == null) return KeyEventResult.ignored;
+    switch (action) {
+      case ControllerAction.playPause:
+        unawaited(_togglePlay());
+        break;
+      case ControllerAction.next:
+        unawaited(_next());
+        break;
+      case ControllerAction.previous:
+        unawaited(_previous());
+        break;
+      case ControllerAction.seekForward:
+        unawaited(_seekCurrent(
+          (_position + const Duration(seconds: 15)) > _duration
+              ? _duration
+              : _position + const Duration(seconds: 15),
+        ));
+        break;
+      case ControllerAction.seekBackward:
+        unawaited(_seekCurrent(
+          (_position - const Duration(seconds: 15)) < Duration.zero
+              ? Duration.zero
+              : _position - const Duration(seconds: 15),
+        ));
+        break;
+      case ControllerAction.mute:
+        final nextVolume = _volume > 0 ? 0.0 : 0.82;
+        setState(() => _volume = nextVolume);
+        unawaited(_player.setVolume(_volumeFor(_current)));
+        unawaited(_dspPlayer.setVolume(_volumeFor(_current)));
+        unawaited(_saveQueue());
+        break;
+      case ControllerAction.toggleOverlay:
+        setState(() => _controllerOverlayVisible = !_controllerOverlayVisible);
+        break;
+    }
+    return KeyEventResult.handled;
+  }
+
+  Widget _controllerOverlay() => Align(
+    alignment: Alignment.bottomRight,
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Card(
+        color: const Color(0xee171421),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Previous',
+                onPressed: _previous,
+                icon: const Icon(Icons.skip_previous),
+              ),
+              IconButton(
+                tooltip: _isPlaying ? 'Pause' : 'Play',
+                onPressed: _togglePlay,
+                icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+              ),
+              IconButton(
+                tooltip: 'Next',
+                onPressed: _next,
+                icon: const Icon(Icons.skip_next),
+              ),
+              IconButton(
+                tooltip: 'Close controller overlay',
+                onPressed: () => setState(() => _controllerOverlayVisible = false),
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
   @override
-  Widget build(BuildContext context) => Shortcuts(
+  Widget build(BuildContext context) => Focus(
+    focusNode: _controllerFocusNode,
+    autofocus: true,
+    onKeyEvent: _handleControllerKey,
+    child: Shortcuts(
     shortcuts: const <ShortcutActivator, Intent>{
       SingleActivator(LogicalKeyboardKey.space): _TogglePlayIntent(),
       SingleActivator(LogicalKeyboardKey.arrowRight): _NextTrackIntent(),
@@ -6936,7 +9596,13 @@ class _PlayerPageState extends State<PlayerPage>
             final nextVolume = muted ? 0.0 : 0.82;
             setState(() => _volume = nextVolume);
             if (_casting) {
-              unawaited(_dlnaCast.setVolume(_volumeFor(_current)));
+              unawaited(
+                _chromecastCast.isConnected
+                    ? _chromecastCast.setVolume(_volumeFor(_current))
+                    : _dlnaCast.isConnected
+                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                    : _airplayCast.setVolume(_volumeFor(_current)),
+              );
             } else if (_dspActive) {
               _dspPlayer.setVolume(_volumeFor(_current));
             } else {
@@ -6949,21 +9615,27 @@ class _PlayerPageState extends State<PlayerPage>
       },
       child: Scaffold(
         body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 600;
-              return Column(
-                children: [
-                  _topBar(compact),
-                  Expanded(child: compact ? _compactLayout() : _wideLayout()),
-                  _bottomPlayer(),
-                ],
-              );
-            },
+          child: Stack(
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 600;
+                  return Column(
+                    children: [
+                      _topBar(compact),
+                      Expanded(child: compact ? _compactLayout() : _wideLayout()),
+                      _bottomPlayer(),
+                    ],
+                  );
+                },
+              ),
+              if (_controllerOverlayVisible) _controllerOverlay(),
+            ],
           ),
         ),
       ),
     ),
+  ),
   );
 
   Widget _topBar(bool compact) => Padding(
@@ -7206,6 +9878,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'importItunes') _importItunesLibrary();
               if (value == 'exportItunes') _exportItunesLibrary();
               if (value == 'importCue') _importCueSheet();
+              if (value == 'chapters') _importEmbeddedChapters();
               if (value == 'stream') _addStream();
               if (value == 'radio') _searchRadioDirectory();
               if (value == 'podcast') _addPodcastFeed();
@@ -7214,8 +9887,16 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'exportPodcasts') _exportPodcastSubscriptions();
               if (value == 'managePodcasts') _managePodcastSubscriptions();
               if (value == 'eq') _showEqualizer();
+              if (value == 'convolution') _chooseConvolutionImpulse();
+              if (value == 'servers') _showMediaServers();
+              if (value == 'scrobble') _showScrobblingSettings();
+              if (value == 'autoEq') _importAutoEqProfile();
+              if (value == 'abx') _showAbxTest();
+              if (value == 'audit') _auditLibrary();
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'layout') _showPlayerLayout();
+              if (value == 'controller') _showControllerSettings();
+              if (value == 'formatInfo') _showAudioFormatInfo();
               if (value == 'theme') _showThemePicker();
               if (value == 'importSkin') _importSkin();
               if (value == 'midiSoundFont') _importMidiSoundFont();
@@ -7229,6 +9910,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'exportWpl') _exportWplPlaylist();
               if (value == 'exportAsx') _exportAsxPlaylist();
               if (value == 'video') _openVideoPicker();
+              if (value == 'trim') _showAudioTrimmer();
             },
             itemBuilder: (_) => [
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
@@ -7277,10 +9959,24 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Manage podcast subscriptions'),
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
+              PopupMenuItem(value: 'abx', child: Text('ABX blind listening test')),
+              PopupMenuItem(value: 'audit', child: Text('Audit library quality')),
+              PopupMenuItem(
+                value: 'autoEq',
+                child: Text('Import AutoEQ headphone profile'),
+              ),
               PopupMenuItem(value: 'speed', child: Text('Playback speed')),
               PopupMenuItem(
                 value: 'layout',
                 child: Text('Customize player controls'),
+              ),
+              PopupMenuItem(
+                value: 'controller',
+                child: Text('Configure gamepad bindings'),
+              ),
+              PopupMenuItem(
+                value: 'formatInfo',
+                child: Text('Audio format diagnostics'),
               ),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
               PopupMenuItem(
@@ -7300,11 +9996,10 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'sync',
                 child: Text('Sync music to device folder'),
               ),
-              if (!Platform.isAndroid)
-                const PopupMenuItem(
-                  value: 'cd',
-                  child: Text('Import audio CD'),
-                ),
+              const PopupMenuItem(
+                value: 'cd',
+                child: Text('Import audio CD'),
+              ),
               PopupMenuItem(value: 'sleep', child: Text('Sleep timer')),
               PopupMenuItem(
                 value: 'exportPls',
@@ -7323,6 +10018,11 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Export ASX playlist'),
               ),
               PopupMenuItem(value: 'video', child: Text('Play videos')),
+              PopupMenuItem(value: 'trim', child: Text('Trim/export audio snippet')),
+              PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),
+              PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
+              PopupMenuItem(value: 'servers', child: Text('Remote media servers')),
+              PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],
           ),
       ],
@@ -7342,7 +10042,7 @@ class _PlayerPageState extends State<PlayerPage>
   );
   Widget _compactLayout() => Column(
     children: [
-      SizedBox(height: 104, child: _heroPanel(compact: true)),
+      SizedBox(height: 72, child: _heroPanel(compact: true)),
       Expanded(child: _queuePanel()),
     ],
   );
@@ -7419,6 +10119,12 @@ class _PlayerPageState extends State<PlayerPage>
                       isDense: true,
                     ),
                   ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: 'Search local and remote sources',
+                  icon: const Icon(Icons.search, size: 19),
+                  onPressed: _showUnifiedSearch,
                 ),
                 const SizedBox(width: 8),
                 DropdownButton<String>(
@@ -8030,7 +10736,7 @@ class _PlayerPageState extends State<PlayerPage>
     animation: _pulse,
     builder: (_, __) => Padding(
       padding: compact
-          ? const EdgeInsets.fromLTRB(8, 4, 8, 4)
+          ? const EdgeInsets.fromLTRB(8, 0, 8, 0)
           : const EdgeInsets.fromLTRB(12, 8, 24, 12),
       child: Container(
         decoration: BoxDecoration(
@@ -8064,7 +10770,7 @@ class _PlayerPageState extends State<PlayerPage>
               ),
             ),
             Padding(
-              padding: EdgeInsets.all(compact ? 12 : 32),
+              padding: EdgeInsets.all(compact ? 4 : 32),
               child: compact
                   ? Row(
                       children: [
@@ -8073,8 +10779,8 @@ class _PlayerPageState extends State<PlayerPage>
                           child: _current?.artwork != null
                               ? Image.memory(
                                   _current!.artwork!,
-                                  width: 58,
-                                  height: 58,
+                                  width: 36,
+                                  height: 36,
                                   fit: BoxFit.cover,
                                   errorBuilder: (_, __, ___) => const Icon(
                                     Icons.graphic_eq,
@@ -8083,11 +10789,11 @@ class _PlayerPageState extends State<PlayerPage>
                                   ),
                                 )
                               : const SizedBox(
-                                  width: 58,
-                                  height: 58,
+                                  width: 36,
+                                  height: 36,
                                   child: Icon(
                                     Icons.graphic_eq,
-                                    size: 42,
+                                    size: 34,
                                     color: Colors.white24,
                                   ),
                                 ),
@@ -8211,16 +10917,27 @@ class _PlayerPageState extends State<PlayerPage>
     ),
   );
 
-  Widget _bottomPlayer() => Container(
-    padding: MediaQuery.sizeOf(context).width < 600
-        ? const EdgeInsets.fromLTRB(8, 2, 8, 4)
+  Widget _bottomPlayer() {
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    return Container(
+    padding: compact
+        ? const EdgeInsets.fromLTRB(8, 0, 8, 2)
         : const EdgeInsets.fromLTRB(24, 10, 24, 18),
     decoration: const BoxDecoration(
       color: Color(0xff0c0d14),
       border: Border(top: BorderSide(color: Colors.white10)),
     ),
-    child: Column(
-      children: [
+    child: Theme(
+      data: Theme.of(context).copyWith(
+        materialTapTargetSize: compact
+            ? MaterialTapTargetSize.shrinkWrap
+            : MaterialTapTargetSize.padded,
+        visualDensity: compact
+            ? VisualDensity.compact
+            : VisualDensity.standard,
+      ),
+      child: Column(
+        children: [
         Row(
           children: [
             Text(
@@ -8251,7 +10968,7 @@ class _PlayerPageState extends State<PlayerPage>
             ),
             IconButton(
               tooltip: _casting
-                  ? 'Casting to ${_dlnaCast.rendererName ?? 'device'}'
+                  ? 'Casting to ${_castDeviceName ?? 'device'}'
                   : 'Cast to a network player',
               onPressed: _showCastDevices,
               icon: Icon(
@@ -8260,12 +10977,13 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               color: _casting ? const Color(0xffef4bff) : Colors.white54,
             ),
-            IconButton(
-              tooltip: 'Customize player controls',
-              onPressed: _showPlayerLayout,
-              icon: const Icon(Icons.tune_rounded, size: 18),
-              color: Colors.white54,
-            ),
+            if (!compact)
+              IconButton(
+                tooltip: 'Customize player controls',
+                onPressed: _showPlayerLayout,
+                icon: const Icon(Icons.tune_rounded, size: 18),
+                color: Colors.white54,
+              ),
           ],
         ),
         Row(
@@ -8296,7 +11014,15 @@ class _PlayerPageState extends State<PlayerPage>
                             setState(() => _volume = value);
                             if (_casting) {
                               unawaited(
-                                _dlnaCast.setVolume(_volumeFor(_current)),
+                                _chromecastCast.isConnected
+                                    ? _chromecastCast.setVolume(
+                                        _volumeFor(_current),
+                                      )
+                                    : _dlnaCast.isConnected
+                                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                                    : _airplayCast.setVolume(
+                                        _volumeFor(_current),
+                                      ),
                               );
                             } else if (_dspActive) {
                               _dspPlayer.setVolume(_volumeFor(_current));
@@ -8391,7 +11117,15 @@ class _PlayerPageState extends State<PlayerPage>
                             setState(() => _volume = value);
                             if (_casting) {
                               unawaited(
-                                _dlnaCast.setVolume(_volumeFor(_current)),
+                                _chromecastCast.isConnected
+                                    ? _chromecastCast.setVolume(
+                                        _volumeFor(_current),
+                                      )
+                                    : _dlnaCast.isConnected
+                                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                                    : _airplayCast.setVolume(
+                                        _volumeFor(_current),
+                                      ),
                               );
                             } else if (_dspActive) {
                               _dspPlayer.setVolume(_volumeFor(_current));
@@ -8407,20 +11141,81 @@ class _PlayerPageState extends State<PlayerPage>
             ],
           ],
         ),
-      ],
+        ],
+      ),
     ),
   );
 }
+}
 
-class SpectrumPainter extends CustomPainter {
-  const SpectrumPainter({required this.fft, required this.active});
+const visualizerModes = {
+  'spectrum',
+  'waveform',
+  'oscilloscope',
+  'meter',
+  'dynamicRange',
+  'goniometer',
+};
+
+class VisualizerPainter extends CustomPainter {
+  const VisualizerPainter({
+    required this.mode,
+    required this.fft,
+    required this.wave,
+    required this.waves,
+    required this.peakHold,
+    required this.active,
+  });
+  final String mode;
   final Float32List? fft;
+  final Float32List? wave;
+  final List<Float32List>? waves;
+  final List<double> peakHold;
   final bool active;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final bins = fft;
-    if (!active || bins == null || bins.isEmpty) return;
+    if (!active) return;
+    if (mode == 'spectrum' && fft != null && fft!.isNotEmpty) {
+      _paintSpectrum(canvas, size, fft!);
+    } else if (mode == 'waveform' && wave != null && wave!.isNotEmpty) {
+      _paintWaveform(canvas, size, wave!, filled: true);
+    } else if (mode == 'oscilloscope' && wave != null && wave!.isNotEmpty) {
+      _paintWaveform(canvas, size, wave!, filled: false);
+    } else if (mode == 'meter' && wave != null && wave!.isNotEmpty) {
+      _paintMeter(canvas, size, wave!);
+    } else if (mode == 'dynamicRange' && wave != null && wave!.isNotEmpty) {
+      _paintDynamicRange(canvas, size, wave!);
+    } else if (mode == 'goniometer') {
+      final channels = waves;
+      if (channels != null && channels.length >= 2) {
+        _paintGoniometer(canvas, size, channels[0], channels[1]);
+      } else {
+        _paintUnavailable(
+          canvas,
+          size,
+          'Stereo channel data is unavailable from the active audio backend.',
+        );
+      }
+    }
+  }
+
+  void _paintUnavailable(Canvas canvas, Size size, String message) {
+    final label = TextPainter(
+      text: TextSpan(
+        text: message,
+        style: const TextStyle(color: Colors.white60, fontSize: 12),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    )..layout(maxWidth: size.width - 24);
+    label.paint(
+      canvas,
+      Offset((size.width - label.width) / 2, (size.height - label.height) / 2),
+    );
+  }
+
+  void _paintSpectrum(Canvas canvas, Size size, Float32List bins) {
     final paint = Paint()..strokeCap = StrokeCap.round;
     const count = 52;
     for (var i = 0; i < count; i++) {
@@ -8439,10 +11234,144 @@ class SpectrumPainter extends CustomPainter {
         Offset(x, size.height / 2 + height / 2),
         paint,
       );
+      if (peakHold.isNotEmpty) {
+        final peakBin = ((i / count) * peakHold.length).floor().clamp(0, peakHold.length - 1);
+        final peakHeight = size.height * (peakHold[peakBin] * 3.5).clamp(.025, .82);
+        canvas.drawLine(
+          Offset(x - paint.strokeWidth / 2, size.height / 2 - peakHeight / 2),
+          Offset(x + paint.strokeWidth / 2, size.height / 2 - peakHeight / 2),
+          Paint()..color = Colors.white70..strokeWidth = 2,
+        );
+      }
+    }
+  }
+
+  void _paintMeter(Canvas canvas, Size size, Float32List samples) {
+    final rms = visualizerRms(samples);
+    final peak = visualizerPeak(samples);
+    final track = Paint()..color = Colors.white12;
+    final fill = Paint()
+      ..shader = const LinearGradient(
+        colors: [Color(0xff5b9dff), Color(0xffff4ccf), Color(0xffff665b)],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
+    final meterRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, size.height * .35, size.width, size.height * .3),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(meterRect, track);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, size.height * .35, size.width * rms, size.height * .3),
+        const Radius.circular(8),
+      ),
+      fill,
+    );
+    final peakX = size.width * peak.clamp(0.0, 1.0);
+    canvas.drawLine(
+      Offset(peakX, size.height * .25),
+      Offset(peakX, size.height * .75),
+      Paint()..color = Colors.white..strokeWidth = 2,
+    );
+  }
+
+  void _paintDynamicRange(Canvas canvas, Size size, Float32List samples) {
+    final decibels = visualizerDynamicRangeDb(samples);
+    final fillRatio = (decibels / 24).clamp(0.0, 1.0).toDouble();
+    final track = Paint()..color = Colors.white12;
+    final fill = Paint()
+      ..shader = const LinearGradient(
+        colors: [Color(0xff5b9dff), Color(0xffff4ccf), Color(0xffff665b)],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
+    final rect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, size.height * .35, size.width, size.height * .3),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(rect, track);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, size.height * .35, size.width * fillRatio, size.height * .3),
+        const Radius.circular(8),
+      ),
+      fill,
+    );
+    final label = TextPainter(
+      text: TextSpan(
+        text: 'DR peak/RMS ${decibels.toStringAsFixed(1)} dB',
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    label.paint(canvas, Offset(8, 8));
+  }
+
+  void _paintGoniometer(
+    Canvas canvas,
+    Size size,
+    Float32List left,
+    Float32List right,
+  ) {
+    final paint = Paint()
+      ..color = const Color(0xffff4ccf).withOpacity(.75)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    final center = Offset(size.width / 2, size.height / 2);
+    final scale = math.min(size.width, size.height) * .42;
+    canvas.drawLine(
+      Offset(center.dx - scale, center.dy),
+      Offset(center.dx + scale, center.dy),
+      Paint()..color = Colors.white12..strokeWidth = 1,
+    );
+    canvas.drawLine(
+      Offset(center.dx, center.dy - scale),
+      Offset(center.dx, center.dy + scale),
+      Paint()..color = Colors.white12..strokeWidth = 1,
+    );
+    final count = math.min(left.length, right.length);
+    for (var index = 0; index < count; index++) {
+      final l = left[index].clamp(-1.0, 1.0);
+      final r = right[index].clamp(-1.0, 1.0);
+      final x = center.dx + (l + r) * .5 * scale;
+      final y = center.dy - (l - r) * .5 * scale;
+      canvas.drawCircle(Offset(x, y), 1.5, paint);
+    }
+    final correlation = stereoCorrelation(left, right);
+    final label = TextPainter(
+      text: TextSpan(
+        text: 'phase ${correlation.toStringAsFixed(2)}',
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    label.paint(canvas, Offset(8, 8));
+  }
+
+  void _paintWaveform(Canvas canvas, Size size, Float32List samples, {required bool filled}) {
+    final path = Path();
+    final center = size.height / 2;
+    final amplitude = size.height * .43;
+    for (var index = 0; index < samples.length; index++) {
+      final x = samples.length == 1 ? 0.0 : index * size.width / (samples.length - 1);
+      final y = center - samples[index].clamp(-1.0, 1.0) * amplitude;
+      if (index == 0) path.moveTo(x, y); else path.lineTo(x, y);
+    }
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = filled ? 2.5 : 1.8
+      ..strokeCap = StrokeCap.round
+      ..color = filled ? const Color(0xffff4ccf) : const Color(0xff5b9dff);
+    canvas.drawLine(Offset(0, center), Offset(size.width, center), Paint()..color = Colors.white12..strokeWidth = 1);
+    canvas.drawPath(path, paint);
+    if (filled) {
+      canvas.drawPath(path, Paint()..color = const Color(0xffff4ccf).withOpacity(.16)..strokeWidth = 8..strokeCap = StrokeCap.round..style = PaintingStyle.stroke);
     }
   }
 
   @override
-  bool shouldRepaint(covariant SpectrumPainter oldDelegate) =>
-      oldDelegate.fft != fft || oldDelegate.active != active;
+  bool shouldRepaint(covariant VisualizerPainter oldDelegate) =>
+      oldDelegate.mode != mode ||
+      oldDelegate.fft != fft ||
+      oldDelegate.wave != wave ||
+      oldDelegate.waves != waves ||
+      oldDelegate.peakHold != peakHold ||
+      oldDelegate.active != active;
 }

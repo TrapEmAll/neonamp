@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:neonamp/main.dart';
 import 'package:neonamp/dsp_local_player.dart';
+import 'package:neonamp/equalizer_presets.dart';
 import 'package:neonamp/asf_metadata.dart';
 import 'package:neonamp/podcast_opml.dart';
 import 'package:neonamp/cue_sheet.dart';
@@ -1047,6 +1048,23 @@ FILE "disc image.flac" WAVE
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
     expect(isSupportedLibraryAudioPath('track.wma'), isTrue);
+    expect(isVorbisAudioPath('recording.OGA'), isTrue);
+    for (final extension in [
+      'amr',
+      'awb',
+      'spx',
+      'm4b',
+      '3gp',
+      'oga',
+      'ogx',
+      'mp1',
+      'mp2',
+    ]) {
+      final path = 'recording.$extension';
+      expect(isSupportedLibraryAudioPath(path), isTrue);
+      expect(isCrossPlatformFallbackAudioPath(path), isTrue);
+      expect(trackRequiresDspPlayback(path, equalizerEnabled: false), isTrue);
+    }
     expect(isAsfAudioPath('track.WMA'), isTrue);
     expect(isSupportedLibraryAudioPath('cover.jpg'), isFalse);
   });
@@ -1412,13 +1430,141 @@ FILE "disc image.flac" WAVE
     expect(find.text('NOW PLAYING'), findsOneWidget);
     expect(find.text('QUEUE'), findsOneWidget);
     expect(find.text('Your library is quiet.'), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text('NOW PLAYING'),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is SizedBox && widget.height == 72,
+        ),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byIcon(Icons.more_vert));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('Add folder'), findsOneWidget);
-    expect(find.text('Equalizer'), findsOneWidget);
-    expect(find.text('Playback speed'), findsOneWidget);
-    expect(find.text('Sync music to device folder'), findsOneWidget);
+    for (final option in [
+      'Visuals',
+      'Settings',
+      'Add folder',
+      'Rescan library folders',
+      'Import M3U, PLS, B4S, WPL, or ASX playlist',
+      'Import iTunes XML library',
+      'Export iTunes XML library',
+      'Import CUE sheet',
+      'Add stream URL',
+      'Find internet radio',
+      'Subscribe to podcast RSS',
+      'Refresh podcasts',
+      'Import podcast subscriptions (OPML)',
+      'Export podcast subscriptions (OPML)',
+      'Manage podcast subscriptions',
+      'Equalizer',
+      'Playback speed',
+      'Customize player controls',
+      'Choose skin',
+      'Import skin package',
+      'Import MIDI SoundFont for EQ',
+      'Manage plugins',
+      'Export M3U playlist',
+      'Sync music to device folder',
+      'Sleep timer',
+      'Export PLS playlist',
+      'Export Winamp B4S playlist',
+      'Export WPL playlist',
+      'Export ASX playlist',
+      'Play videos',
+    ]) {
+      expect(find.text(option), findsOneWidget, reason: 'Menu option: $option');
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Android-style menu speed and equalizer actions persist', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({});
+
+    await tester.pumpWidget(const NeonAmpApp());
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.ensureVisible(find.text('Playback speed'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Playback speed'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, '1.5×'));
+    await tester.pump();
+    expect(find.text('1.50×'), findsOneWidget);
+    await tester.tap(find.text('Done'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.ensureVisible(find.text('Equalizer'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Equalizer'));
+    await tester.pump();
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.text('Rock').last);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.text('Save preset'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).last, 'My Rock Curve');
+    await tester.tap(find.text('Save').last);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.text('Done'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final preferences = await SharedPreferences.getInstance();
+    final settings =
+        jsonDecode(preferences.getString('settings')!) as Map<String, dynamic>;
+    expect(settings['playbackSpeed'], 1.5);
+    expect(settings['equalizerEnabled'], isTrue);
+    expect(settings['eqPreset'], 'My Rock Curve');
+    expect(settings['eqBands'], builtInEqualizerPresets['Rock']);
+    expect(settings['customEqPresets'], {
+      'My Rock Curve': builtInEqualizerPresets['Rock'],
+    });
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('custom equalizer presets load into the preset selector', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({
+      'settings': jsonEncode({
+        'eqPreset': 'My saved curve',
+        'customEqPresets': {
+          'My saved curve': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        },
+      }),
+    });
+
+    await tester.pumpWidget(const NeonAmpApp());
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.ensureVisible(find.text('Equalizer'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('Equalizer'));
+    await tester.pump();
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('My saved curve').last, findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

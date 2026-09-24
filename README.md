@@ -4,7 +4,7 @@ NeonAmp is a native, local-first music player inspired by Winamp: fast startup, 
 
 ## Install
 
-Download the ready-to-install Windows setup program or Android APK from the [latest GitHub Release](https://github.com/TrapEmAll/neonamp/releases/latest). No source build is required. On Android, you may need to allow installation from the app used to open the downloaded APK.
+Download the ready-to-run Windows x64 package or Android APK from the [latest GitHub Release](https://github.com/TrapEmAll/neonamp/releases/latest). No source build is required. On Android, you may need to allow installation from the app used to open the downloaded APK.
 
 ## Current slice
 
@@ -13,16 +13,18 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
+- Decode legacy and container audio formats through the bundled cross-platform fallback decoder when the native playback path cannot read them; conversion is temporary and does not modify the music file.
 - Play local videos in a separate Windows/Android queue with seeking, speed and volume controls; codec support depends on the device's native decoders.
 - Add HTTP audio streams and online radio URLs.
 - Discover DLNA/UPnP network players and cast local audio or HTTP(S) streams from Windows or Android; local files are served temporarily over the LAN, so both devices must be able to communicate on the same network.
+- Discover AirPlay receivers and cast compatible local audio or HTTP(S) streams from Windows or Android.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
-- Import portable JSON plugin packages on Windows or Android; enablement and plugin-provided 10-band equalizer presets persist across launches.
+- Import portable JSON plugin packages on Windows or Android; enablement, plugin-provided 10-band equalizer presets, and native bass-boost/echo/reverb effects persist across launches.
 - Sync local library tracks to a user-selected device folder on Windows or Android with collision-safe names and an M3U8 manifest.
 - Convert local tracks to M4A using native Media Foundation on Windows or MediaCodec on Android, with source metadata restored when supported.
-- Import audio CD tracks to standard WAV on Windows; Android exposes the same flow and reports when no optical drive is available.
+- Import audio CD tracks to standard WAV on Windows and Android USB-host devices; Android requests optical-drive permission, reads the disc TOC, and rips CDDA tracks to a selected SAF folder.
 - Import CUE sheets as segment-aware virtual tracks without splitting or altering the original audio file.
 - Subscribe to podcast RSS feeds, add playable episode enclosures, and download episodes locally.
 - Import and export podcast subscriptions as OPML files to move feeds between players and devices.
@@ -33,7 +35,7 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
 - Import and export ASX playlists with titles, stream URLs, and relative media references.
 - Play tracker/module music (including MOD, IT, XM, S3M, and other libxmp-supported formats) on Windows and Android.
-- Import an SF2 SoundFont to render MIDI/KAR consistently through the shared Windows/Android DSP engine, enabling the 10-band equalizer, balance, speed, seek, and volume controls. Without an imported SoundFont, playback continues through each platform's system MIDI synthesizer.
+- NeonAmp ships with a bundled FluidR3 GM SoundFont, so MIDI/KAR playback uses the shared Windows/Android DSP engine, including equalizer, balance, speed, seek, and volume controls. The MIDI SoundFont menu can still replace it with a user-selected SF2 file.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - View embedded lyrics directly from library tracks.
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.
@@ -64,7 +66,7 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Optional ReplayGain normalization from embedded track or album gain tags, persisted across Windows and Android.
 - ReplayGain reads Vorbis comments as well as MP3 ID3 user-text and APEv2 gain fields.
 - Responsive layout for desktop and mobile.
-- Animated spectrum visualizer.
+  - Animated spectrum-bars, waveform, and oscilloscope visualizers with persisted mode selection.
 - Desktop Visuals and Settings actions are available on Windows and Android.
 
 The Android APK is a debug/distribution artifact signed with Flutter's local release key for direct installation. A Play Store release will need a real upload keystore and store configuration.
@@ -74,6 +76,7 @@ The Android APK is a debug/distribution artifact signed with Flutter's local rel
 ```text
 flutter pub get
 flutter test
+python tool/fetch_default_soundfont.py
 flutter build windows --release
 flutter build apk --release
 ```
@@ -89,3 +92,4 @@ Skin packages are JSON files with this shape:
   "backgroundColor": "#10130b"
 }
 ```
+
