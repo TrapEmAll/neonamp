@@ -10,7 +10,6 @@ import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 import 'tracker_modules.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
-import 'auto_eq.dart';
 import 'parametric_eq.dart';
 
 double dspGainForDb(double decibels) =>
