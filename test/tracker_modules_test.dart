@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neonamp/main.dart';
 import 'package:neonamp/tracker_modules.dart';
+import 'package:neonamp/audio_formats.dart';
 
 void main() {
   test(
@@ -63,6 +64,16 @@ void main() {
       expect(source, contains('...midiFileExtensions'));
     },
   );
+
+  test('DSD containers are recognized and routed through the decoder fallback', () {
+    for (final extension in dsdAudioExtensions) {
+      final path = 'C:/Music/master.$extension';
+      expect(isDsdAudioPath(path), isTrue);
+      expect(isSupportedLibraryAudioPath(path), isTrue);
+      expect(trackRequiresDspPlayback(path, equalizerEnabled: false), isTrue);
+    }
+    expect(isDsdAudioPath('C:/Music/master.dsf.tmp'), isFalse);
+  });
 
   test('MIDI and karaoke MIDI files are recognized for library scans', () {
     for (final extension in midiFileExtensions) {
