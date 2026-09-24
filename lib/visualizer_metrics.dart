@@ -65,3 +65,16 @@ double stereoCorrelation(Iterable<double> left, Iterable<double> right) {
   final denominator = math.sqrt(leftEnergy * rightEnergy);
   return denominator == 0 ? 0 : (sum / denominator).clamp(-1.0, 1.0).toDouble();
 }
+
+/// Returns the windowed peak-to-RMS dynamic range in dB.
+///
+/// This is intentionally labeled peak/RMS in the UI: it is a real-time
+/// windowed meter, not a replacement for an offline album DR analysis.
+double visualizerDynamicRangeDb(Iterable<double> samples) {
+  final values = samples.where((sample) => sample.isFinite).toList(growable: false);
+  if (values.isEmpty) return 0;
+  final rms = visualizerRms(values);
+  final peak = visualizerPeak(values);
+  if (rms <= 0 || peak <= 0) return 0;
+  return (20 * math.log(peak / rms) / math.ln10).clamp(0.0, 60.0).toDouble();
+}
