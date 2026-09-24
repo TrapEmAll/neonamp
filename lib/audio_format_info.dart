@@ -113,46 +113,33 @@ AudioFormatInfo? parseAudioFormat(
       bytes[10] == 0x56 &&
       bytes[11] == 0x45) {
     var offset = 12;
+    int? channels;
+    int? sampleRate;
+    int? bitDepth;
+    double? peakDb;
     while (offset + 8 <= bytes.length) {
       final chunk = String.fromCharCodes(bytes.sublist(offset, offset + 4));
       final size = _u32(bytes, offset + 4, Endian.little);
       final start = offset + 8;
       if (start + size > bytes.length) break;
       if (chunk == 'fmt ' && size >= 16) {
-        final channels = _u16(bytes, start + 2, Endian.little);
-        final sampleRate = _u32(bytes, start + 4, Endian.little);
-        final bitDepth = _u16(bytes, start + 14, Endian.little);
-        double? peakDb;
-        var dataOffset = start + size;
-        while (dataOffset + 8 <= bytes.length) {
-          final dataChunk = String.fromCharCodes(
-            bytes.sublist(dataOffset, dataOffset + 4),
-          );
-          final dataSize = _u32(bytes, dataOffset + 4, Endian.little);
-          if (dataChunk == 'data') {
-            peakDb = _pcmPeakDb(
-              bytes,
-              dataOffset + 8,
-              dataSize,
-              bitDepth,
-            );
-            break;
-          }
-          dataOffset += 8 + dataSize + (dataSize.isOdd ? 1 : 0);
-        }
-        return AudioFormatInfo(
-          codec: 'WAV',
-          channels: channels,
-          sampleRate: sampleRate,
-          bitDepth: bitDepth,
-          peakDb: peakDb,
-        );
+        channels = _u16(bytes, start + 2, Endian.little);
+        sampleRate = _u32(bytes, start + 4, Endian.little);
+        bitDepth = _u16(bytes, start + 14, Endian.little);
+      } else if (chunk == 'data' && bitDepth != null) {
+        peakDb = _pcmPeakDb(bytes, start, size, bitDepth);
+        break;
       }
       offset = start + size + (size.isOdd ? 1 : 0);
     }
-    return const AudioFormatInfo(codec: 'WAV');
+    return AudioFormatInfo(
+      codec: 'WAV',
+      channels: channels,
+      sampleRate: sampleRate,
+      bitDepth: bitDepth,
+      peakDb: peakDb,
+    );
   }
-
   if (bytes.length >= 12 &&
       bytes[0] == 0x46 &&
       bytes[1] == 0x4f &&
