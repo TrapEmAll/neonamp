@@ -46,6 +46,7 @@ import 'media_artwork_cache.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
 import 'loudness_scan.dart';
+import 'custom_metadata.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -1809,6 +1810,7 @@ class Track {
     this.favorite = false,
     this.artwork,
     this.replayGainDb,
+    this.customMetadata = const {},
     this.cueStartMs,
     this.cueEndMs,
   });
@@ -1828,6 +1830,7 @@ class Track {
   final bool favorite;
   final Uint8List? artwork;
   final double? replayGainDb;
+  final Map<String, String> customMetadata;
   final int? cueStartMs;
   final int? cueEndMs;
 
@@ -1855,6 +1858,7 @@ class Track {
     bool? favorite,
     Uint8List? artwork,
     double? replayGainDb,
+    Map<String, String>? customMetadata,
     int? cueStartMs,
     int? cueEndMs,
   }) => Track(
@@ -1874,6 +1878,7 @@ class Track {
     favorite: favorite ?? this.favorite,
     artwork: artwork ?? this.artwork,
     replayGainDb: replayGainDb ?? this.replayGainDb,
+    customMetadata: customMetadata ?? this.customMetadata,
     cueStartMs: cueStartMs ?? this.cueStartMs,
     cueEndMs: cueEndMs ?? this.cueEndMs,
   );
@@ -1895,6 +1900,7 @@ class Track {
     'favorite': favorite,
     if (artwork != null) 'artwork': base64Encode(artwork!),
     if (replayGainDb != null) 'replayGainDb': replayGainDb,
+    if (customMetadata.isNotEmpty) 'customMetadata': customMetadata,
     if (cueStartMs != null) 'cueStartMs': cueStartMs,
     if (cueEndMs != null) 'cueEndMs': cueEndMs,
   };
@@ -1918,6 +1924,10 @@ class Track {
         ? base64Decode(json['artwork'] as String)
         : null,
     replayGainDb: (json['replayGainDb'] as num?)?.toDouble(),
+    customMetadata: (json['customMetadata'] as Map?)?.map(
+          (key, value) => MapEntry(key.toString(), value.toString()),
+        ) ??
+        const {},
     cueStartMs: (json['cueStartMs'] as num?)?.toInt(),
     cueEndMs: (json['cueEndMs'] as num?)?.toInt(),
   );
@@ -5703,6 +5713,8 @@ class _PlayerPageState extends State<PlayerPage>
             return track.genre.toLowerCase() == value;
           case 'Artist':
             return track.artist.toLowerCase() == value;
+          case 'Metadata equals':
+            return customMetadataMatches(track.customMetadata, criterion.value);
           default:
             return false;
         }
@@ -5758,6 +5770,9 @@ class _PlayerPageState extends State<PlayerPage>
       text: track.discTotal?.toString() ?? '',
     );
     final lyrics = TextEditingController(text: track.lyrics ?? '');
+    final customMetadata = TextEditingController(
+      text: serializeCustomMetadata(track.customMetadata),
+    );
     var rating = track.rating;
     final values = await showDialog<List<String>>(
       context: context,
@@ -5833,6 +5848,15 @@ class _PlayerPageState extends State<PlayerPage>
                   maxLines: 5,
                   decoration: const InputDecoration(labelText: 'Lyrics'),
                 ),
+                TextField(
+                  controller: customMetadata,
+                  minLines: 2,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    labelText: 'Custom fields',
+                    hintText: 'One Field=Value per line',
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
@@ -5870,6 +5894,7 @@ class _PlayerPageState extends State<PlayerPage>
                 discNumber.text.trim(),
                 discTotal.text.trim(),
                 lyrics.text,
+                customMetadata.text,
               ]),
               child: const Text('Save'),
             ),
@@ -5877,7 +5902,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
-    if (values == null || values.length != 11) return;
+    if (values == null || values.length != 12) return;
     try {
       await writeTrackMetadata(File(track.path), values);
       await _syncAndroidLibraryCache(File(track.path));
@@ -5948,6 +5973,7 @@ class _PlayerPageState extends State<PlayerPage>
       discNumber: int.tryParse(values[8]) ?? track.discNumber,
       discTotal: int.tryParse(values[9]) ?? track.discTotal,
       lyrics: values[10].trim().isEmpty ? track.lyrics : values[10],
+      customMetadata: parseCustomMetadata(values[11]),
     );
     setState(() {
       final libraryIndex = _library.indexWhere(
@@ -6436,6 +6462,10 @@ class _PlayerPageState extends State<PlayerPage>
                     value: 'Played at least',
                     child: Text('Played at least'),
                   ),
+                  DropdownMenuItem(
+                    value: 'Metadata equals',
+                    child: Text('Custom field equals'),
+                  ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => rule = value);
@@ -6444,7 +6474,8 @@ class _PlayerPageState extends State<PlayerPage>
               if (rule == 'Genre' ||
                   rule == 'Artist' ||
                   rule == 'Rating at least' ||
-                  rule == 'Played at least')
+                  rule == 'Played at least' ||
+                  rule == 'Metadata equals')
                 TextField(
                   controller: valueController,
                   keyboardType:
@@ -6456,6 +6487,7 @@ class _PlayerPageState extends State<PlayerPage>
                       'Genre' => 'Genre',
                       'Artist' => 'Artist',
                       'Rating at least' => 'Minimum rating (1-5)',
+                      'Metadata equals' => 'Field=Value',
                       _ => 'Minimum play count',
                     },
                   ),
@@ -6490,6 +6522,10 @@ class _PlayerPageState extends State<PlayerPage>
                     value: 'Played at least',
                     child: Text('Played at least'),
                   ),
+                  DropdownMenuItem(
+                    value: 'Metadata equals',
+                    child: Text('Custom field equals'),
+                  ),
                 ],
                 onChanged: (value) {
                   if (value != null) setDialogState(() => secondRule = value);
@@ -6499,7 +6535,8 @@ class _PlayerPageState extends State<PlayerPage>
                   (secondRule == 'Genre' ||
                       secondRule == 'Artist' ||
                       secondRule == 'Rating at least' ||
-                      secondRule == 'Played at least'))
+                      secondRule == 'Played at least' ||
+                      secondRule == 'Metadata equals'))
                 TextField(
                   controller: secondValueController,
                   keyboardType:
@@ -6512,6 +6549,7 @@ class _PlayerPageState extends State<PlayerPage>
                       'Genre' => 'Second genre',
                       'Artist' => 'Second artist',
                       'Rating at least' => 'Second minimum rating',
+                      'Metadata equals' => 'Second Field=Value',
                       _ => 'Second minimum play count',
                     },
                   ),
@@ -6573,12 +6611,16 @@ class _PlayerPageState extends State<PlayerPage>
                     ((rule == 'Genre' || rule == 'Artist') && value.isEmpty) ||
                     ((rule == 'Rating at least' || rule == 'Played at least') &&
                         int.tryParse(value) == null) ||
+                    (rule == 'Metadata equals' &&
+                        !customMetadataMatches(const {}, value)) ||
                     (secondRule != 'None' &&
                         ((secondRule == 'Genre' || secondRule == 'Artist') &&
                                 secondValue.isEmpty ||
                             (secondRule == 'Rating at least' ||
                                     secondRule == 'Played at least') &&
-                                int.tryParse(secondValue) == null)) ||
+                                int.tryParse(secondValue) == null ||
+                            secondRule == 'Metadata equals' &&
+                                !customMetadataMatches(const {}, secondValue))) ||
                     limit < 0) {
                   return;
                 }
