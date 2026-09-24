@@ -116,11 +116,11 @@ class MediaServerClient {
           MediaServerTrack(
             id: raw['Id'].toString(),
             name: raw['Name']?.toString() ?? 'Untitled',
-            artist: ((raw['AlbumArtists'] as List?)?.firstOrNull ?? raw['ArtistItems'] is List && (raw['ArtistItems'] as List).isNotEmpty ? ((raw['ArtistItems'] as List).first as Map?)?['Name'] : null)?.toString() ?? 'Unknown artist',
+            artist: _jellyfinArtist(raw),
             album: raw['Album']?.toString() ?? 'Unknown album',
             year: (raw['ProductionYear'] as num?)?.toInt(),
             durationMs: _jellyfinDurationMs(raw['RunTimeTicks']),
-            streamUrl: _jellyfinStreamUrl(raw['Id'].toString(), userId),
+            streamUrl: _jellyfinStreamUrl(raw['Id'].toString(), userId).toString(),
           ),
     ];
   }
@@ -169,6 +169,20 @@ class MediaServerClient {
   }
 
   void close() => _httpClient.close(force: true);
+}
+
+String _jellyfinArtist(Map raw) {
+  final albumArtists = raw['AlbumArtists'];
+  if (albumArtists is List && albumArtists.isNotEmpty) {
+    final first = albumArtists.first;
+    if (first is Map && first['Name'] != null) return first['Name'].toString();
+  }
+  final artistItems = raw['ArtistItems'];
+  if (artistItems is List && artistItems.isNotEmpty) {
+    final first = artistItems.first;
+    if (first is Map && first['Name'] != null) return first['Name'].toString();
+  }
+  return 'Unknown artist';
 }
 
 int? _jellyfinDurationMs(Object? ticks) {
