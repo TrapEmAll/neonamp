@@ -36,5 +36,7 @@ Future<double?> measureIntegratedLufsWithFfmpeg(String path) async {
   ]);
   final returnCode = await session.getReturnCode();
   if (!ReturnCode.isSuccess(returnCode)) return null;
-  return parseEbur128IntegratedLufs((await session.getOutput()) ?? '');
+  final logs = await session.getAllLogsAsString();
+  final output = logs ?? await session.getOutput() ?? '';
+  return parseEbur128IntegratedLufs(output);
 }
