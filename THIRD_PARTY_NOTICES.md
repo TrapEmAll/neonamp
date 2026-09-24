@@ -17,3 +17,8 @@ NeonAmp uses [FFmpegKit Audio](https://github.com/sk3llo/ffmpeg_kit_flutter/tree
 ## dart_cast 0.7.4
 
 NeonAmp includes a small local modification of [dart_cast](https://github.com/abdelaziz-mahdy/dart_cast) for Chromecast audio MIME types and music metadata. It is distributed under the MIT License; the original license is included at `third_party/dart_cast/LICENSE`.
+
+## FluidR3 GM SoundFont
+
+NeonAmp bundles [FluidR3 GM](https://ftp.jaist.ac.jp/pub/sourceforge.jp/sfnet/a/an/androidframe/soundfonts/) as its default General MIDI SoundFont. The upstream licensing notice is maintained by [MuseScore](https://github.com/musescore/MuseScore/blob/main/share/sound/FluidR3Mono_License.md). The build fetches the exact verified upstream file rather than storing the binary in this repository; `tool/fetch_default_soundfont.py` records its URL, size, and SHA-256 fingerprint.
+

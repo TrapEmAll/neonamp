@@ -20,6 +20,8 @@ jobs:
           cache: true
       - name: Fetch dependencies
         run: flutter pub get
+      - name: Fetch default MIDI SoundFont
+        run: python tool/fetch_default_soundfont.py
       - name: Analyze
         run: flutter analyze --no-fatal-infos
       - name: Test
@@ -39,16 +41,28 @@ jobs:
         run: flutter config --enable-windows-desktop
       - name: Fetch dependencies
         run: flutter pub get
+      - name: Fetch default MIDI SoundFont
+        run: python tool/fetch_default_soundfont.py
       - name: Build Windows release
         run: flutter build windows --release
       - name: Package Windows release
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath NeonAmp-windows-x64.zip
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) { throw "Inno Setup compiler not found at $iscc" }
+          $version = if ($env:GITHUB_REF_NAME -match '^v(.+)$') { $Matches[1] } else { '1.0.0' }
+          & $iscc "/DAppVersion=$version" 'installer\neonamp.iss'
+          Copy-Item -LiteralPath "release\NeonAmp-Setup-$version.exe" -Destination "NeonAmp-Setup-$version.exe"
       - name: Upload Windows release package
         uses: actions/upload-artifact@v4
         with:
           name: NeonAmp-windows-x64
-          path: NeonAmp-windows-x64.zip
+          path: |
+            NeonAmp-windows-x64.zip
+            NeonAmp-Setup-*.exe
       - name: Configure native tracker tests
         run: cmake -S windows -B build/windows/x64 -DNEONAMP_BUILD_TRACKER_TESTS=ON
       - name: Build native tracker tests
@@ -75,6 +89,8 @@ jobs:
           cache: true
       - name: Fetch dependencies
         run: flutter pub get
+      - name: Fetch default MIDI SoundFont
+        run: python tool/fetch_default_soundfont.py
       - name: Build Android release
         run: |
           for attempt in 1 2 3; do
@@ -113,4 +129,6 @@ jobs:
           generate_release_notes: true
           files: |
             NeonAmp-windows-x64.zip
+            NeonAmp-Setup-*.exe
             android/app-release.apk
+

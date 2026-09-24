@@ -52,3 +52,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+.build-assets/
+assets/soundfonts/*.sf2
+

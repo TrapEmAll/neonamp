@@ -34,7 +34,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
 - Import and export ASX playlists with titles, stream URLs, and relative media references.
 - Play tracker/module music (including MOD, IT, XM, S3M, and other libxmp-supported formats) on Windows and Android.
-- Import an SF2 SoundFont to render MIDI/KAR consistently through the shared Windows/Android DSP engine, enabling the 10-band equalizer, balance, speed, seek, and volume controls. Without an imported SoundFont, playback continues through each platform's system MIDI synthesizer.
+- NeonAmp ships with a bundled FluidR3 GM SoundFont, so MIDI/KAR playback uses the shared Windows/Android DSP engine, including equalizer, balance, speed, seek, and volume controls. The MIDI SoundFont menu can still replace it with a user-selected SF2 file.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - View embedded lyrics directly from library tracks.
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.
@@ -75,6 +75,7 @@ The Android APK is a debug/distribution artifact signed with Flutter's local rel
 ```text
 flutter pub get
 flutter test
+python tool/fetch_default_soundfont.py
 flutter build windows --release
 flutter build apk --release
 ```
@@ -90,3 +91,4 @@ Skin packages are JSON files with this shape:
   "backgroundColor": "#10130b"
 }
 ```
+

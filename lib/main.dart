@@ -35,6 +35,9 @@ import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
 
+const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
+const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
+
 const supportedVideoExtensions = {
   'avi',
   'mkv',
@@ -2449,12 +2452,9 @@ class _PlayerPageState extends State<PlayerPage>
     var mediaPath = track.path;
     String? generatedMidiPath;
     if (isMidiFilePath(track.path)) {
-      final soundFontPath = _midiSoundFontPath;
-      if (soundFontPath == null ||
-          !FileSystemEntity.isFileSync(soundFontPath)) {
-        throw StateError(
-          'Import a MIDI SoundFont from the menu before casting MIDI/KAR.',
-        );
+      final soundFontPath = await _ensureMidiSoundFont();
+      if (soundFontPath == null) {
+        throw StateError('The bundled MIDI SoundFont could not be prepared.');
       }
       generatedMidiPath =
           '${Directory.systemTemp.path}${Platform.pathSeparator}'
@@ -3926,7 +3926,20 @@ class _PlayerPageState extends State<PlayerPage>
       );
       final trackVolume = _volumeFor(track);
       String? renderedMidiPath;
-      final soundFontPath = _midiSoundFontPath;
+      var soundFontPath = _midiSoundFontPath;
+      if (isMidiFilePath(track.path) &&
+          (soundFontPath == null ||
+              !FileSystemEntity.isFileSync(soundFontPath))) {
+        try {
+          soundFontPath = await _ensureMidiSoundFont();
+        } on Object catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not prepare MIDI SoundFont: $error')),
+            );
+          }
+        }
+      }
       if (isMidiFilePath(track.path) &&
           soundFontPath != null &&
           FileSystemEntity.isFileSync(soundFontPath)) {
@@ -6405,6 +6418,38 @@ class _PlayerPageState extends State<PlayerPage>
         SnackBar(content: Text('Could not import SoundFont: $error')),
       );
     }
+  }
+
+  Future<String?> _ensureMidiSoundFont() async {
+    final configured = _midiSoundFontPath;
+    if (configured != null && FileSystemEntity.isFileSync(configured)) {
+      return configured;
+    }
+
+    final support = await getApplicationSupportDirectory();
+    final directory = Directory(
+      '${support.path}${Platform.pathSeparator}soundfonts',
+    );
+    await directory.create(recursive: true);
+    final target = File(
+      '${directory.path}${Platform.pathSeparator}$_bundledMidiSoundFontFileName',
+    );
+    if (!await target.exists() || await target.length() == 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Preparing the built-in MIDI SoundFont…')),
+        );
+      }
+      final data = await rootBundle.load(_bundledMidiSoundFontAsset);
+      await target.writeAsBytes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+        flush: true,
+      );
+    }
+    await validateMidiSoundFont(target.path);
+    _midiSoundFontPath = target.path;
+    await _saveQueue();
+    return target.path;
   }
 
   Future<void> _importPlugin() async {
@@ -8920,3 +8965,4 @@ class SpectrumPainter extends CustomPainter {
   bool shouldRepaint(covariant SpectrumPainter oldDelegate) =>
       oldDelegate.fft != fft || oldDelegate.active != active;
 }
+
