@@ -10,6 +10,8 @@ import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 import 'tracker_modules.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
+import 'auto_eq.dart';
+import 'parametric_eq.dart';
 
 double dspGainForDb(double decibels) =>
     math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
@@ -74,6 +76,10 @@ class DspLocalPlayer {
     await stop();
     final isTrackerModule = isTrackerModulePath(path);
     var sourcePath = path;
+    final customFrequencyEq = equalizerEnabled &&
+        !isTrackerModule &&
+        bands.length == frequencies.length &&
+        hasCustomFrequencyLayout(frequencies);
     if (isTrackerModule) {
       sourcePath =
           '${Directory.systemTemp.path}${Platform.pathSeparator}'
@@ -87,17 +93,31 @@ class DspLocalPlayer {
       }
     }
     String? transcodedAudioPath;
+    if (customFrequencyEq) {
+      try {
+        transcodedAudioPath = await _transcodeWithEqualizer(path, frequencies: frequencies, gains: bands);
+        sourcePath = transcodedAudioPath;
+      } on Object {
+        transcodedAudioPath = null;
+        sourcePath = path;
+      }
+    }
     late final soloud.AudioSource source;
     try {
       try {
         source = await soloud.SoLoud.instance.loadFile(
           sourcePath,
-          mode: isTrackerModule || deleteSourceOnStop
+          mode: isTrackerModule || deleteSourceOnStop || transcodedAudioPath != null
               ? soloud.LoadMode.disk
               : soloud.LoadMode.memory,
         );
       } on Object {
         if (isTrackerModule || deleteSourceOnStop) rethrow;
+        if (transcodedAudioPath != null) {
+          final previous = File(transcodedAudioPath);
+          if (await previous.exists()) await previous.delete();
+          transcodedAudioPath = null;
+        }
         transcodedAudioPath = await _transcodeToWav(path);
         source = await soloud.SoLoud.instance.loadFile(
           transcodedAudioPath,
@@ -149,6 +169,32 @@ class DspLocalPlayer {
     _durationController.add(_duration);
     _stateController.add(PlayerState.playing);
     _startPolling();
+  }
+
+  Future<String> _transcodeWithEqualizer(
+    String inputPath, {
+    required List<double> frequencies,
+    required List<double> gains,
+  }) async {
+    final outputPath = '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'neonamp-autoeq-${DateTime.now().microsecondsSinceEpoch}.wav';
+    try {
+      final session = await FFmpegKit.executeWithArguments([
+        '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', inputPath,
+        '-map', '0:a:0', '-vn', '-af', buildFfmpegParametricEqFilter(frequencies: frequencies, gains: gains),
+        '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', '-f', 'wav', outputPath,
+      ]);
+      final returnCode = await session.getReturnCode();
+      final output = File(outputPath);
+      if (!ReturnCode.isSuccess(returnCode) || !await output.exists() || await output.length() <= 44) {
+        throw StateError('FFmpeg AutoEQ preprocessing failed.');
+      }
+      return outputPath;
+    } on Object {
+      final output = File(outputPath);
+      if (await output.exists()) await output.delete();
+      rethrow;
+    }
   }
 
   Future<String> _transcodeToWav(String inputPath) async {
