@@ -8981,7 +8981,6 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'importCue',
                 child: Text('Import CUE sheet'),
               ),
-              PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),
               PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
               PopupMenuItem(value: 'radio', child: Text('Find internet radio')),
               PopupMenuItem(
@@ -9004,7 +9003,6 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'managePodcasts',
                 child: Text('Manage podcast subscriptions'),
               ),
-              PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'abx', child: Text('ABX blind listening test')),
               PopupMenuItem(value: 'audit', child: Text('Audit library quality')),
