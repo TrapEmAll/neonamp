@@ -8104,6 +8104,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'exportPodcasts') _exportPodcastSubscriptions();
               if (value == 'managePodcasts') _managePodcastSubscriptions();
               if (value == 'eq') _showEqualizer();
+              if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'speed') _showPlaybackSpeed();
               if (value == 'layout') _showPlayerLayout();
               if (value == 'theme') _showThemePicker();
@@ -8167,6 +8168,10 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Manage podcast subscriptions'),
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
+              PopupMenuItem(
+                value: 'autoEq',
+                child: Text('Import AutoEQ headphone profile'),
+              ),
               PopupMenuItem(value: 'speed', child: Text('Playback speed')),
               PopupMenuItem(
                 value: 'layout',
