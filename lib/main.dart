@@ -7176,11 +7176,21 @@ class _PlayerPageState extends State<PlayerPage>
     final entries = <AudioAuditEntry>[];
     for (final track in _library) {
       var sizeBytes = 0;
+      double? peakDb;
       try {
         final file = File(track.path);
-        if (await file.exists()) sizeBytes = await file.length();
+        if (await file.exists()) {
+          sizeBytes = await file.length();
+          final handle = await file.open();
+          try {
+            final bytes = await handle.read(math.min(sizeBytes, 128 * 1024));
+            peakDb = parseAudioFormat(bytes, path: track.path)?.peakDb;
+          } finally {
+            await handle.close();
+          }
+        }
       } on Object {
-        // SAF and remote entries may not expose a local file length.
+        // SAF and remote entries may not expose local file details.
       }
       entries.add(
         AudioAuditEntry(
@@ -7190,11 +7200,13 @@ class _PlayerPageState extends State<PlayerPage>
           album: track.album,
           extension: track.path.split('.').last,
           sizeBytes: sizeBytes,
+          peakDb: peakDb,
         ),
       );
     }
     final duplicates = findDuplicateAudioGroups(entries);
     final missing = findMissingCoreTags(entries);
+    final clipped = findClippedTracks(entries);
     if (!mounted) return;
     await showDialog<void>(
       context: context,
@@ -7221,6 +7233,12 @@ class _PlayerPageState extends State<PlayerPage>
                       'Lower-quality copies: ${group.lowerQuality.length}',
                     ),
                   ),
+                const SizedBox(height: 14),
+                Text(
+                  clipped.isEmpty
+                      ? 'No sampled PCM clipping detected.'
+                      : '${clipped.length} WAV track${clipped.length == 1 ? '' : 's'} reach digital full scale',
+                ),
                 const SizedBox(height: 14),
                 Text(
                   missing.isEmpty
