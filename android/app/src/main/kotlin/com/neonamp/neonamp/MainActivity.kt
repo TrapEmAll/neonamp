@@ -478,7 +478,7 @@ class MainActivity : AudioServiceActivity() {
         )
     }
 
-    private fun ripAudioCd(call: MethodChannel.MethodCall, result: MethodChannel.Result) {
+    private fun ripAudioCd(call: MethodCall, result: MethodChannel.Result) {
         val deviceName = call.argument<String>("drive")
         val trackNumber = call.argument<Int>("track")
         val outputPath = call.argument<String>("outputPath")
