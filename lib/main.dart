@@ -48,6 +48,7 @@ import 'audio_loudness.dart';
 import 'convolution.dart';
 import 'silence_detection.dart';
 import 'media_server.dart';
+import 'scrobbling.dart';
 import 'loudness_scan.dart';
 import 'custom_metadata.dart';
 import 'remote_command_server.dart';
@@ -2484,6 +2485,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _truePeakLimiterEnabled = true;
   String? _convolutionImpulsePath;
   final List<MediaServerProfile> _mediaServerProfiles = [];
+  String _listenBrainzToken = '';
+  bool _scrobblingEnabled = false;
   bool _remoteEnabled = false;
   int _remotePort = 8765;
   RemoteCommandServer? _remoteServer;
@@ -3602,6 +3605,12 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           );
         }
+        final savedScrobble = settings['scrobbleProfile'];
+        if (savedScrobble is Map) {
+          final profile = ScrobbleProfile.fromJson(Map<String, dynamic>.from(savedScrobble));
+          _listenBrainzToken = profile.token;
+          _scrobblingEnabled = profile.enabled && profile.token.isNotEmpty;
+        }
         _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
@@ -3689,6 +3698,7 @@ class _PlayerPageState extends State<PlayerPage>
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
+        'scrobbleProfile': ScrobbleProfile(token: _listenBrainzToken, enabled: _scrobblingEnabled).toJson(),
         'remoteEnabled': _remoteEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
@@ -4517,6 +4527,7 @@ class _PlayerPageState extends State<PlayerPage>
         await _seekCurrent(resumePosition ?? Duration.zero);
       }
       await _saveQueue();
+      unawaited(_submitNowPlaying(track));
       if (castDevice != null || airplayDevice != null || castRenderer != null) {
         try {
           await _castTrack(
@@ -4895,6 +4906,7 @@ class _PlayerPageState extends State<PlayerPage>
         _library[libraryIndex] = track.copyWith(playCount: track.playCount + 1);
       }
     });
+    unawaited(_submitNowPlaying(track));
   }
 
   Future<void> _previous() async {
@@ -7957,6 +7969,73 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _showScrobblingSettings() async {
+    final token = TextEditingController(text: _listenBrainzToken);
+    var enabled = _scrobblingEnabled;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('ListenBrainz scrobbling'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Enable scrobbling'),
+                value: enabled,
+                onChanged: (value) => setDialogState(() => enabled = value),
+              ),
+              TextField(
+                controller: token,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'ListenBrainz user token',
+                  helperText: 'Create one at listenbrainz.org/profile/',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                setState(() {
+                  _listenBrainzToken = token.text.trim();
+                  _scrobblingEnabled = enabled && _listenBrainzToken.isNotEmpty;
+                });
+                unawaited(_saveQueue());
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    token.dispose();
+  }
+
+  Future<void> _submitNowPlaying(Track track) async {
+    if (!_scrobblingEnabled || _listenBrainzToken.isEmpty) return;
+    final client = ListenBrainzScrobbler(
+      ScrobbleProfile(token: _listenBrainzToken),
+    );
+    try {
+      await client.submitNowPlaying(
+        title: track.name,
+        artist: track.artist,
+        album: track.album,
+        durationSeconds: _duration.inSeconds > 0 ? _duration.inSeconds : null,
+      );
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> _showSettings() async {
     await showDialog<void>(
       context: context,
@@ -9168,6 +9247,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'eq') _showEqualizer();
               if (value == 'convolution') _chooseConvolutionImpulse();
               if (value == 'servers') _showMediaServers();
+              if (value == 'scrobble') _showScrobblingSettings();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
               if (value == 'audit') _auditLibrary();
@@ -9290,6 +9370,7 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),
               PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
               PopupMenuItem(value: 'servers', child: Text('Remote media servers')),
+              PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],
           ),
       ],
