@@ -9461,8 +9461,9 @@ class VisualizerPainter extends CustomPainter {
     } else if (mode == 'meter' && wave != null && wave!.isNotEmpty) {
       _paintMeter(canvas, size, wave!);
     } else if (mode == 'goniometer') {
-      if (waves != null && waves.length >= 2) {
-        _paintGoniometer(canvas, size, waves[0], waves[1]);
+      final channels = waves;
+      if (channels != null && channels.length >= 2) {
+        _paintGoniometer(canvas, size, channels[0], channels[1]);
       } else {
         _paintUnavailable(
           canvas,
