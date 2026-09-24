@@ -75,6 +75,14 @@ class RemoteCommandServer {
     return server.port;
   }
 
+  Future<void> _writeJson(
+    HttpResponse response,
+    Map<String, dynamic> value,
+  ) async {
+    response.write(jsonEncode(value));
+    await response.close();
+  }
+
   Future<Map<String, dynamic>> _dispatch(
     Object message,
     RemoteCommandHandler command,
