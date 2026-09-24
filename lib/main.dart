@@ -3269,6 +3269,7 @@ class _PlayerPageState extends State<PlayerPage>
     'positionMs': _position.inMilliseconds,
     'durationMs': _duration.inMilliseconds,
     'volume': _volume,
+    'currentIndex': _current == null ? null : _selected,
     'current': _current == null
         ? null
         : {
@@ -3296,6 +3297,14 @@ class _PlayerPageState extends State<PlayerPage>
         await _next(useCrossfade: false);
       case 'previous':
         await _previous();
+      case 'select':
+        final index = (command['index'] as num?)?.toInt();
+        if (index == null || index < 0 || index >= _queue.length) {
+          throw const FormatException('a valid queue index is required');
+        }
+        await _select(index);
+      case 'clearQueue':
+        await _clearQueue();
       case 'seek':
         final position = (command['positionMs'] as num?)?.toInt();
         if (position == null) throw const FormatException('positionMs is required');
