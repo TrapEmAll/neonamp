@@ -58,6 +58,27 @@ void main() {
     expect(info.summary, contains('stereo'));
   });
 
+  test('parses DSDIFF sample rate and channel count', () {
+    final bytes = Uint8List(64)
+      ..setRange(0, 4, [0x46, 0x52, 0x4d, 0x38])
+      ..setRange(8, 12, [0x44, 0x53, 0x44, 0x20])
+      ..setRange(12, 16, [0x50, 0x52, 0x4f, 0x50])
+      ..setRange(24, 28, [0x53, 0x4e, 0x44, 0x20])
+      ..setRange(28, 32, [0x46, 0x53, 0x20, 0x20])
+      ..setRange(44, 48, [0x43, 0x48, 0x4e, 0x4c]);
+    final data = ByteData.sublistView(bytes);
+    data.setUint64(16, 34, Endian.big);
+    data.setUint64(32, 4, Endian.big);
+    data.setUint32(40, 2822400, Endian.big);
+    data.setUint64(48, 2, Endian.big);
+    data.setUint16(56, 2, Endian.big);
+    final info = parseAudioFormat(bytes, path: 'album.dff')!;
+    expect(info.codec, 'DSD');
+    expect(info.sampleRate, 2822400);
+    expect(info.bitDepth, 1);
+    expect(info.channels, 2);
+  });
+
   test('output status distinguishes requested mode from hardware knowledge', () {
     final status = AudioOutputStatus(
       backend: 'Native audio backend',
