@@ -40,6 +40,19 @@ void main() {
     );
   });
 
+  test('saved custom frequency layouts require ordered audible frequencies', () {
+    expect(
+      decodeCustomEqualizerFrequencies({
+        'Headphones': [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+        'Unordered': [31, 62, 125, 250, 500, 1000, 4000, 2000, 8000, 16000],
+        'Out of range': [1, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+      }),
+      {
+        'Headphones': [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+      },
+    );
+  });
+
   test('custom preset names cannot shadow built-in or plugin presets', () {
     expect(canSaveEqualizerPresetName('  My curve  '), isTrue);
     expect(canSaveEqualizerPresetName(''), isFalse);
