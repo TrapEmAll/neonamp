@@ -4684,6 +4684,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _fadeBetweenTracks(
         outgoing: previousTrack,
         incoming: track,
+        incomingDuration: incomingDuration,
         setOutgoingVolume: previousPlayer.setVolume,
         setIncomingVolume: incomingPlayer.setVolume,
       );
@@ -4734,6 +4735,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _fadeBetweenTracks(
         outgoing: previousTrack,
         incoming: track,
+        incomingDuration: incomingDuration,
         setOutgoingVolume: previousPlayer.setVolume,
         setIncomingVolume: incomingPlayer.setVolume,
       );
@@ -4792,6 +4794,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _fadeBetweenTracks(
         outgoing: previousTrack,
         incoming: track,
+        incomingDuration: incomingDuration,
         setOutgoingVolume: previousPlayer.setVolume,
         setIncomingVolume: incomingPlayer.setVolume,
       );
