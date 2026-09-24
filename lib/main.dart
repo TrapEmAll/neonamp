@@ -36,6 +36,7 @@ import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
 import 'auto_eq.dart';
 import 'lrc_lyrics.dart';
+import 'visualizer_metrics.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
@@ -2439,6 +2440,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _librarySort = 'Added';
   bool _librarySortDescending = false;
   String _visualizerMode = 'spectrum';
+  final SpectrumPeakHold _visualizerPeakHold = SpectrumPeakHold();
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
   double _eqPreamp = 0;
@@ -7016,6 +7018,10 @@ class _PlayerPageState extends State<PlayerPage>
                         value: 'oscilloscope',
                         child: Text('Oscilloscope'),
                       ),
+                      DropdownMenuItem(
+                        value: 'meter',
+                        child: Text('Peak / RMS meter'),
+                      ),
                     ],
                     onChanged: (value) {
                       if (value == null) return;
@@ -7032,15 +7038,22 @@ class _PlayerPageState extends State<PlayerPage>
                                 .SoLoud
                                 .instance
                                 .audioVisualizationEvents,
-                            builder: (context, snapshot) => CustomPaint(
-                              painter: VisualizerPainter(
-                                mode: _visualizerMode,
-                                fft: snapshot.data?.fftData,
-                                wave: snapshot.data?.waveData,
-                                active: _isPlaying,
-                              ),
-                              child: const SizedBox.expand(),
-                            ),
+                            builder: (context, snapshot) {
+                              final fft = snapshot.data?.fftData;
+                              final peakHold = _visualizerPeakHold.update(
+                                fft?.toList() ?? const <double>[],
+                              );
+                              return CustomPaint(
+                                painter: VisualizerPainter(
+                                  mode: _visualizerMode,
+                                  fft: fft,
+                                  wave: snapshot.data?.waveData,
+                                  peakHold: peakHold,
+                                  active: _isPlaying,
+                                ),
+                                child: const SizedBox.expand(),
+                              );
+                            },
                           )
                         : const Center(
                             child: Text(
@@ -9406,30 +9419,33 @@ class _PlayerPageState extends State<PlayerPage>
 }
 }
 
-const visualizerModes = {'spectrum', 'waveform', 'oscilloscope'};
+const visualizerModes = {'spectrum', 'waveform', 'oscilloscope', 'meter'};
 
 class VisualizerPainter extends CustomPainter {
   const VisualizerPainter({
     required this.mode,
     required this.fft,
     required this.wave,
+    required this.peakHold,
     required this.active,
   });
   final String mode;
   final Float32List? fft;
   final Float32List? wave;
+  final List<double> peakHold;
   final bool active;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final values = mode == 'spectrum' ? fft : wave;
-    if (!active || values == null || values.isEmpty) return;
-    if (mode == 'spectrum') {
-      _paintSpectrum(canvas, size, values);
-    } else if (mode == 'waveform') {
-      _paintWaveform(canvas, size, values, filled: true);
-    } else {
-      _paintWaveform(canvas, size, values, filled: false);
+    if (!active) return;
+    if (mode == 'spectrum' && fft != null && fft!.isNotEmpty) {
+      _paintSpectrum(canvas, size, fft!);
+    } else if (mode == 'waveform' && wave != null && wave!.isNotEmpty) {
+      _paintWaveform(canvas, size, wave!, filled: true);
+    } else if (mode == 'oscilloscope' && wave != null && wave!.isNotEmpty) {
+      _paintWaveform(canvas, size, wave!, filled: false);
+    } else if (mode == 'meter' && wave != null && wave!.isNotEmpty) {
+      _paintMeter(canvas, size, wave!);
     }
   }
 
@@ -9452,51 +9468,64 @@ class VisualizerPainter extends CustomPainter {
         Offset(x, size.height / 2 + height / 2),
         paint,
       );
+      if (peakHold.isNotEmpty) {
+        final peakBin = ((i / count) * peakHold.length).floor().clamp(0, peakHold.length - 1);
+        final peakHeight = size.height * (peakHold[peakBin] * 3.5).clamp(.025, .82);
+        canvas.drawLine(
+          Offset(x - paint.strokeWidth / 2, size.height / 2 - peakHeight / 2),
+          Offset(x + paint.strokeWidth / 2, size.height / 2 - peakHeight / 2),
+          Paint()..color = Colors.white70..strokeWidth = 2,
+        );
+      }
     }
   }
 
-  void _paintWaveform(
-    Canvas canvas,
-    Size size,
-    Float32List samples, {
-    required bool filled,
-  }) {
+  void _paintMeter(Canvas canvas, Size size, Float32List samples) {
+    final rms = visualizerRms(samples);
+    final peak = visualizerPeak(samples);
+    final track = Paint()..color = Colors.white12;
+    final fill = Paint()
+      ..shader = const LinearGradient(
+        colors: [Color(0xff5b9dff), Color(0xffff4ccf), Color(0xffff665b)],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
+    final meterRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, size.height * .35, size.width, size.height * .3),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(meterRect, track);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, size.height * .35, size.width * rms, size.height * .3),
+        const Radius.circular(8),
+      ),
+      fill,
+    );
+    final peakX = size.width * peak.clamp(0.0, 1.0);
+    canvas.drawLine(
+      Offset(peakX, size.height * .25),
+      Offset(peakX, size.height * .75),
+      Paint()..color = Colors.white..strokeWidth = 2,
+    );
+  }
+
+  void _paintWaveform(Canvas canvas, Size size, Float32List samples, {required bool filled}) {
     final path = Path();
     final center = size.height / 2;
     final amplitude = size.height * .43;
     for (var index = 0; index < samples.length; index++) {
-      final x = samples.length == 1
-          ? 0.0
-          : index * size.width / (samples.length - 1);
+      final x = samples.length == 1 ? 0.0 : index * size.width / (samples.length - 1);
       final y = center - samples[index].clamp(-1.0, 1.0) * amplitude;
-      if (index == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
+      if (index == 0) path.moveTo(x, y); else path.lineTo(x, y);
     }
     final paint = Paint()
-      ..style = filled ? PaintingStyle.stroke : PaintingStyle.stroke
+      ..style = PaintingStyle.stroke
       ..strokeWidth = filled ? 2.5 : 1.8
       ..strokeCap = StrokeCap.round
-      ..color = filled
-          ? const Color(0xffff4ccf)
-          : const Color(0xff5b9dff);
-    canvas.drawLine(
-      Offset(0, center),
-      Offset(size.width, center),
-      Paint()
-        ..color = Colors.white12
-        ..strokeWidth = 1,
-    );
+      ..color = filled ? const Color(0xffff4ccf) : const Color(0xff5b9dff);
+    canvas.drawLine(Offset(0, center), Offset(size.width, center), Paint()..color = Colors.white12..strokeWidth = 1);
     canvas.drawPath(path, paint);
     if (filled) {
-      final glow = Paint()
-        ..color = const Color(0xffff4ccf).withOpacity(.16)
-        ..strokeWidth = 8
-        ..strokeCap = StrokeCap.round
-        ..style = PaintingStyle.stroke;
-      canvas.drawPath(path, glow);
+      canvas.drawPath(path, Paint()..color = const Color(0xffff4ccf).withOpacity(.16)..strokeWidth = 8..strokeCap = StrokeCap.round..style = PaintingStyle.stroke);
     }
   }
 
@@ -9505,6 +9534,6 @@ class VisualizerPainter extends CustomPainter {
       oldDelegate.mode != mode ||
       oldDelegate.fft != fft ||
       oldDelegate.wave != wave ||
+      oldDelegate.peakHold != peakHold ||
       oldDelegate.active != active;
 }
-
