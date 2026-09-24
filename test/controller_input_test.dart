@@ -12,6 +12,18 @@ void main() {
     expect(controllerActionForKeyId(108), ControllerAction.toggleOverlay);
   });
 
+  test('round-trips custom bindings and preserves defaults', () {
+    final custom = Map<ControllerAction, int>.from(defaultControllerBindings)
+      ..[ControllerAction.next] = 1234;
+    final restored = controllerBindingsFromJson(controllerBindingsToJson(custom));
+    expect(restored[ControllerAction.next], 1234);
+    expect(restored[ControllerAction.playPause], 96);
+    expect(
+      controllerActionForKeyId(1234, bindings: restored),
+      ControllerAction.next,
+    );
+  });
+
   test('ignores unrelated keys', () {
     expect(controllerActionForKeyId(65), isNull);
   });
