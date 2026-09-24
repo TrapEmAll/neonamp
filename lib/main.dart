@@ -2789,6 +2789,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (track?.cueStartMs == null &&
           !_casting &&
           _crossfade &&
+          !_bitPerfectMode &&
           !_crossfadeInProgress &&
           _isPlaying) {
         final remaining = _duration - relative;
@@ -4695,6 +4696,7 @@ class _PlayerPageState extends State<PlayerPage>
       useCrossfade = false;
     }
     if (useCrossfade &&
+        !_bitPerfectMode &&
         !cueTransition &&
         _crossfade &&
         _isPlaying &&
@@ -4716,7 +4718,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _crossfadeToNext({int? targetIndex}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
-    if (_casting) return;
+    if (_casting || _bitPerfectMode) return;
     final next = targetIndex ?? _targetNextIndex();
     final track = _queue[next];
     await _ensureLoudnessMeasured(track);
