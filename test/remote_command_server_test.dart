@@ -18,6 +18,8 @@ void main() {
       expect(page.statusCode, HttpStatus.ok);
       expect(pageBody, contains('Play / pause'));
       expect(pageBody, contains('/api/command'));
+      expect(pageBody, contains("send('clearQueue')"));
+      expect(pageBody, contains("send(\\'select\\'"));
 
       final state = await (await client.get('127.0.0.1', port, '/api/state')).close();
       expect(state.statusCode, HttpStatus.ok);
