@@ -6,6 +6,42 @@ typedef RemoteStateProvider = Map<String, dynamic> Function();
 typedef RemoteCommandHandler =
     Future<Map<String, dynamic>> Function(Map<String, dynamic> command);
 
+const _remoteControlPage = r'''
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NeonAmp Remote</title>
+<style>
+body{font-family:system-ui;background:#101018;color:#f4f2ff;max-width:520px;margin:0 auto;padding:24px}
+button{font-size:1.05rem;padding:12px 16px;margin:4px;border:0;border-radius:10px;background:#e84cff;color:white}
+button.secondary{background:#282838}input{width:100%}.card{background:#1b1b28;border-radius:16px;padding:18px;margin:12px 0}
+small{color:#aaa}.queue{max-height:260px;overflow:auto}
+</style>
+</head>
+<body>
+<h1>NeonAmp Remote</h1>
+<div class="card"><strong id="track">Nothing playing</strong><br><small id="artist"></small></div>
+<div class="card">
+<button class="secondary" onclick="send('previous')">⏮</button>
+<button onclick="send('toggle')">Play / pause</button>
+<button class="secondary" onclick="send('next')">⏭</button>
+<input id="seek" type="range" min="0" max="1" value="0" oninput="seek(this.value)">
+<label>Volume <input id="volume" type="range" min="0" max="1" step=".01" value=".8" oninput="volume(this.value)"></label>
+</div>
+<div class="card"><strong>Queue</strong><div id="queue" class="queue"></div></div>
+<script>
+async function send(type,extra={}){await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type,...extra})});refresh()}
+async function seek(v){send('seek',{positionMs:Math.round(v*1000)})}
+async function volume(v){send('volume',{value:Number(v)})}
+async function refresh(){const r=await fetch('/api/state');const s=(await r.json()).state||{};const t=s.current||{};document.getElementById('track').textContent=t.title||'Nothing playing';document.getElementById('artist').textContent=t.artist||'';document.getElementById('seek').max=Math.max(1,Math.round((s.durationMs||0)/1000));document.getElementById('seek').value=Math.min(document.getElementById('seek').max,Math.round((s.positionMs||0)/1000));document.getElementById('volume').value=s.volume??.8;document.getElementById('queue').innerHTML=(s.queue||[]).map(x=>'<div>'+escapeHtml(x.title||'')+'<small> — '+escapeHtml(x.artist||'')+'</small></div>').join('')}
+function escapeHtml(x){return x.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+refresh();setInterval(refresh,2000);
+</script>
+</body>
+</html>
+''';
+
 class RemoteCommandServer {
   HttpServer? _server;
   final _sockets = <WebSocket>{};
@@ -58,15 +94,9 @@ class RemoteCommandServer {
         return;
       }
       if (request.uri.path == '/' && request.method == 'GET') {
-        await _writeJson(
-          request.response,
-          {
-            'name': 'NeonAmp remote',
-            'stateEndpoint': '/api/state',
-            'commandEndpoint': '/api/command',
-            'websocketEndpoint': '/ws',
-          },
-        );
+        request.response.headers.contentType = ContentType.html;
+        request.response.write(_remoteControlPage);
+        await request.response.close();
         return;
       }
       request.response.statusCode = HttpStatus.notFound;

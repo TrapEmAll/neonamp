@@ -13,6 +13,12 @@ void main() {
     );
     final client = HttpClient();
     try {
+      final page = await (await client.get('127.0.0.1', port, '/')).close();
+      final pageBody = await page.transform(utf8.decoder).join();
+      expect(page.statusCode, HttpStatus.ok);
+      expect(pageBody, contains('Play / pause'));
+      expect(pageBody, contains('/api/command'));
+
       final state = await (await client.get('127.0.0.1', port, '/api/state')).close();
       expect(state.statusCode, HttpStatus.ok);
       expect(jsonDecode(await state.transform(utf8.decoder).join())['state']['playing'], false);
