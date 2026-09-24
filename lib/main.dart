@@ -3529,6 +3529,14 @@ class _PlayerPageState extends State<PlayerPage>
     return FilePicker.getDirectoryPath(dialogTitle: dialogTitle);
   }
 
+  Future<Uint8List?> _readPickedBytes(PlatformFile file) async {
+    final bytes = file.bytes;
+    if (bytes != null) return bytes;
+    final path = file.path;
+    if (path == null) return null;
+    return File(path).readAsBytes();
+  }
+
   Future<void> _copyFileToFolder(
     String folder,
     String sourcePath,
@@ -3771,12 +3779,17 @@ class _PlayerPageState extends State<PlayerPage>
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['xml'],
+      withData: true,
       dialogTitle: 'Import an iTunes XML library',
     );
-    final path = picked.firstOrNull?.path;
-    if (path == null) return;
+    final file = picked.firstOrNull;
+    if (file == null) return;
     try {
-      final imported = parseItunesLibrary(await File(path).readAsString());
+      final bytes = await _readPickedBytes(file);
+      if (bytes == null) return;
+      final imported = parseItunesLibrary(
+        utf8.decode(bytes, allowMalformed: true),
+      );
       var addedTracks = 0;
       var addedPlaylists = 0;
       setState(() {
@@ -3833,6 +3846,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _importCueSheet() async {
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
+      withData: true,
       dialogTitle: 'Select a CUE sheet and its audio file(s)',
       allowedExtensions: [
         'cue',
@@ -3858,13 +3872,20 @@ class _PlayerPageState extends State<PlayerPage>
     final cueInfo = picked
         .where((file) => file.extension?.toLowerCase() == 'cue')
         .firstOrNull;
-    if (cueInfo?.path == null) return;
+    if (cueInfo == null) return;
+    String? temporaryCuePath;
     try {
-      final cueFile = File(cueInfo!.path!);
-      final text = utf8.decode(
-        await cueFile.readAsBytes(),
-        allowMalformed: true,
-      );
+      final cueBytes = await _readPickedBytes(cueInfo);
+      if (cueBytes == null) return;
+      final cuePath = cueInfo.path ??
+          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}'
+          'neonamp-${DateTime.now().microsecondsSinceEpoch}.cue';
+      if (cueInfo.path == null) {
+        temporaryCuePath = cuePath;
+        await File(cuePath).writeAsBytes(cueBytes, flush: true);
+      }
+      final cueFile = File(cuePath);
+      final text = utf8.decode(cueBytes, allowMalformed: true);
       final entries = parseCueSheet(text, cueFile.path);
       final selectedAudio = picked
           .where(
@@ -3940,6 +3961,11 @@ class _PlayerPageState extends State<PlayerPage>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not import CUE sheet: $error')),
         );
+      }
+    } finally {
+      if (temporaryCuePath != null) {
+        final temporary = File(temporaryCuePath!);
+        if (await temporary.exists()) await temporary.delete();
       }
     }
   }
@@ -6456,12 +6482,16 @@ class _PlayerPageState extends State<PlayerPage>
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json'],
+      withData: true,
     );
-    final path = result.isEmpty ? null : result.first.path;
-    if (path == null) return;
+    final file = result.firstOrNull;
+    if (file == null) return;
     try {
+      final bytes = await _readPickedBytes(file);
+      if (bytes == null) return;
       final skin = ThemeSkin.fromJson(
-        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+        jsonDecode(utf8.decode(bytes, allowMalformed: true))
+            as Map<String, dynamic>,
       );
       await widget.onSkinImported?.call(skin);
       if (mounted) {
