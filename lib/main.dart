@@ -3530,11 +3530,13 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<Uint8List?> _readPickedBytes(PlatformFile file) async {
-    final bytes = file.bytes;
-    if (bytes != null) return bytes;
-    final path = file.path;
-    if (path == null) return null;
-    return File(path).readAsBytes();
+    try {
+      return await file.readAsBytes();
+    } on Object {
+      final path = file.path;
+      if (path == null) return null;
+      return File(path).readAsBytes();
+    }
   }
 
   Future<void> _copyFileToFolder(
@@ -3779,7 +3781,6 @@ class _PlayerPageState extends State<PlayerPage>
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['xml'],
-      withData: true,
       dialogTitle: 'Import an iTunes XML library',
     );
     final file = picked.firstOrNull;
@@ -3846,7 +3847,6 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _importCueSheet() async {
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
-      withData: true,
       dialogTitle: 'Select a CUE sheet and its audio file(s)',
       allowedExtensions: [
         'cue',
@@ -6482,7 +6482,6 @@ class _PlayerPageState extends State<PlayerPage>
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json'],
-      withData: true,
     );
     final file = result.firstOrNull;
     if (file == null) return;
