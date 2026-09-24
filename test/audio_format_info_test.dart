@@ -41,7 +41,7 @@ void main() {
   });
 
   test('parses DSF DSD sample rate, channels, and one-bit depth', () {
-    final bytes = Uint8List(64)
+    final bytes = Uint8List(92)
       ..setRange(0, 4, [0x44, 0x53, 0x44, 0x20])
       ..setRange(28, 32, [0x66, 0x6d, 0x74, 0x20]);
     final data = ByteData.sublistView(bytes);
