@@ -132,6 +132,91 @@ List<CueTrackEntry> parseCueSheet(String contents, String cueFilePath) {
   ];
 }
 
+/// Parses FFmpeg ffmetadata chapter blocks into the same virtual-track model
+/// used by external CUE sheets.
+List<CueTrackEntry> parseEmbeddedChapters(
+  String contents,
+  String sourcePath,
+) {
+  final entries = <CueTrackEntry>[];
+  String? timebase;
+  int? start;
+  int? end;
+  String? title;
+
+  void flush() {
+    if (start == null) return;
+    final base = _parseTimebase(timebase ?? '1/1000');
+    final startDuration = _chapterDuration(start!, base);
+    final endDuration = end == null ? null : _chapterDuration(end!, base);
+    if (endDuration != null && endDuration <= startDuration) {
+      throw const FormatException('Embedded chapter ends before it starts');
+    }
+    entries.add(
+      CueTrackEntry(
+        filePath: sourcePath,
+        sourceFileName: _cueBasename(sourcePath),
+        trackNumber: entries.length + 1,
+        start: startDuration,
+        end: endDuration,
+        title: title,
+        performer: null,
+        album: null,
+      ),
+    );
+    timebase = null;
+    start = null;
+    end = null;
+    title = null;
+  }
+
+  for (final raw in contents.split(RegExp(r'\\r?\\n'))) {
+    final line = raw.trim();
+    if (line == '[CHAPTER]') {
+      flush();
+      continue;
+    }
+    final separator = line.indexOf('=');
+    if (separator <= 0) continue;
+    final key = line.substring(0, separator).toUpperCase();
+    final value = _unescapeMetadataValue(line.substring(separator + 1));
+    switch (key) {
+      case 'TIMEBASE':
+        timebase = value;
+      case 'START':
+        start = int.tryParse(value);
+      case 'END':
+        end = int.tryParse(value);
+      case 'TITLE':
+        title = value.trim().isEmpty ? null : value.trim();
+    }
+  }
+  flush();
+  if (entries.isEmpty) {
+    throw const FormatException('Embedded metadata has no valid chapters');
+  }
+  return entries;
+}
+
+(int, int) _parseTimebase(String value) {
+  final parts = value.split('/');
+  final numerator = parts.length == 2 ? int.tryParse(parts[0]) : null;
+  final denominator = parts.length == 2 ? int.tryParse(parts[1]) : null;
+  if (numerator == null || numerator <= 0 || denominator == null || denominator <= 0) {
+    throw const FormatException('Invalid embedded chapter timebase');
+  }
+  return (numerator, denominator);
+}
+
+Duration _chapterDuration(int value, (int, int) timebase) => Duration(
+      microseconds: value * timebase.$1 * 1000000 ~/ timebase.$2,
+    );
+
+String _unescapeMetadataValue(String value) => value.replaceAllMapped(
+      RegExp(r'\\\\(.)'),
+      (match) => match.group(1)!,
+    );
+
 String _resolveCueFile(String cuePath, String source) {
   final windowsAbsolute = RegExp(r'^[A-Za-z]:[\\/]').hasMatch(source);
   final normalized = source.replaceAll('\\', Platform.pathSeparator);
