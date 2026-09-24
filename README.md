@@ -66,7 +66,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Optional ReplayGain normalization from embedded track or album gain tags, persisted across Windows and Android.
 - ReplayGain reads Vorbis comments as well as MP3 ID3 user-text and APEv2 gain fields.
 - Responsive layout for desktop and mobile.
-- Animated spectrum visualizer.
+  - Animated spectrum-bars, waveform, and oscilloscope visualizers with persisted mode selection.
 - Desktop Visuals and Settings actions are available on Windows and Android.
 
 The Android APK is a debug/distribution artifact signed with Flutter's local release key for direct installation. A Play Store release will need a real upload keystore and store configuration.
