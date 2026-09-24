@@ -65,7 +65,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Responsive Windows and Android layouts
 - Android background playback with notification, lock-screen, headset, and Android Auto media controls
 - Windows global media keys for play/pause, stop, previous, and next
-- Android USB/Bluetooth gamepad controls for play/pause, next, previous, 15-second seek, mute, and an in-app controller overlay; the same controller key events are handled by the Windows Flutter surface
+- Android USB/Bluetooth gamepad controls for play/pause, next, previous, 15-second seek, mute, and an in-app controller overlay; bindings can be captured, remapped, reset, and persisted; the same controller key events are handled by the Windows Flutter surface
 - Windows System Media Transport Controls with lock-screen/taskbar metadata and transport buttons
 
 ## Next parity milestones
