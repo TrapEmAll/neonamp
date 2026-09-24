@@ -27,4 +27,5 @@ String buildFfmpegParametricEqFilter({
   return filters.isEmpty ? 'anull' : filters.join(',');
 }
 
-String _format(double value) => value.toStringAsFixed(3).replaceFirst(RegExp(r'\\.0+$'), '');
+String _format(double value) => value.toStringAsFixed(3).replaceFirst(RegExp(r'\.0+, '');
+), '');
