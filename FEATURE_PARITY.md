@@ -52,7 +52,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, Matroska/WebM, AMR/AMR-WB, Speex, M4B, 3GP, Ogg/OGA/OGX, MPEG Layer I/II, AC3, AU, CAF, DTS, SND, TAK, TTA, and VOC audio when native playback cannot open the original; decoded audio is temporary and uses the shared playback controls and DSP path
 - Optional ReplayGain normalization from embedded track or album gain tags on Windows and Android
 - ReplayGain reads Vorbis comments, MP3 ID3 user-text, and APEv2 fields, preferring valid track gain before album gain
-- Spectrum bars, waveform, and oscilloscope visualization with persisted mode selection
+- Spectrum bars, waveform, oscilloscope, stereo goniometer, and real-time peak/RMS dynamic-range visualization with persisted mode selection
 - Built-in Neon, Aurora, Amber, and Classic skins with persisted selection
 - User-importable JSON skin packages with persisted selection on Windows and Android
 - Portable JSON plugin packages with validated manifests, persisted enablement, plugin-provided equalizer presets, and native bass-boost/echo/reverb effects on Windows and Android
