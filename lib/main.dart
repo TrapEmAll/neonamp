@@ -2504,6 +2504,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<double> _eqFrequencies = List<double>.from(autoEqCenterFrequencies);
   double _eqPreamp = 0;
   final Map<String, List<double>> _customEqPresets = {};
+  final Map<String, List<double>> _customEqFrequencies = {};
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
   bool _cueTransitioning = false;
@@ -3658,6 +3659,9 @@ class _PlayerPageState extends State<PlayerPage>
         _customEqPresets.addAll(
           decodeCustomEqualizerPresets(settings['customEqPresets']),
         );
+        _customEqFrequencies.addAll(
+          decodeCustomEqualizerFrequencies(settings['customEqFrequencies']),
+        );
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         _r128NormalizationEnabled = settings['r128NormalizationEnabled'] as bool? ?? false;
@@ -3770,6 +3774,7 @@ class _PlayerPageState extends State<PlayerPage>
         'eqBands': _eqBands,
         'eqFrequencies': _eqFrequencies,
         'customEqPresets': _customEqPresets,
+        'customEqFrequencies': _customEqFrequencies,
         'playbackSpeed': _playbackSpeed,
         'replayGainEnabled': _replayGainEnabled,
         'r128NormalizationEnabled': _r128NormalizationEnabled,
@@ -7464,6 +7469,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       setState(() {
         _customEqPresets[name] = profile.gains;
+        _customEqFrequencies[name] = List<double>.from(profile.frequencies);
         _eqPreset = name;
         _eqBands.setAll(0, profile.gains);
         _eqFrequencies
@@ -8690,6 +8696,7 @@ class _PlayerPageState extends State<PlayerPage>
     }
     setState(() {
       _customEqPresets[storedName] = List<double>.from(_eqBands);
+      _customEqFrequencies[storedName] = List<double>.from(_eqFrequencies);
       _eqPreset = storedName;
     });
     if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
@@ -8777,7 +8784,10 @@ class _PlayerPageState extends State<PlayerPage>
                               _eqPreset = value;
                               _eqFrequencies
                                 ..clear()
-                                ..addAll(autoEqCenterFrequencies);
+                                ..addAll(
+                                  _customEqFrequencies[value] ??
+                                      autoEqCenterFrequencies,
+                                );
                               _eqBands.setAll(
                                 0,
                                 equalizerPresetBands(
