@@ -338,6 +338,7 @@ class MainActivity : AudioServiceActivity() {
             "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
             "mka", "amr", "awb", "spx", "m4b", "3gp", "oga", "ogx", "mp1", "mp2",
             "ac3", "au", "caf", "dts", "snd", "tak", "tta", "voc",
+            "dsf", "dff", "dsdiff",
             "mid", "midi", "kar", "669", "amf", "ams", "dbm",
             "dmf", "dsm", "far", "gdm", "gtk", "it", "j2b", "m15",
             "med", "mod", "mtm", "okt", "psm", "pt36", "ptm", "s3m",
