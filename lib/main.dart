@@ -36,6 +36,7 @@ import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
 import 'auto_eq.dart';
 import 'lrc_lyrics.dart';
+import 'audio_trimmer.dart';
 import 'visualizer_metrics.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
@@ -6988,6 +6989,120 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _showAudioTrimmer() async {
+    final track = _current;
+    if (track == null || !File(track.path).existsSync()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select a local audio track to trim.')),
+        );
+      }
+      return;
+    }
+    final duration = _duration > Duration.zero ? _duration : track.duration;
+    if (duration <= Duration.zero) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('The selected track has no readable duration.')),
+      );
+      return;
+    }
+    final startController = TextEditingController(text: '0');
+    final endController = TextEditingController(
+      text: (duration.inMilliseconds / 1000).toStringAsFixed(3),
+    );
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Trim audio snippet'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Export a WAV clip from ${track.title}.'),
+              TextField(
+                controller: startController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'Start (seconds)'),
+              ),
+              TextField(
+                controller: endController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: 'End (seconds)'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final start = double.tryParse(startController.text.trim());
+                final end = double.tryParse(endController.text.trim());
+                final range = start == null || end == null
+                    ? null
+                    : (
+                        start: Duration(microseconds: (start * 1000000).round()),
+                        end: Duration(microseconds: (end * 1000000).round()),
+                      );
+                if (range == null ||
+                    !isValidTrimRange(range.start, range.end, duration)) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(content: Text('Enter a valid range within the track.')),
+                  );
+                  return;
+                }
+                final outputPath =
+                    '${Directory.systemTemp.path}${Platform.pathSeparator}'
+                    'neonamp-clip-${DateTime.now().microsecondsSinceEpoch}.wav';
+                try {
+                  final session = await FFmpegKit.executeWithArguments(
+                    buildAudioTrimArguments(
+                      inputPath: track.path,
+                      outputPath: outputPath,
+                      start: range.start,
+                      end: range.end,
+                    ),
+                  );
+                  final returnCode = await session.getReturnCode();
+                  final output = File(outputPath);
+                  if (!ReturnCode.isSuccess(returnCode) ||
+                      !await output.exists() ||
+                      await output.length() <= 44) {
+                    throw StateError('Could not export the selected audio range.');
+                  }
+                  final bytes = await output.readAsBytes();
+                  await FilePicker.saveFile(
+                    fileName: '${track.title}-clip.wav',
+                    bytes: bytes,
+                    mimeType: 'audio/wav',
+                    type: FileType.custom,
+                    allowedExtensions: ['wav'],
+                  );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                } on Object catch (error) {
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      SnackBar(content: Text('Could not export clip: $error')),
+                    );
+                  }
+                } finally {
+                  final output = File(outputPath);
+                  if (await output.exists()) await output.delete();
+                }
+              },
+              child: const Text('Export WAV'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      startController.dispose();
+      endController.dispose();
+    }
+  }
+
   Future<void> _showVisualizer() async {
     final canVisualize = _dspActive && soloud.SoLoud.instance.isInitialized;
     if (canVisualize) _dspPlayer.setVisualizationEnabled(true);
@@ -8209,6 +8324,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'exportWpl') _exportWplPlaylist();
               if (value == 'exportAsx') _exportAsxPlaylist();
               if (value == 'video') _openVideoPicker();
+              if (value == 'trim') _showAudioTrimmer();
             },
             itemBuilder: (_) => [
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
@@ -8306,6 +8422,7 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Export ASX playlist'),
               ),
               PopupMenuItem(value: 'video', child: Text('Play videos')),
+              PopupMenuItem(value: 'trim', child: Text('Trim/export audio snippet')),
             ],
           ),
       ],
