@@ -24,6 +24,7 @@ import 'podcast_opml.dart';
 import 'cue_sheet.dart';
 import 'dlna_cast.dart';
 import 'chromecast_cast.dart';
+import 'airplay_cast.dart';
 
 import 'package:dart_cast/dart_cast.dart' show CastDevice;
 
@@ -2356,6 +2357,7 @@ class _PlayerPageState extends State<PlayerPage>
   AudioPlayer _activePlayer = AudioPlayer();
   final DlnaCast _dlnaCast = DlnaCast();
   final ChromecastCast _chromecastCast = ChromecastCast();
+  final AirPlayCast _airplayCast = AirPlayCast();
   DspLocalPlayer _dspPlayer = DspLocalPlayer();
   final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
   NeonAudioHandler? _audioHandler;
@@ -2423,15 +2425,22 @@ class _PlayerPageState extends State<PlayerPage>
   String? _castRenderedMidiPath;
   DateTime? _sleepDeadline;
 
-  bool get _casting => _dlnaCast.isConnected || _chromecastCast.isConnected;
+  bool get _casting =>
+      _dlnaCast.isConnected ||
+      _chromecastCast.isConnected ||
+      _airplayCast.isConnected;
   String? get _castDeviceName =>
-      _chromecastCast.deviceName ?? _dlnaCast.rendererName;
+      _chromecastCast.deviceName ??
+      _dlnaCast.rendererName ??
+      _airplayCast.deviceName;
 
   Future<void> _stopCasting() async {
     if (_chromecastCast.isConnected) {
       await _chromecastCast.stop();
-    } else {
+    } else if (_dlnaCast.isConnected) {
       await _dlnaCast.stop();
+    } else {
+      await _airplayCast.stop();
     }
     await _deleteCastMidiRender();
   }
@@ -2447,6 +2456,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _castTrack(
     Track track, {
     CastDevice? chromecastDevice,
+    CastDevice? airplayDevice,
     MediaRenderer? dlnaRenderer,
   }) async {
     var mediaPath = track.path;
@@ -2479,6 +2489,21 @@ class _PlayerPageState extends State<PlayerPage>
           title: track.name,
           duration: _duration,
           segmentStart: track.cueStart,
+          startPosition: _position,
+        );
+      } else if (airplayDevice != null) {
+        final contentType = audioContentType(mediaPath);
+        if (contentType == null) {
+          throw UnsupportedError(
+            'This audio format is not supported by AirPlay.',
+          );
+        }
+        await _airplayCast.play(
+          device: airplayDevice,
+          path: mediaPath,
+          title: track.name,
+          contentType: contentType,
+          duration: _duration,
           startPosition: _position,
         );
       } else if (dlnaRenderer != null) {
@@ -2765,6 +2790,7 @@ class _PlayerPageState extends State<PlayerPage>
     }
     List<MediaRenderer> devices = [];
     List<CastDevice> chromecastDevices = [];
+    List<CastDevice> airplayDevices = [];
     var scanning = true;
     var scanStarted = false;
     String? error;
@@ -2793,6 +2819,11 @@ class _PlayerPageState extends State<PlayerPage>
                 chromecastDevices = await _chromecastCast.discover();
               } catch (_) {
                 chromecastDevices = [];
+              }
+              try {
+                airplayDevices = await _airplayCast.discover();
+              } catch (_) {
+                airplayDevices = [];
               }
             } catch (e) {
               error = 'Could not scan the local network: $e';
@@ -2824,7 +2855,9 @@ class _PlayerPageState extends State<PlayerPage>
                     )
                   : error != null
                   ? Text(error!)
-                  : devices.isEmpty && chromecastDevices.isEmpty
+                  : devices.isEmpty &&
+                        chromecastDevices.isEmpty &&
+                        airplayDevices.isEmpty
                   ? const Text(
                       'No compatible network players found. Make sure your device is on the same Wi-Fi network.',
                     )
@@ -2845,6 +2878,31 @@ class _PlayerPageState extends State<PlayerPage>
                                   track,
                                   chromecastDevice: device,
                                 );
+                              } catch (e) {
+                                if (mounted)
+                                  ScaffoldMessenger.of(this.context)
+                                      .showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Could not start casting: $e',
+                                          ),
+                                        ),
+                                      );
+                              }
+                            },
+                          ),
+                        ),
+                        ...airplayDevices.map(
+                          (device) => ListTile(
+                            leading: const Icon(Icons.airplay_rounded),
+                            title: Text(device.name),
+                            subtitle: const Text('AirPlay'),
+                            onTap: () async {
+                              final track = _current;
+                              if (track == null) return;
+                              Navigator.pop(dialogContext);
+                              try {
+                                await _castTrack(track, airplayDevice: device);
                               } catch (e) {
                                 if (mounted)
                                   ScaffoldMessenger.of(this.context)
@@ -2918,8 +2976,10 @@ class _PlayerPageState extends State<PlayerPage>
     if (_casting) {
       if (_chromecastCast.isConnected) {
         await _chromecastCast.resume();
-      } else {
+      } else if (_dlnaCast.isConnected) {
         await _dlnaCast.resume();
+      } else {
+        await _airplayCast.resume();
       }
       if (mounted) setState(() => _playerState = PlayerState.playing);
       return;
@@ -2937,8 +2997,10 @@ class _PlayerPageState extends State<PlayerPage>
     if (_casting) {
       if (_chromecastCast.isConnected) {
         await _chromecastCast.pause();
-      } else {
+      } else if (_dlnaCast.isConnected) {
         await _dlnaCast.pause();
+      } else {
+        await _airplayCast.pause();
       }
       if (mounted) setState(() => _playerState = PlayerState.paused);
       return;
@@ -2971,8 +3033,10 @@ class _PlayerPageState extends State<PlayerPage>
     if (_casting) {
       if (_chromecastCast.isConnected) {
         await _chromecastCast.seek(position);
-      } else {
+      } else if (_dlnaCast.isConnected) {
         await _dlnaCast.seek(position);
+      } else {
+        await _airplayCast.seek(position);
       }
       if (mounted) setState(() => _position = position);
       return;
@@ -3083,7 +3147,9 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       final position = _chromecastCast.isConnected
           ? await _chromecastCast.getPosition()
-          : await _dlnaCast.getPosition();
+          : _dlnaCast.isConnected
+          ? await _dlnaCast.getPosition()
+          : await _airplayCast.getPosition();
       if (position == null || !mounted || !_casting) return;
       if (_duration > Duration.zero && position >= _duration) {
         _castPositionTimer?.cancel();
@@ -3901,6 +3967,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
     final castDevice = _chromecastCast.device;
+    final airplayDevice = _airplayCast.device;
     final castRenderer = _dlnaCast.renderer;
     _castPositionTimer?.cancel();
     if (_casting) await _stopCasting();
@@ -4040,11 +4107,12 @@ class _PlayerPageState extends State<PlayerPage>
         await _seekCurrent(resumePosition ?? Duration.zero);
       }
       await _saveQueue();
-      if (castDevice != null || castRenderer != null) {
+      if (castDevice != null || airplayDevice != null || castRenderer != null) {
         try {
           await _castTrack(
             track,
             chromecastDevice: castDevice,
+            airplayDevice: airplayDevice,
             dlnaRenderer: castRenderer,
           );
         } catch (error) {
@@ -7373,6 +7441,7 @@ class _PlayerPageState extends State<PlayerPage>
     unawaited(() async {
       await _dlnaCast.dispose();
       await _chromecastCast.dispose();
+      await _airplayCast.dispose();
       await _deleteCastMidiRender();
     }());
     _castPositionTimer?.cancel();
@@ -7448,7 +7517,9 @@ class _PlayerPageState extends State<PlayerPage>
               unawaited(
                 _chromecastCast.isConnected
                     ? _chromecastCast.setVolume(_volumeFor(_current))
-                    : _dlnaCast.setVolume(_volumeFor(_current)),
+                    : _dlnaCast.isConnected
+                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                    : _airplayCast.setVolume(_volumeFor(_current)),
               );
             } else if (_dspActive) {
               _dspPlayer.setVolume(_volumeFor(_current));
@@ -8813,7 +8884,11 @@ class _PlayerPageState extends State<PlayerPage>
                                     ? _chromecastCast.setVolume(
                                         _volumeFor(_current),
                                       )
-                                    : _dlnaCast.setVolume(_volumeFor(_current)),
+                                    : _dlnaCast.isConnected
+                                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                                    : _airplayCast.setVolume(
+                                        _volumeFor(_current),
+                                      ),
                               );
                             } else if (_dspActive) {
                               _dspPlayer.setVolume(_volumeFor(_current));
@@ -8912,7 +8987,11 @@ class _PlayerPageState extends State<PlayerPage>
                                     ? _chromecastCast.setVolume(
                                         _volumeFor(_current),
                                       )
-                                    : _dlnaCast.setVolume(_volumeFor(_current)),
+                                    : _dlnaCast.isConnected
+                                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                                    : _airplayCast.setVolume(
+                                        _volumeFor(_current),
+                                      ),
                               );
                             } else if (_dspActive) {
                               _dspPlayer.setVolume(_volumeFor(_current));
