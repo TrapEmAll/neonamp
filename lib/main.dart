@@ -7843,7 +7843,6 @@ class _PlayerPageState extends State<PlayerPage>
         name: item.title,
         artist: item.artist,
         album: item.album,
-        durationMs: item.durationMs,
       );
       setState(() {
         _queue.add(track);
@@ -7884,7 +7883,6 @@ class _PlayerPageState extends State<PlayerPage>
             album: track.album,
             source: 'Local library',
             path: track.path,
-            durationMs: track.durationMs,
           ),
         ),
         normalized,
