@@ -150,6 +150,35 @@ void main() {
     expect(isCrossPlatformFallbackAudioPath('track.mp3'), isFalse);
   });
 
+  test('bit-perfect mode bypasses software DSP only for native formats', () {
+    expect(
+      shouldUseDspPlayback(
+        'C:/Music/song.mp3',
+        bitPerfectMode: true,
+        equalizerEnabled: true,
+        preamp: 6,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldUseDspPlayback(
+        'C:/Music/song.dsf',
+        bitPerfectMode: true,
+        equalizerEnabled: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldUseDspPlayback(
+        'C:/Music/song.mid',
+        bitPerfectMode: true,
+        equalizerEnabled: false,
+        renderedMidi: true,
+      ),
+      isTrue,
+    );
+  });
+
   test('module metadata remains distinct from ordinary file tags', () {
     final info = TrackerModuleInfo.fromMap({
       'title': 'Space Journey',
