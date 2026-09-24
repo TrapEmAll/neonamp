@@ -4527,14 +4527,19 @@ class _PlayerPageState extends State<PlayerPage>
           }
         }
       }
+      final formatRequiresDsp =
+          isTrackerModulePath(track.path) ||
+          isDsdAudioPath(track.path) ||
+          isCrossPlatformFallbackAudioPath(track.path);
       final shouldUseDsp =
-          !_bitPerfectMode &&
           renderedMidiPath != null ||
-          trackRequiresDspPlayback(
-            track.path,
-            equalizerEnabled: _equalizerEnabled,
-            preamp: _eqPreamp,
-          );
+          formatRequiresDsp ||
+          (!_bitPerfectMode &&
+              trackRequiresDspPlayback(
+                track.path,
+                equalizerEnabled: _equalizerEnabled,
+                preamp: _eqPreamp,
+              ));
       if (Platform.isWindows &&
           isMidiFilePath(track.path) &&
           renderedMidiPath == null) {
