@@ -37,6 +37,39 @@ class AudioFormatInfo {
   };
 }
 
+class AudioOutputStatus {
+  const AudioOutputStatus({
+    required this.backend,
+    required this.bitPerfectRequested,
+    required this.softwareDspActive,
+    this.sourceFormat,
+    this.hardwareSampleRate,
+    this.hardwareBitDepth,
+  });
+
+  final String backend;
+  final bool bitPerfectRequested;
+  final bool softwareDspActive;
+  final AudioFormatInfo? sourceFormat;
+  final int? hardwareSampleRate;
+  final int? hardwareBitDepth;
+
+  bool get hardwareFormatKnown =>
+      hardwareSampleRate != null || hardwareBitDepth != null;
+
+  String get summary {
+    final hardware = hardwareFormatKnown
+        ? '${hardwareSampleRate ?? '?'} Hz / ${hardwareBitDepth ?? '?'}-bit'
+        : 'hardware rate unavailable from current backend';
+    final mode = bitPerfectRequested
+        ? 'bit-perfect best effort requested'
+        : softwareDspActive
+        ? 'software DSP active'
+        : 'native playback path';
+    return '$backend · $mode\nHardware output: $hardware';
+  }
+}
+
 int _u16(Uint8List bytes, int offset, Endian endian) =>
     ByteData.sublistView(bytes, offset, offset + 2).getUint16(0, endian);
 
