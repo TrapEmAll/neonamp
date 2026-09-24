@@ -45,3 +45,23 @@ double visualizerPeak(Iterable<double> samples) {
   }
   return peak.clamp(0.0, 1.0).toDouble();
 }
+
+/// Returns the normalized stereo correlation in the range -1..1.
+double stereoCorrelation(Iterable<double> left, Iterable<double> right) {
+  final l = left.toList(growable: false);
+  final r = right.toList(growable: false);
+  final count = math.min(l.length, r.length);
+  if (count == 0) return 0;
+  var sum = 0.0;
+  var leftEnergy = 0.0;
+  var rightEnergy = 0.0;
+  for (var index = 0; index < count; index++) {
+    final lv = l[index].isFinite ? l[index] : 0.0;
+    final rv = r[index].isFinite ? r[index] : 0.0;
+    sum += lv * rv;
+    leftEnergy += lv * lv;
+    rightEnergy += rv * rv;
+  }
+  final denominator = math.sqrt(leftEnergy * rightEnergy);
+  return denominator == 0 ? 0 : (sum / denominator).clamp(-1.0, 1.0).toDouble();
+}

@@ -9,6 +9,11 @@ void main() {
     expect(hold.update([.9, .05]), [.9, .05]);
   });
 
+  test('stereo correlation identifies in-phase and out-of-phase signals', () {
+    expect(stereoCorrelation([1, .5, -1], [1, .5, -1]), closeTo(1, .001));
+    expect(stereoCorrelation([1, .5, -1], [-1, -.5, 1]), closeTo(-1, .001));
+  });
+
   test('visualizer levels ignore invalid samples and clamp output', () {
     expect(visualizerRms([0, .5, -.5, double.nan]), closeTo(.4082, .001));
     expect(visualizerPeak([-.2, 1.5, double.infinity]), 1);

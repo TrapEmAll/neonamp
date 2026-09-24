@@ -6990,7 +6990,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _showVisualizer() async {
     final canVisualize = _dspActive && soloud.SoLoud.instance.isInitialized;
-    if (canVisualize) _dspPlayer.setVisualizationEnabled(true);
+    if (canVisualize) _dspPlayer.setVisualizationEnabled(
+      true,
+      channel: soloud.VisualizationChannel.all,
+    );
     try {
       await showDialog<void>(
         context: context,
@@ -7022,6 +7025,10 @@ class _PlayerPageState extends State<PlayerPage>
                         value: 'meter',
                         child: Text('Peak / RMS meter'),
                       ),
+                      DropdownMenuItem(
+                        value: 'goniometer',
+                        child: Text('Stereo goniometer'),
+                      ),
                     ],
                     onChanged: (value) {
                       if (value == null) return;
@@ -7043,11 +7050,13 @@ class _PlayerPageState extends State<PlayerPage>
                               final peakHold = _visualizerPeakHold.update(
                                 fft?.toList() ?? const <double>[],
                               );
+                              final waves = snapshot.data?.wave;
                               return CustomPaint(
                                 painter: VisualizerPainter(
                                   mode: _visualizerMode,
                                   fft: fft,
                                   wave: snapshot.data?.waveData,
+                                  waves: waves,
                                   peakHold: peakHold,
                                   active: _isPlaying,
                                 ),
@@ -9419,19 +9428,27 @@ class _PlayerPageState extends State<PlayerPage>
 }
 }
 
-const visualizerModes = {'spectrum', 'waveform', 'oscilloscope', 'meter'};
+const visualizerModes = {
+  'spectrum',
+  'waveform',
+  'oscilloscope',
+  'meter',
+  'goniometer',
+};
 
 class VisualizerPainter extends CustomPainter {
   const VisualizerPainter({
     required this.mode,
     required this.fft,
     required this.wave,
+    required this.waves,
     required this.peakHold,
     required this.active,
   });
   final String mode;
   final Float32List? fft;
   final Float32List? wave;
+  final List<Float32List>? waves;
   final List<double> peakHold;
   final bool active;
 
@@ -9446,6 +9463,8 @@ class VisualizerPainter extends CustomPainter {
       _paintWaveform(canvas, size, wave!, filled: false);
     } else if (mode == 'meter' && wave != null && wave!.isNotEmpty) {
       _paintMeter(canvas, size, wave!);
+    } else if (mode == 'goniometer' && waves != null && waves!.length >= 2) {
+      _paintGoniometer(canvas, size, waves![0], waves![1]);
     }
   }
 
@@ -9508,6 +9527,47 @@ class VisualizerPainter extends CustomPainter {
     );
   }
 
+  void _paintGoniometer(
+    Canvas canvas,
+    Size size,
+    Float32List left,
+    Float32List right,
+  ) {
+    final paint = Paint()
+      ..color = const Color(0xffff4ccf).withOpacity(.75)
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    final center = Offset(size.width / 2, size.height / 2);
+    final scale = math.min(size.width, size.height) * .42;
+    canvas.drawLine(
+      Offset(center.dx - scale, center.dy),
+      Offset(center.dx + scale, center.dy),
+      Paint()..color = Colors.white12..strokeWidth = 1,
+    );
+    canvas.drawLine(
+      Offset(center.dx, center.dy - scale),
+      Offset(center.dx, center.dy + scale),
+      Paint()..color = Colors.white12..strokeWidth = 1,
+    );
+    final count = math.min(left.length, right.length);
+    for (var index = 0; index < count; index++) {
+      final l = left[index].clamp(-1.0, 1.0);
+      final r = right[index].clamp(-1.0, 1.0);
+      final x = center.dx + (l + r) * .5 * scale;
+      final y = center.dy - (l - r) * .5 * scale;
+      canvas.drawCircle(Offset(x, y), 1.5, paint);
+    }
+    final correlation = stereoCorrelation(left, right);
+    final label = TextPainter(
+      text: TextSpan(
+        text: 'phase ${correlation.toStringAsFixed(2)}',
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    label.paint(canvas, Offset(8, 8));
+  }
+
   void _paintWaveform(Canvas canvas, Size size, Float32List samples, {required bool filled}) {
     final path = Path();
     final center = size.height / 2;
@@ -9534,6 +9594,7 @@ class VisualizerPainter extends CustomPainter {
       oldDelegate.mode != mode ||
       oldDelegate.fft != fft ||
       oldDelegate.wave != wave ||
+      oldDelegate.waves != waves ||
       oldDelegate.peakHold != peakHold ||
       oldDelegate.active != active;
 }
