@@ -364,7 +364,8 @@ class MainActivity : AudioServiceActivity() {
                     val isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
                         mimeType.equals("inode/directory", ignoreCase = true) ||
                         mimeType.endsWith("/directory", ignoreCase = true) ||
-                        (documentFlags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong() != 0L)
+                        (mimeType.isBlank() &&
+                            documentFlags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong() != 0L)
                     if (isDirectory) {
                         pending.add(documentId)
                         continue
