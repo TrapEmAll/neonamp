@@ -4090,6 +4090,74 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _importEmbeddedChapters() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      dialogTitle: 'Select an audio file with embedded chapters',
+      allowedExtensions: [
+        'm4a', 'mp4', 'mka', 'mkv', 'mp3', 'flac', 'ogg', 'opus', 'wav', 'webm',
+      ],
+    );
+    final selected = picked.firstOrNull;
+    final inputPath = selected?.path;
+    if (inputPath == null) return;
+    final temporaryDirectory = await getTemporaryDirectory();
+    final metadataPath =
+        '${temporaryDirectory.path}${Platform.pathSeparator}'
+        'neonamp-chapters-${DateTime.now().microsecondsSinceEpoch}.txt';
+    try {
+      final session = await FFmpegKit.executeWithArguments([
+        '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+        '-i', inputPath, '-map_metadata', '0', '-f', 'ffmetadata', metadataPath,
+      ]);
+      final returnCode = await session.getReturnCode();
+      final metadataFile = File(metadataPath);
+      if (!ReturnCode.isSuccess(returnCode) || !await metadataFile.exists()) {
+        throw StateError('Could not read embedded chapter metadata.');
+      }
+      final chapters = parseEmbeddedChapters(
+        await metadataFile.readAsString(),
+        inputPath,
+      );
+      final source = await _readTrack(inputPath, selected!.name);
+      final tracks = [
+        for (final chapter in chapters)
+          source.copyWith(
+            name: chapter.title?.trim().isNotEmpty == true
+                ? chapter.title!.trim()
+                : '${source.name} · ${chapter.trackNumber.toString().padLeft(2, '0')}',
+            trackNumber: chapter.trackNumber,
+            cueStartMs: chapter.start.inMilliseconds,
+            cueEndMs: chapter.end?.inMilliseconds,
+          ),
+      ];
+      var added = 0;
+      setState(() {
+        if (!_library.any((item) => item.path == source.path)) _library.add(source);
+        for (final track in tracks) {
+          if (_queue.any((item) => item.identityKey == track.identityKey)) continue;
+          _queue.add(track);
+          added++;
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imported $added embedded chapter(s)')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import embedded chapters: $error')),
+        );
+      }
+    } finally {
+      final output = File(metadataPath);
+      if (await output.exists()) await output.delete();
+    }
+  }
+
   Future<void> _importCueSheet() async {
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -8859,6 +8927,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'importItunes') _importItunesLibrary();
               if (value == 'exportItunes') _exportItunesLibrary();
               if (value == 'importCue') _importCueSheet();
+              if (value == 'chapters') _importEmbeddedChapters();
               if (value == 'stream') _addStream();
               if (value == 'radio') _searchRadioDirectory();
               if (value == 'podcast') _addPodcastFeed();
@@ -8912,7 +8981,7 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'importCue',
                 child: Text('Import CUE sheet'),
               ),
-              PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
+              PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),\n              PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
               PopupMenuItem(value: 'radio', child: Text('Find internet radio')),
               PopupMenuItem(
                 value: 'podcast',
