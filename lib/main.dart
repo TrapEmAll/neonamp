@@ -44,6 +44,7 @@ import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
 import 'audio_effects.dart';
+import 'loudness_scan.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -2459,6 +2460,8 @@ class _PlayerPageState extends State<PlayerPage>
   String? _midiSoundFontPath;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
+  bool _r128NormalizationEnabled = false;
+  final Map<String, double?> _measuredLufs = <String, double?>{};
   bool _truePeakLimiterEnabled = true;
   Timer? _sleepTimer;
   Timer? _resumeSaveTimer;
@@ -2607,11 +2610,37 @@ class _PlayerPageState extends State<PlayerPage>
       _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
   bool get _isPlaying => _playerState == PlayerState.playing;
 
-  double _volumeFor(Track? track) => playbackVolume(
-    volume: _volume,
-    replayGainDb: track?.replayGainDb,
-    replayGainEnabled: _replayGainEnabled,
-  );
+  double _volumeFor(Track? track) {
+    var result = playbackVolume(
+      volume: _volume,
+      replayGainDb: track?.replayGainDb,
+      replayGainEnabled: _replayGainEnabled,
+    );
+    final measured = track == null ? null : _measuredLufs[track.path];
+    if (_r128NormalizationEnabled &&
+        track?.replayGainDb == null &&
+        measured != null) {
+      result = playbackVolume(
+        volume: result,
+        replayGainDb: gainDbToLoudnessTarget(measured),
+        replayGainEnabled: true,
+      );
+    }
+    return result;
+  }
+
+  Future<void> _ensureLoudnessMeasured(Track track) async {
+    if (!_r128NormalizationEnabled ||
+        track.replayGainDb != null ||
+        track.path.startsWith('http://') ||
+        track.path.startsWith('https://') ||
+        _measuredLufs.containsKey(track.path)) {
+      return;
+    }
+    _measuredLufs[track.path] = await measureIntegratedLufsWithFfmpeg(
+      track.path,
+    );
+  }
 
   bool get _midiEqualizerUnavailable =>
       _current != null &&
@@ -3172,6 +3201,23 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _setR128NormalizationEnabled(bool enabled) async {
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _r128NormalizationEnabled = enabled);
+    if (_current != null && enabled) {
+      await _ensureLoudnessMeasured(_current!);
+    }
+    if (_current != null && (wasPlaying || _dspActive)) {
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
+  }
+
   Future<void> _setTruePeakLimiter(bool enabled) async {
     setState(() => _truePeakLimiterEnabled = enabled);
     _dspPlayer.setTruePeakLimiter(enabled);
@@ -3417,6 +3463,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
+        _r128NormalizationEnabled = settings['r128NormalizationEnabled'] as bool? ?? false;
         _truePeakLimiterEnabled = settings['truePeakLimiterEnabled'] as bool? ?? true;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
@@ -3491,6 +3538,7 @@ class _PlayerPageState extends State<PlayerPage>
         'customEqPresets': _customEqPresets,
         'playbackSpeed': _playbackSpeed,
         'replayGainEnabled': _replayGainEnabled,
+        'r128NormalizationEnabled': _r128NormalizationEnabled,
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
@@ -4130,6 +4178,7 @@ class _PlayerPageState extends State<PlayerPage>
       final resumePosition = restoreResumePosition(
         _resumePositions[track.identityKey],
       );
+      await _ensureLoudnessMeasured(track);
       final trackVolume = _volumeFor(track);
       String? renderedMidiPath;
       var soundFontPath = _midiSoundFontPath;
@@ -4328,6 +4377,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (_casting) return;
     final next = targetIndex ?? _targetNextIndex();
     final track = _queue[next];
+    await _ensureLoudnessMeasured(track);
     if (_current?.cueStartMs != null || track.cueStartMs != null) {
       return;
     }
@@ -7266,6 +7316,16 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
+                title: const Text('Measured loudness normalization'),
+                subtitle: const Text('Analyze local tracks to target -14 LUFS'),
+                value: _r128NormalizationEnabled,
+                onChanged: (value) {
+                  unawaited(_setR128NormalizationEnabled(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
                 title: const Text('True-peak limiter'),
                 subtitle: const Text('Keep local playback below -1 dBFS'),
                 value: _truePeakLimiterEnabled,
@@ -7575,6 +7635,18 @@ class _PlayerPageState extends State<PlayerPage>
                     value: _replayGainEnabled,
                     onChanged: (value) {
                       unawaited(_setReplayGainEnabled(value));
+                      setDialogState(() {});
+                    },
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Measured loudness normalization'),
+                    subtitle: const Text(
+                      'Analyze local tracks to target -14 LUFS',
+                    ),
+                    value: _r128NormalizationEnabled,
+                    onChanged: (value) {
+                      unawaited(_setR128NormalizationEnabled(value));
                       setDialogState(() {});
                     },
                   ),
