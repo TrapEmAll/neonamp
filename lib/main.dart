@@ -7,6 +7,8 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/return_code.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6999,7 +7001,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       return;
     }
-    final duration = _duration > Duration.zero ? _duration : track.duration;
+    final duration = _duration;
     if (duration <= Duration.zero) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('The selected track has no readable duration.')),
@@ -7018,7 +7020,7 @@ class _PlayerPageState extends State<PlayerPage>
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Export a WAV clip from ${track.title}.'),
+              Text('Export a WAV clip from ${track.name}.'),
               TextField(
                 controller: startController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
