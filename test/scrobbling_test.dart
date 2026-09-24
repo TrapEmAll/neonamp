@@ -16,8 +16,32 @@ void main() {
     expect(decoded['payload']['track_metadata']['additional_info']['duration'], 240);
   });
 
-  test('profile round-trips enabled state and token', () {
-    const profile = ScrobbleProfile(token: 'abc', enabled: false);
+  test('Last.fm signatures are deterministic and sorted', () {
+    final signature = buildLastFmApiSignature(
+      {'track': 'Track', 'api_key': 'key', 'method': 'track.updateNowPlaying'},
+      'secret',
+    );
+    expect(signature, hasLength(32));
+    expect(
+      signature,
+      buildLastFmApiSignature(
+        {'method': 'track.updateNowPlaying', 'api_key': 'key', 'track': 'Track'},
+        'secret',
+      ),
+    );
+  });
+
+  test('profile round-trips all service credentials', () {
+    const profile = ScrobbleProfile(
+      token: 'abc',
+      enabled: false,
+      lastFmApiKey: 'lfm-key',
+      lastFmSessionKey: 'lfm-session',
+      lastFmSharedSecret: 'lfm-secret',
+      libreFmApiKey: 'libre-key',
+      libreFmSessionKey: 'libre-session',
+      libreFmSharedSecret: 'libre-secret',
+    );
     expect(ScrobbleProfile.fromJson(profile.toJson()).toJson(), profile.toJson());
   });
 }
