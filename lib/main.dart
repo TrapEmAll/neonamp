@@ -44,6 +44,7 @@ import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
 import 'audio_effects.dart';
+import 'audio_loudness.dart';
 import 'loudness_scan.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
