@@ -14,6 +14,12 @@ void main() {
     expect(stereoCorrelation([1, .5, -1], [-1, -.5, 1]), closeTo(-1, .001));
   });
 
+  test('windowed dynamic range reports peak-to-RMS crest factor', () {
+    expect(visualizerDynamicRangeDb([1, -1, 1, -1]), closeTo(0, .001));
+    expect(visualizerDynamicRangeDb([1, 0, 0, 0]), closeTo(6.021, .001));
+    expect(visualizerDynamicRangeDb(const <double>[]), 0);
+  });
+
   test('visualizer levels ignore invalid samples and clamp output', () {
     expect(visualizerRms([0, .5, -.5, double.nan]), closeTo(.4082, .001));
     expect(visualizerPeak([-.2, 1.5, double.infinity]), 1);
