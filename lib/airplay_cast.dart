@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:dart_cast/dart_cast.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// AirPlay transport shared by Windows and Android.
 ///
@@ -20,6 +22,9 @@ class AirPlayCast {
   );
   CastSession? _session;
   final Map<String, HapCredentials> _credentials = {};
+  Future<void>? _credentialsLoad;
+
+  static const _credentialsKey = 'airplay.hap.credentials';
 
   bool get isConnected => _session != null;
   String? get deviceName => _session?.device.name;
@@ -28,6 +33,7 @@ class AirPlayCast {
   Future<List<CastDevice>> discover({
     Duration timeout = const Duration(seconds: 5),
   }) async {
+    await _loadCredentials();
     if (Platform.isAndroid &&
         await _androidChannel.invokeMethod<bool>('beginDiscovery') != true) {
       throw StateError('Nearby devices permission was not granted.');
@@ -56,6 +62,7 @@ class AirPlayCast {
     required Duration duration,
     Duration startPosition = Duration.zero,
   }) async {
+    await _loadCredentials();
     final session = await _service.connect(device);
     _session = session;
     try {
@@ -90,12 +97,52 @@ class AirPlayCast {
   /// Credentials are retained for the current app session and reused on the
   /// next connection to the same receiver.
   Future<void> pair(CastDevice device, String pin) async {
+    await _loadCredentials();
     final session = AirPlaySession(device);
     try {
       _credentials[device.id] = await session.pairSetup(pin);
+      await _saveCredentials();
     } finally {
       session.dispose();
     }
+  }
+
+  Future<void> _loadCredentials() {
+    return _credentialsLoad ??= _restoreCredentials();
+  }
+
+  Future<void> _restoreCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_credentialsKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final values = jsonDecode(raw);
+      if (values is! Map) return;
+      for (final entry in values.entries) {
+        final serialized = entry.value;
+        if (entry.key is! String || serialized is! String) continue;
+        try {
+          _credentials[entry.key as String] =
+              HapCredentials.deserialize(serialized);
+        } on Object {
+          // Ignore one invalid receiver credential without losing others.
+        }
+      }
+    } on Object {
+      // Corrupt preferences should not disable AirPlay discovery.
+    }
+  }
+
+  Future<void> _saveCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _credentialsKey,
+      jsonEncode(
+        _credentials.map(
+          (deviceId, credentials) => MapEntry(deviceId, credentials.serialize()),
+        ),
+      ),
+    );
   }
 
   Future<void> pause() async => _session?.pause();

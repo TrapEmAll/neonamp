@@ -33,7 +33,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - HTTP audio stream / internet radio URL playback
 - DLNA/UPnP renderer discovery and casting of HTTP(S) streams, local audio files, and segment-aware CUE virtual tracks on Windows and Android, with receiver transport controls, relative seek/progress, segment-boundary advancement, and byte-range file serving
 - Chromecast audio discovery and playback for MP3, AAC/M4A, WAV, OGG/Opus, and FLAC on Windows and Android, with remote play/pause/seek/volume/progress controls and CUE-segment-aware queue advancement; MIDI/KAR can be rendered through an imported SF2 SoundFont before casting
-- AirPlay discovery and playback for receiver-compatible local and HTTP audio files on Windows and Android, with shared play/pause/seek/progress controls
+- AirPlay discovery and playback for receiver-compatible local and HTTP audio files on Windows and Android, with shared play/pause/seek/progress controls and persisted HAP pairing credentials
 - Local video queue for Windows and Android with play/pause, seeking, volume, speed, and fullscreen controls; supported video codecs depend on the platform's native decoder
 - Internet-radio station discovery through Radio Browser and SHOUTcast with normalized metadata, duplicate-stream merging, listener sorting, saved station favorites, and lazy stream resolution
 - Podcast RSS subscriptions with playable enclosure episodes, refresh, and local downloads
