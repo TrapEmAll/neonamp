@@ -207,7 +207,8 @@ AudioFormatInfo? parseAudioFormat(
     var offset = 28;
     while (offset + 8 <= bytes.length) {
       final chunk = String.fromCharCodes(bytes.sublist(offset, offset + 4));
-      final size = ByteData.sublistView(bytes, offset + 4, offset + 8)
+      if (offset + 12 > bytes.length) break;
+      final size = ByteData.sublistView(bytes, offset + 4, offset + 12)
           .getUint64(0, Endian.little);
       final start = offset + 12;
       if (size < 12 || start > bytes.length || size - 12 > bytes.length - start) {
