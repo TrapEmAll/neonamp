@@ -34,6 +34,7 @@ import 'playlist_formats.dart';
 import 'tracker_modules.dart';
 import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
+import 'auto_eq.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
@@ -6715,6 +6716,2726 @@ class _PlayerPageState extends State<PlayerPage>
     _midiSoundFontPath = target.path;
     await _saveQueue();
     return target.path;
+  }
+
+  Future<void> _importAutoEqProfile() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json', 'csv', 'txt'],
+    );
+    final file = result?.files.firstOrNull;
+    if (file == null) return;
+    try {
+      final bytes = await _readPickedBytes(file);
+      if (bytes == null) return;
+      final profile = parseAutoEqProfile(
+        utf8.decode(bytes, allowMalformed: true),
+        fallbackName: file.name.replaceFirst(RegExp(r'\.[^.]+
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json', 'neonamp-plugin'],
+    );
+    final path = result.isEmpty ? null : result.first.path;
+    if (path == null) return;
+    try {
+      final plugin = NeonAmpPlugin.fromJson(
+        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+      );
+      setState(() => _plugins[plugin.id] = plugin);
+      await _saveQueue();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported plugin: ${plugin.name}')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import plugin: $error')),
+      );
+    }
+  }
+
+  Future<void> _showPluginManager() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Plugins'),
+          content: SizedBox(
+            width: 540,
+            child: _plugins.isEmpty
+                ? const Text('No plugins installed.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: _plugins.values
+                        .map(
+                          (plugin) => ListTile(
+                            leading: const Icon(Icons.extension_outlined),
+                            title: Text('${plugin.name} ${plugin.version}'),
+                            subtitle: Text(
+                              [
+                                plugin.description,
+                                if (plugin.capabilities.isNotEmpty)
+                                  plugin.capabilities.join(', '),
+                                if (plugin.audioEffects.isNotEmpty)
+                                  'Effects: ${plugin.audioEffects.map((effect) => effect.type).join(', ')}',
+                              ].where((value) => value.isNotEmpty).join(' · '),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Switch(
+                                  value: plugin.enabled,
+                                  onChanged: (value) {
+                                    setState(
+                                      () => _plugins[plugin.id] = plugin
+                                          .copyWith(enabled: value),
+                                    );
+                                    unawaited(_saveQueue());
+                                    setDialogState(() {});
+                                  },
+                                ),
+                                IconButton(
+                                  tooltip: 'Remove plugin',
+                                  icon: const Icon(Icons.delete_outline),
+                                  onPressed: () {
+                                    setState(() => _plugins.remove(plugin.id));
+                                    unawaited(_saveQueue());
+                                    setDialogState(() {});
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _importPlugin();
+              },
+              child: const Text('Import plugin'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showThemePicker() async {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Choose a skin'),
+        children: [
+          ...widget.skins.map(
+            (theme) => RadioListTile<String>(
+              value: theme.name,
+              groupValue: widget.themeName,
+              title: Text(theme.name),
+              onChanged: (value) => Navigator.pop(context, value),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.file_upload_outlined),
+            title: const Text('Import skin package'),
+            onTap: () {
+              Navigator.pop(context);
+              _importSkin();
+            },
+          ),
+        ],
+      ),
+    );
+    if (selected != null) widget.onThemeChanged?.call(selected);
+  }
+
+  Future<void> _showLyrics(Track track) async {
+    final lyrics = track.lyrics?.trim();
+    if (lyrics == null || lyrics.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This track has no embedded lyrics.')),
+      );
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(track.name),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(child: SelectableText(lyrics)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showVisualizer() async {
+    final canVisualize = _dspActive && soloud.SoLoud.instance.isInitialized;
+    if (canVisualize) _dspPlayer.setVisualizationEnabled(true);
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Visualizer'),
+            content: SizedBox(
+              width: 560,
+              height: 270,
+              child: Column(
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: _visualizerMode,
+                    decoration: const InputDecoration(labelText: 'Mode'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'spectrum',
+                        child: Text('Spectrum bars'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'waveform',
+                        child: Text('Waveform'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'oscilloscope',
+                        child: Text('Oscilloscope'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setState(() => _visualizerMode = value);
+                      setDialogState(() {});
+                      unawaited(_saveQueue());
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: canVisualize
+                        ? StreamBuilder<soloud.AudioVisualizationData>(
+                            stream: soloud
+                                .SoLoud
+                                .instance
+                                .audioVisualizationEvents,
+                            builder: (context, snapshot) => CustomPaint(
+                              painter: VisualizerPainter(
+                                mode: _visualizerMode,
+                                fft: snapshot.data?.fftData,
+                                wave: snapshot.data?.waveData,
+                                active: _isPlaying,
+                              ),
+                              child: const SizedBox.expand(),
+                            ),
+                          )
+                        : const Center(
+                            child: Text(
+                              'Audio-reactive visuals are available during local playback with the equalizer enabled.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      if (canVisualize) _dspPlayer.setVisualizationEnabled(false);
+    }
+  }
+
+  Future<void> _showSettings() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Settings'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Crossfade tracks'),
+                value: _crossfade,
+                onChanged: (value) {
+                  setState(() => _crossfade = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              if (_crossfade)
+                Row(
+                  children: [
+                    const Text('1s'),
+                    Expanded(
+                      child: Slider(
+                        value: _crossfadeSeconds.toDouble(),
+                        min: 1,
+                        max: 12,
+                        divisions: 11,
+                        label: '${_crossfadeSeconds}s',
+                        onChanged: (value) {
+                          setState(() => _crossfadeSeconds = value.round());
+                          unawaited(_saveQueue());
+                          setDialogState(() {});
+                        },
+                      ),
+                    ),
+                    const Text('12s'),
+                  ],
+                ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('ReplayGain normalization'),
+                value: _replayGainEnabled,
+                onChanged: (value) {
+                  unawaited(_setReplayGainEnabled(value));
+                  setDialogState(() {});
+                },
+              ),
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Keyboard controls'),
+                subtitle: Text(
+                  'Space: play/pause · M: mute · Ctrl+arrows: seek',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _playSmartPlaylist(SmartPlaylist playlist) async {
+    final tracks = _tracksForSmartPlaylist(playlist);
+    if (tracks.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No tracks match ${playlist.name}.')),
+      );
+      return;
+    }
+    setState(() {
+      _queue
+        ..clear()
+        ..addAll(tracks);
+      _selected = 0;
+    });
+    await _select(0);
+  }
+
+  Future<void> _addTrackToPlaylist(Track track) async {
+    if (_playlists.isEmpty) {
+      await _createPlaylist();
+      if (_playlists.isEmpty) return;
+    }
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Add to playlist'),
+        children: _playlists.keys
+            .map(
+              (name) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, name),
+                child: Text(name),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (name == null) return;
+    setState(() {
+      final tracks = _playlists[name]!;
+      if (!tracks.contains(track.path)) tracks.add(track.path);
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _saveEqualizerPreset(
+    StateSetter setDialogState,
+    Set<String> reservedNames,
+  ) async {
+    final controller = TextEditingController();
+    var validationError = '';
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setPromptState) => AlertDialog(
+          title: const Text('Save equalizer preset'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 40,
+            decoration: InputDecoration(
+              labelText: 'Preset name',
+              errorText: validationError.isEmpty ? null : validationError,
+            ),
+            onSubmitted: (_) {},
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final requestedName = controller.text.trim();
+                if (!canSaveEqualizerPresetName(
+                  requestedName,
+                  reservedNames: reservedNames,
+                )) {
+                  setPromptState(() {
+                    validationError = requestedName.isEmpty
+                        ? 'Enter a preset name.'
+                        : 'That name is already used by a built-in or plugin preset.';
+                  });
+                  return;
+                }
+                Navigator.pop(dialogContext, requestedName);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (name == null || !mounted) return;
+
+    var storedName = name;
+    for (final existingName in _customEqPresets.keys) {
+      if (existingName.toLowerCase() == name.toLowerCase()) {
+        storedName = existingName;
+        break;
+      }
+    }
+    setState(() {
+      _customEqPresets[storedName] = List<double>.from(_eqBands);
+      _eqPreset = storedName;
+    });
+    if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
+      unawaited(_setEqualizerEnabled(true));
+    } else if (_dspActive) {
+      _dspPlayer.applyEqualizer(enabled: _equalizerEnabled, bands: _eqBands);
+    }
+    setDialogState(() {});
+    await _saveQueue();
+  }
+
+  Future<void> _showEqualizer() async {
+    final pluginPresets = <String, List<double>>{};
+    final reservedPluginNames = <String>{};
+    for (final plugin in _plugins.values) {
+      reservedPluginNames.addAll(plugin.equalizerPresets.keys);
+    }
+    for (final plugin in _plugins.values.where((plugin) => plugin.enabled)) {
+      pluginPresets.addAll(plugin.equalizerPresets);
+    }
+    final customPresets = {...pluginPresets, ..._customEqPresets};
+    final presets = [...builtInEqualizerPresets.keys, ...customPresets.keys];
+    final selectedPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
+    if (_eqPreset != selectedPreset) _eqPreset = selectedPreset;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          constraints: BoxConstraints(
+            maxWidth: math.min(
+              560.0,
+              MediaQuery.sizeOf(this.context).width - 24.0,
+            ),
+          ),
+          title: const Text('10-band equalizer'),
+          content: SizedBox(
+            width: math.min(
+              560.0,
+              math.max(200.0, MediaQuery.sizeOf(this.context).width - 128.0),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Enable equalizer'),
+                    value: _equalizerEnabled,
+                    onChanged: _midiEqualizerUnavailable
+                        ? null
+                        : (value) {
+                            unawaited(_setEqualizerEnabled(value));
+                            setDialogState(() {});
+                          },
+                  ),
+                  if (_midiEqualizerUnavailable)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'System MIDI playback bypasses DSP. Import a SoundFont from the menu to enable equalizer processing for MIDI/KAR.',
+                        style: TextStyle(color: Colors.white60),
+                      ),
+                    ),
+                  DropdownButtonFormField<String>(
+                    initialValue: selectedPreset,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Preset'),
+                    items: presets
+                        .map(
+                          (preset) => DropdownMenuItem(
+                            value: preset,
+                            child: Text(
+                              preset,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: _midiEqualizerUnavailable
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _eqPreset = value;
+                              _eqBands.setAll(
+                                0,
+                                equalizerPresetBands(
+                                  value,
+                                  pluginPresets: customPresets,
+                                  bandCount: _eqBands.length,
+                                ),
+                              );
+                            });
+                            if (!_equalizerEnabled) {
+                              unawaited(_setEqualizerEnabled(true));
+                            } else if (_dspActive) {
+                              _dspPlayer.applyEqualizer(
+                                enabled: _equalizerEnabled,
+                                bands: _eqBands,
+                              );
+                            }
+                            setDialogState(() {});
+                          },
+                  ),
+                  Row(
+                     children: [
+                       const Text('Preamp', style: TextStyle(color: Colors.white54)),
+                       Expanded(
+                         child: Slider(
+                           value: _eqPreamp,
+                           min: -12,
+                           max: 12,
+                           divisions: 48,
+                           label: '${_eqPreamp.toStringAsFixed(1)} dB',
+                           onChanged: (value) {
+                             setState(() => _eqPreamp = value);
+                             if (_dspActive) _dspPlayer.setPreamp(value);
+                             _crossfadeDspPlayer?.setPreamp(value);
+                             setDialogState(() {});
+                           },
+                         ),
+                       ),
+                       Text(
+                         '${_eqPreamp >= 0 ? '+' : ''}${_eqPreamp.toStringAsFixed(1)} dB',
+                         style: const TextStyle(color: Colors.white54),
+                       ),
+                     ],
+                   ),
+                   const SizedBox(height: 4),
+                   Row(
+                    children: [
+                      const Text('L', style: TextStyle(color: Colors.white54)),
+                      Expanded(
+                        child: Slider(
+                          value: _balance,
+                          min: -1,
+                          max: 1,
+                          divisions: 40,
+                          label: stereoBalanceLabel(_balance),
+                          onChanged: _midiEqualizerUnavailable
+                              ? null
+                              : (value) {
+                                  setState(() => _balance = value);
+                                  _applyBalance(value);
+                                  setDialogState(() {});
+                                },
+                          onChangeEnd: (_) => unawaited(_saveQueue()),
+                        ),
+                      ),
+                      const Text('R', style: TextStyle(color: Colors.white54)),
+                    ],
+                  ),
+                  Text(
+                    'Stereo balance · ${stereoBalanceLabel(_balance)}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Crossfade between tracks'),
+                    subtitle: Text('Overlap for $_crossfadeSeconds seconds'),
+                    value: _crossfade,
+                    onChanged: (value) {
+                      setState(() => _crossfade = value);
+                      setDialogState(() {});
+                    },
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('ReplayGain normalization'),
+                    subtitle: const Text(
+                      'Use embedded track or album gain tags when available',
+                    ),
+                    value: _replayGainEnabled,
+                    onChanged: (value) {
+                      unawaited(_setReplayGainEnabled(value));
+                      setDialogState(() {});
+                    },
+                  ),
+                  if (_crossfade)
+                    Row(
+                      children: [
+                        const Text(
+                          '1s',
+                          style: TextStyle(color: Colors.white38),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            value: _crossfadeSeconds.toDouble(),
+                            min: 1,
+                            max: 12,
+                            divisions: 11,
+                            label: '${_crossfadeSeconds}s',
+                            onChanged: (value) {
+                              setState(() => _crossfadeSeconds = value.round());
+                              setDialogState(() {});
+                            },
+                          ),
+                        ),
+                        const Text(
+                          '12s',
+                          style: TextStyle(color: Colors.white38),
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 180,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: List.generate(
+                        _eqBands.length,
+                        (index) => Expanded(
+                          child: Column(
+                            children: [
+                              Expanded(
+                                child: RotatedBox(
+                                  quarterTurns: 3,
+                                  child: Slider(
+                                    value: _eqBands[index],
+                                    min: -12,
+                                    max: 12,
+                                    onChanged: _equalizerEnabled
+                                        ? (value) {
+                                            setState(
+                                              () => _eqBands[index] = value,
+                                            );
+                                            if (_dspActive) {
+                                              _dspPlayer.applyEqualizer(
+                                                enabled: true,
+                                                bands: _eqBands,
+                                              );
+                                            }
+                                            setDialogState(() {});
+                                          }
+                                        : null,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '${index + 1}',
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white38,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: () =>
+                  _saveEqualizerPreset(setDialogState, reservedPluginNames),
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save preset'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+    await _saveQueue();
+  }
+
+  Future<void> _showPlaybackSpeed() async {
+    var selected = _playbackSpeed;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Playback speed'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_casting)
+                const Text(
+                  'Speed control is unavailable while casting to this player.',
+                  textAlign: TextAlign.center,
+                ),
+              Text('${selected.toStringAsFixed(2)}×'),
+              Slider(
+                value: selected,
+                min: 0.5,
+                max: 2.0,
+                divisions: 15,
+                label: '${selected.toStringAsFixed(2)}×',
+                onChanged: _casting
+                    ? null
+                    : (value) {
+                        selected = value;
+                        setDialogState(() {});
+                      },
+                onChangeEnd: _casting
+                    ? null
+                    : (value) => unawaited(_setPlaybackSpeed(value)),
+              ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final speed in [0.5, 1.0, 1.25, 1.5, 2.0])
+                    OutlinedButton(
+                      onPressed: _casting
+                          ? null
+                          : () {
+                              selected = speed;
+                              setDialogState(() {});
+                              unawaited(_setPlaybackSpeed(speed));
+                            },
+                      child: Text('${speed}×'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showPlayerLayout() async {
+    final draft = List<String>.from(_playerControls);
+    var resetToDefault = false;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Customize player controls'),
+          content: SizedBox(
+            width: 400,
+            height: 430,
+            child: Column(
+              children: [
+                const Text(
+                  'Drag to reorder. Keep Play / pause in the bar and add the actions you use.',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ReorderableListView(
+                    onReorder: (oldIndex, newIndex) {
+                      if (newIndex > oldIndex) newIndex--;
+                      final control = draft.removeAt(oldIndex);
+                      draft.insert(newIndex, control);
+                      resetToDefault = false;
+                      setDialogState(() {});
+                    },
+                    children: [
+                      for (var index = 0; index < draft.length; index++)
+                        ListTile(
+                          key: ValueKey('${draft[index]}-$index'),
+                          dense: true,
+                          leading: ReorderableDragStartListener(
+                            index: index,
+                            child: const Icon(
+                              Icons.drag_handle,
+                              color: Colors.white38,
+                            ),
+                          ),
+                          title: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              value: draft[index],
+                              items: [
+                                for (final entry in playerControlLabels.entries)
+                                  if (entry.key == draft[index] ||
+                                      !draft.contains(entry.key))
+                                    DropdownMenuItem(
+                                      value: entry.key,
+                                      child: Text(
+                                        entry.value,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                              ],
+                              onChanged: (value) {
+                                if (value == null) return;
+                                draft[index] = value;
+                                resetToDefault = false;
+                                setDialogState(() {});
+                              },
+                            ),
+                          ),
+                          trailing: IconButton(
+                            tooltip: 'Remove control',
+                            onPressed: draft[index] == 'playPause'
+                                ? null
+                                : () {
+                                    draft.removeAt(index);
+                                    resetToDefault = false;
+                                    setDialogState(() {});
+                                  },
+                            icon: const Icon(Icons.remove_circle_outline),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                DropdownButton<String>(
+                  value: null,
+                  hint: const Text('Add a control'),
+                  items: [
+                    for (final entry in playerControlLabels.entries)
+                      if (!draft.contains(entry.key))
+                        DropdownMenuItem(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    draft.add(value);
+                    resetToDefault = false;
+                    setDialogState(() {});
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                draft
+                  ..clear()
+                  ..addAll(defaultPlayerControls);
+                resetToDefault = true;
+                setDialogState(() {});
+              },
+              child: const Text('Reset'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save layout'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true) return;
+    setState(() {
+      _playerControls = normalizePlayerControls(draft);
+      _playerLayoutCustomized = !resetToDefault;
+    });
+    await _saveQueue();
+  }
+
+  Widget _playerControl(String control) {
+    final selectedColor = const Color(0xffef4bff);
+    switch (control) {
+      case 'previous':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _previous,
+          icon: const Icon(Icons.skip_previous_rounded),
+          color: Colors.white70,
+        );
+      case 'rewind15':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => _skipBy(const Duration(seconds: -15)),
+          icon: const Icon(Icons.fast_rewind_rounded),
+          color: Colors.white70,
+        );
+      case 'playPause':
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0xffef4bff),
+          ),
+          child: IconButton(
+            tooltip: _isPlaying ? 'Pause' : 'Play',
+            onPressed: _togglePlay,
+            icon: Icon(
+              _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            ),
+            iconSize: 28,
+            color: Colors.white,
+          ),
+        );
+      case 'forward15':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => _skipBy(const Duration(seconds: 15)),
+          icon: const Icon(Icons.fast_forward_rounded),
+          color: Colors.white70,
+        );
+      case 'next':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _next,
+          icon: const Icon(Icons.skip_next_rounded),
+          color: Colors.white70,
+        );
+      case 'shuffle':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() => _shuffle = !_shuffle),
+          icon: const Icon(Icons.shuffle_rounded),
+          color: _shuffle ? selectedColor : Colors.white38,
+        );
+      case 'repeat':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() {
+            if (!_repeat && !_repeatOne) {
+              _repeat = true;
+            } else if (_repeat) {
+              _repeat = false;
+              _repeatOne = true;
+            } else {
+              _repeatOne = false;
+            }
+          }),
+          icon: Icon(
+            _repeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+          ),
+          color: (_repeat || _repeatOne) ? selectedColor : Colors.white38,
+        );
+      case 'equalizer':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showEqualizer,
+          icon: const Icon(Icons.equalizer_rounded),
+          color: _equalizerEnabled ? selectedColor : Colors.white70,
+        );
+      case 'speed':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showPlaybackSpeed,
+          icon: const Icon(Icons.speed_rounded),
+          color: Colors.white70,
+        );
+      case 'sleep':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: _showSleepTimer,
+          icon: const Icon(Icons.bedtime_outlined),
+          color: _sleepDeadline == null ? Colors.white70 : selectedColor,
+        );
+      case 'queue':
+        return IconButton(
+          tooltip: playerControlLabels[control],
+          onPressed: () => setState(() => _activeView = 'queue'),
+          icon: const Icon(Icons.queue_music_rounded),
+          color: Colors.white70,
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(() async {
+      await _dlnaCast.dispose();
+      await _chromecastCast.dispose();
+      await _airplayCast.dispose();
+      await _deleteCastRenderedMedia();
+    }());
+    _castPositionTimer?.cancel();
+    _sleepTimer?.cancel();
+    _resumeSaveTimer?.cancel();
+    _positionSub?.cancel();
+    _durationSub?.cancel();
+    _stateSub?.cancel();
+    _completeSub?.cancel();
+    _searchController.dispose();
+    _pulse.dispose();
+    _player.dispose();
+    unawaited(_midiPlayer.dispose());
+    unawaited(_dspPlayer.dispose());
+    super.dispose();
+  }
+
+  String _time(Duration value) =>
+      '${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+
+  String _ratingLabel(int rating) => '${'★' * rating}${'☆' * (5 - rating)}';
+
+  @override
+  Widget build(BuildContext context) => Shortcuts(
+    shortcuts: const <ShortcutActivator, Intent>{
+      SingleActivator(LogicalKeyboardKey.space): _TogglePlayIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowRight): _NextTrackIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowLeft): _PreviousTrackIntent(),
+      SingleActivator(LogicalKeyboardKey.arrowRight, control: true):
+          _SeekIntent(Duration(seconds: 10)),
+      SingleActivator(LogicalKeyboardKey.arrowLeft, control: true): _SeekIntent(
+        Duration(seconds: -10),
+      ),
+      SingleActivator(LogicalKeyboardKey.keyM): _MuteIntent(),
+    },
+    child: Actions(
+      actions: <Type, Action<Intent>>{
+        _TogglePlayIntent: CallbackAction<_TogglePlayIntent>(
+          onInvoke: (_) {
+            _togglePlay();
+            return null;
+          },
+        ),
+        _NextTrackIntent: CallbackAction<_NextTrackIntent>(
+          onInvoke: (_) {
+            _next();
+            return null;
+          },
+        ),
+        _PreviousTrackIntent: CallbackAction<_PreviousTrackIntent>(
+          onInvoke: (_) {
+            _previous();
+            return null;
+          },
+        ),
+        _SeekIntent: CallbackAction<_SeekIntent>(
+          onInvoke: (intent) {
+            final target = _position + intent.amount;
+            _seekCurrent(
+              target < Duration.zero
+                  ? Duration.zero
+                  : (target > _duration ? _duration : target),
+            );
+            return null;
+          },
+        ),
+        _MuteIntent: CallbackAction<_MuteIntent>(
+          onInvoke: (_) {
+            final muted = _volume > 0;
+            final nextVolume = muted ? 0.0 : 0.82;
+            setState(() => _volume = nextVolume);
+            if (_casting) {
+              unawaited(
+                _chromecastCast.isConnected
+                    ? _chromecastCast.setVolume(_volumeFor(_current))
+                    : _dlnaCast.isConnected
+                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                    : _airplayCast.setVolume(_volumeFor(_current)),
+              );
+            } else if (_dspActive) {
+              _dspPlayer.setVolume(_volumeFor(_current));
+            } else {
+              _player.setVolume(_volumeFor(_current));
+            }
+            _saveQueue();
+            return null;
+          },
+        ),
+      },
+      child: Scaffold(
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 600;
+              return Column(
+                children: [
+                  _topBar(compact),
+                  Expanded(child: compact ? _compactLayout() : _wideLayout()),
+                  _bottomPlayer(),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _topBar(bool compact) => Padding(
+    padding: EdgeInsets.fromLTRB(
+      compact ? 12 : 24,
+      compact ? 8 : 18,
+      compact ? 8 : 24,
+      compact ? 4 : 12,
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: const Color(0xffef4bff),
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: const [
+              BoxShadow(color: Color(0x66ef4bff), blurRadius: 18),
+            ],
+          ),
+          child: const Icon(Icons.graphic_eq, color: Colors.white),
+        ),
+        const SizedBox(width: 12),
+        const Text(
+          'NEONAMP',
+          style: TextStyle(
+            fontWeight: FontWeight.w900,
+            letterSpacing: 2.6,
+            fontSize: 18,
+          ),
+        ),
+        const Spacer(),
+        if (MediaQuery.sizeOf(context).width >= 1600) ...[
+          _topAction(Icons.equalizer, 'Visuals'),
+          const SizedBox(width: 8),
+          _topAction(Icons.settings_outlined, 'Settings'),
+          const SizedBox(width: 16),
+        ],
+        if (compact)
+          IconButton.filled(
+            tooltip: 'Add music',
+            onPressed: _addFiles,
+            icon: const Icon(Icons.add),
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xffef4bff),
+              foregroundColor: Colors.white,
+            ),
+          )
+        else
+          FilledButton.icon(
+            onPressed: _addFiles,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add music'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xffef4bff),
+              foregroundColor: Colors.white,
+            ),
+          ),
+        if (MediaQuery.sizeOf(context).width >= 1600)
+          IconButton(
+            tooltip: 'Add folder',
+            onPressed: _addFolder,
+            icon: const Icon(
+              Icons.create_new_folder_outlined,
+              color: Colors.white60,
+            ),
+          ),
+        if (MediaQuery.sizeOf(context).width >= 1600)
+          IconButton(
+            tooltip: 'Import audio CD',
+            onPressed: _importAudioCd,
+            icon: const Icon(Icons.album_outlined, color: Colors.white60),
+          ),
+        if (MediaQuery.sizeOf(context).width >= 1600)
+          IconButton(
+            tooltip: 'Sleep timer',
+            onPressed: _showSleepTimer,
+            icon: Icon(
+              Icons.bedtime_outlined,
+              color: _sleepDeadline == null
+                  ? Colors.white60
+                  : const Color(0xffef4bff),
+            ),
+          ),
+        if (!compact)
+          IconButton(
+            tooltip: 'Rescan library folders',
+            onPressed: _rescanFolders,
+            icon: const Icon(Icons.refresh, color: Colors.white60),
+          ),
+        if (MediaQuery.sizeOf(context).width >= 1600) ...[
+          const SizedBox(width: 8),
+          IconButton(
+            tooltip: 'Add stream URL',
+            onPressed: _addStream,
+            icon: const Icon(Icons.link, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Find internet radio',
+            onPressed: _searchRadioDirectory,
+            icon: const Icon(Icons.radio, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Subscribe to podcast RSS',
+            onPressed: _addPodcastFeed,
+            icon: const Icon(Icons.podcasts, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Refresh podcasts',
+            onPressed: _refreshPodcasts,
+            icon: const Icon(Icons.podcasts_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Import podcast subscriptions (OPML)',
+            onPressed: _importPodcastSubscriptions,
+            icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export podcast subscriptions (OPML)',
+            onPressed: _exportPodcastSubscriptions,
+            icon: const Icon(
+              Icons.file_download_outlined,
+              color: Colors.white60,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Manage podcast subscriptions',
+            onPressed: _managePodcastSubscriptions,
+            icon: const Icon(
+              Icons.manage_accounts_outlined,
+              color: Colors.white60,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Equalizer',
+            onPressed: _showEqualizer,
+            icon: Icon(
+              Icons.equalizer,
+              color: _equalizerEnabled
+                  ? const Color(0xffef4bff)
+                  : Colors.white60,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Playback speed',
+            onPressed: _showPlaybackSpeed,
+            icon: const Icon(Icons.speed, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Choose skin',
+            onPressed: _showThemePicker,
+            icon: const Icon(Icons.palette_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Import skin package',
+            onPressed: _importSkin,
+            icon: const Icon(Icons.file_upload_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Manage plugins',
+            onPressed: _showPluginManager,
+            icon: Icon(
+              Icons.extension_outlined,
+              color: _plugins.values.any((plugin) => plugin.enabled)
+                  ? const Color(0xffef4bff)
+                  : Colors.white60,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Export M3U playlist',
+            onPressed: _exportPlaylist,
+            icon: const Icon(Icons.ios_share, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Sync music to device folder',
+            onPressed: _syncToDeviceFolder,
+            icon: const Icon(Icons.sync, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export PLS playlist',
+            onPressed: _exportPlsPlaylist,
+            icon: const Icon(Icons.radio, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export Winamp B4S playlist',
+            onPressed: _exportB4sPlaylist,
+            icon: const Icon(Icons.queue_music, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export WPL playlist',
+            onPressed: _exportWplPlaylist,
+            icon: const Icon(Icons.library_music, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export ASX playlist',
+            onPressed: _exportAsxPlaylist,
+            icon: const Icon(Icons.playlist_play, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Import M3U, PLS, B4S, WPL, or ASX playlist',
+            onPressed: _importPlaylist,
+            icon: const Icon(Icons.file_open_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Import iTunes XML library',
+            onPressed: _importItunesLibrary,
+            icon: const Icon(Icons.library_add_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Export iTunes XML library',
+            onPressed: _exportItunesLibrary,
+            icon: const Icon(
+              Icons.library_books_outlined,
+              color: Colors.white60,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Import CUE sheet',
+            onPressed: _importCueSheet,
+            icon: const Icon(Icons.album_outlined, color: Colors.white60),
+          ),
+          IconButton(
+            tooltip: 'Play videos',
+            onPressed: _openVideoPicker,
+            icon: const Icon(
+              Icons.video_library_outlined,
+              color: Colors.white60,
+            ),
+          ),
+        ] else
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white60),
+            onSelected: (value) {
+              if (value == 'folder') _addFolder();
+              if (value == 'visuals') _showVisualizer();
+              if (value == 'settings') _showSettings();
+              if (value == 'rescan') _rescanFolders();
+              if (value == 'import') _importPlaylist();
+              if (value == 'importItunes') _importItunesLibrary();
+              if (value == 'exportItunes') _exportItunesLibrary();
+              if (value == 'importCue') _importCueSheet();
+              if (value == 'stream') _addStream();
+              if (value == 'radio') _searchRadioDirectory();
+              if (value == 'podcast') _addPodcastFeed();
+              if (value == 'refreshPodcasts') _refreshPodcasts();
+              if (value == 'importPodcasts') _importPodcastSubscriptions();
+              if (value == 'exportPodcasts') _exportPodcastSubscriptions();
+              if (value == 'managePodcasts') _managePodcastSubscriptions();
+              if (value == 'eq') _showEqualizer();
+               if (value == 'autoEq') _importAutoEqProfile();
+              if (value == 'speed') _showPlaybackSpeed();
+              if (value == 'layout') _showPlayerLayout();
+              if (value == 'theme') _showThemePicker();
+              if (value == 'importSkin') _importSkin();
+              if (value == 'midiSoundFont') _importMidiSoundFont();
+              if (value == 'plugins') _showPluginManager();
+              if (value == 'export') _exportPlaylist();
+              if (value == 'sync') _syncToDeviceFolder();
+              if (value == 'cd') _importAudioCd();
+              if (value == 'sleep') _showSleepTimer();
+              if (value == 'exportPls') _exportPlsPlaylist();
+              if (value == 'exportB4s') _exportB4sPlaylist();
+              if (value == 'exportWpl') _exportWplPlaylist();
+              if (value == 'exportAsx') _exportAsxPlaylist();
+              if (value == 'video') _openVideoPicker();
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(value: 'visuals', child: Text('Visuals')),
+              PopupMenuItem(value: 'settings', child: Text('Settings')),
+              PopupMenuItem(value: 'folder', child: Text('Add folder')),
+              PopupMenuItem(
+                value: 'rescan',
+                child: Text('Rescan library folders'),
+              ),
+              PopupMenuItem(
+                value: 'import',
+                child: Text('Import M3U, PLS, B4S, WPL, or ASX playlist'),
+              ),
+              PopupMenuItem(
+                value: 'importItunes',
+                child: Text('Import iTunes XML library'),
+              ),
+              PopupMenuItem(
+                value: 'exportItunes',
+                child: Text('Export iTunes XML library'),
+              ),
+              PopupMenuItem(
+                value: 'importCue',
+                child: Text('Import CUE sheet'),
+              ),
+              PopupMenuItem(value: 'stream', child: Text('Add stream URL')),
+              PopupMenuItem(value: 'radio', child: Text('Find internet radio')),
+              PopupMenuItem(
+                value: 'podcast',
+                child: Text('Subscribe to podcast RSS'),
+              ),
+              PopupMenuItem(
+                value: 'refreshPodcasts',
+                child: Text('Refresh podcasts'),
+              ),
+              PopupMenuItem(
+                value: 'importPodcasts',
+                child: Text('Import podcast subscriptions (OPML)'),
+              ),
+              PopupMenuItem(
+                value: 'exportPodcasts',
+                child: Text('Export podcast subscriptions (OPML)'),
+              ),
+              PopupMenuItem(
+                value: 'managePodcasts',
+                child: Text('Manage podcast subscriptions'),
+              ),
+              PopupMenuItem(value: 'eq', child: Text('Equalizer')),
+               PopupMenuItem(
+                 value: 'autoEq',
+                 child: Text('Import AutoEQ headphone profile'),
+               ),
+              PopupMenuItem(value: 'speed', child: Text('Playback speed')),
+              PopupMenuItem(
+                value: 'layout',
+                child: Text('Customize player controls'),
+              ),
+              PopupMenuItem(value: 'theme', child: Text('Choose skin')),
+              PopupMenuItem(
+                value: 'importSkin',
+                child: Text('Import skin package'),
+              ),
+              PopupMenuItem(
+                value: 'midiSoundFont',
+                child: Text('Import MIDI SoundFont for EQ'),
+              ),
+              PopupMenuItem(value: 'plugins', child: Text('Manage plugins')),
+              PopupMenuItem(
+                value: 'export',
+                child: Text('Export M3U playlist'),
+              ),
+              PopupMenuItem(
+                value: 'sync',
+                child: Text('Sync music to device folder'),
+              ),
+              const PopupMenuItem(
+                value: 'cd',
+                child: Text('Import audio CD'),
+              ),
+              PopupMenuItem(value: 'sleep', child: Text('Sleep timer')),
+              PopupMenuItem(
+                value: 'exportPls',
+                child: Text('Export PLS playlist'),
+              ),
+              PopupMenuItem(
+                value: 'exportB4s',
+                child: Text('Export Winamp B4S playlist'),
+              ),
+              PopupMenuItem(
+                value: 'exportWpl',
+                child: Text('Export WPL playlist'),
+              ),
+              PopupMenuItem(
+                value: 'exportAsx',
+                child: Text('Export ASX playlist'),
+              ),
+              PopupMenuItem(value: 'video', child: Text('Play videos')),
+            ],
+          ),
+      ],
+    ),
+  );
+
+  Widget _topAction(IconData icon, String label) => TextButton.icon(
+    onPressed: label == 'Visuals' ? _showVisualizer : _showSettings,
+    icon: Icon(icon, size: 18, color: Colors.white60),
+    label: Text(label, style: const TextStyle(color: Colors.white60)),
+  );
+  Widget _wideLayout() => Row(
+    children: [
+      SizedBox(width: 330, child: _queuePanel()),
+      Expanded(child: _heroPanel()),
+    ],
+  );
+  Widget _compactLayout() => Column(
+    children: [
+      SizedBox(height: 72, child: _heroPanel(compact: true)),
+      Expanded(child: _queuePanel()),
+    ],
+  );
+
+  Widget _queuePanel() => Container(
+    margin: MediaQuery.sizeOf(context).width < 600
+        ? const EdgeInsets.fromLTRB(8, 4, 8, 6)
+        : const EdgeInsets.fromLTRB(24, 8, 12, 12),
+    decoration: BoxDecoration(
+      color: const Color(0xff11131c),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: Colors.white10),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 12, 8),
+          child: Row(
+            children: [
+              const Text(
+                'QUEUE',
+                style: TextStyle(
+                  color: Colors.white54,
+                  fontSize: 11,
+                  letterSpacing: 1.8,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${_queue.length} tracks',
+                style: const TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+              if (_queue.isNotEmpty)
+                IconButton(
+                  onPressed: _clearQueue,
+                  icon: const Icon(Icons.clear_all, size: 18),
+                  color: Colors.white38,
+                  tooltip: 'Clear queue',
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _viewButton('queue', 'Queue', Icons.queue_music),
+                _viewButton('library', 'Library', Icons.library_music),
+                _viewButton('bookmarks', 'Bookmarks', Icons.bookmark_outline),
+                _viewButton('playlists', 'Playlists', Icons.playlist_play),
+                _viewButton('history', 'History', Icons.history),
+              ],
+            ),
+          ),
+        ),
+        if (_activeView == 'library')
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (value) => setState(() => _searchQuery = value),
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search, size: 18),
+                      hintText: 'Search artist, album, genre…',
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<String>(
+                  value: _libraryFilter,
+                  underline: const SizedBox.shrink(),
+                  items: const [
+                    DropdownMenuItem(value: 'All', child: Text('All')),
+                    DropdownMenuItem(
+                      value: 'Favorites',
+                      child: Text('Favorites'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Top rated',
+                      child: Text('Top rated'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Most played',
+                      child: Text('Most played'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setState(() => _libraryFilter = value);
+                  },
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'Sort library',
+                  icon: const Icon(Icons.sort, size: 19),
+                  onSelected: (value) {
+                    setState(() => _librarySort = value);
+                    _saveQueue();
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(
+                      value: 'Added',
+                      child: Text('Recently added'),
+                    ),
+                    PopupMenuItem(value: 'Title', child: Text('Title')),
+                    PopupMenuItem(value: 'Artist', child: Text('Artist')),
+                    PopupMenuItem(value: 'Album', child: Text('Album')),
+                    PopupMenuItem(value: 'Rating', child: Text('Rating')),
+                    PopupMenuItem(
+                      value: 'Play count',
+                      child: Text('Play count'),
+                    ),
+                  ],
+                ),
+                IconButton(
+                  tooltip: _librarySortDescending
+                      ? 'Sort ascending'
+                      : 'Sort descending',
+                  icon: Icon(
+                    _librarySortDescending
+                        ? Icons.arrow_downward
+                        : Icons.arrow_upward,
+                    size: 17,
+                  ),
+                  onPressed: () {
+                    setState(
+                      () => _librarySortDescending = !_librarySortDescending,
+                    );
+                    _saveQueue();
+                  },
+                ),
+              ],
+            ),
+          ),
+        if (_activeView == 'library' && _selectedLibraryPaths.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(
+              children: [
+                Text(
+                  '${_selectedLibraryPaths.length} selected',
+                  style: const TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _editSelectedTracks,
+                  icon: const Icon(Icons.edit_note, size: 17),
+                  label: const Text('Edit metadata'),
+                ),
+                IconButton(
+                  tooltip: 'Clear selection',
+                  onPressed: () => setState(_selectedLibraryPaths.clear),
+                  icon: const Icon(Icons.close, size: 17),
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: _activeView == 'library'
+              ? _libraryView()
+              : _activeView == 'bookmarks'
+              ? _bookmarksView()
+              : _activeView == 'playlists'
+              ? _playlistView()
+              : _activeView == 'history'
+              ? _historyView()
+              : _queue.isEmpty
+              ? _emptyQueue()
+              : ReorderableListView.builder(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  itemCount: _queue.length,
+                  onReorder: _reorderQueue,
+                  itemBuilder: (_, index) => _queueItem(index),
+                ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _viewButton(String view, String label, IconData icon) =>
+      TextButton.icon(
+        onPressed: () => setState(() => _activeView = view),
+        icon: Icon(
+          icon,
+          size: 15,
+          color: _activeView == view ? const Color(0xffef4bff) : Colors.white38,
+        ),
+        label: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: _activeView == view ? Colors.white : Colors.white38,
+          ),
+        ),
+      );
+
+  Widget _libraryView() {
+    final tracks = _visibleLibrary;
+    if (tracks.isEmpty) return _emptyQueue();
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 12),
+      itemCount: tracks.length,
+      itemBuilder: (_, index) {
+        final track = tracks[index];
+        return ListTile(
+          dense: true,
+          leading: Checkbox(
+            value: _selectedLibraryPaths.contains(track.path),
+            onChanged: (_) => _toggleLibrarySelection(track),
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          title: Text(
+            track.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12),
+          ),
+          subtitle: Text(
+            '${track.artist} · ${track.album} · ${_ratingLabel(track.rating)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 10, color: Colors.white38),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: _isBookmarked(track)
+                    ? 'Remove bookmark'
+                    : 'Add bookmark',
+                icon: Icon(
+                  _isBookmarked(track) ? Icons.bookmark : Icons.bookmark_border,
+                  size: 17,
+                  color: _isBookmarked(track)
+                      ? const Color(0xffef4bff)
+                      : Colors.white30,
+                ),
+                onPressed: () => _toggleBookmark(track),
+              ),
+              IconButton(
+                icon: Icon(
+                  track.favorite ? Icons.favorite : Icons.favorite_border,
+                  size: 17,
+                  color: track.favorite
+                      ? const Color(0xffef4bff)
+                      : Colors.white30,
+                ),
+                onPressed: () => _toggleFavorite(track),
+              ),
+              IconButton(
+                icon: const Icon(
+                  Icons.edit_outlined,
+                  size: 17,
+                  color: Colors.white30,
+                ),
+                onPressed: () => _editTrack(track),
+              ),
+              IconButton(
+                tooltip: 'Replace cover art',
+                icon: const Icon(
+                  Icons.image_outlined,
+                  size: 17,
+                  color: Colors.white30,
+                ),
+                onPressed: () => _replaceArtwork(track),
+              ),
+              if (!track.path.startsWith('http'))
+                IconButton(
+                  tooltip: 'Convert to M4A',
+                  icon: const Icon(
+                    Icons.transform,
+                    size: 17,
+                    color: Colors.white30,
+                  ),
+                  onPressed: () => _convertTrackToM4a(track),
+                ),
+              if (track.lyrics?.trim().isNotEmpty == true)
+                IconButton(
+                  tooltip: 'View lyrics',
+                  icon: const Icon(
+                    Icons.lyrics_outlined,
+                    size: 17,
+                    color: Colors.white30,
+                  ),
+                  onPressed: () => _showLyrics(track),
+                ),
+              IconButton(
+                icon: const Icon(
+                  Icons.playlist_add,
+                  size: 17,
+                  color: Colors.white30,
+                ),
+                onPressed: () => _addTrackToPlaylist(track),
+              ),
+              if (track.album == 'Podcast' && track.path.startsWith('http'))
+                IconButton(
+                  tooltip: 'Download episode',
+                  icon: const Icon(
+                    Icons.download_outlined,
+                    size: 17,
+                    color: Colors.white30,
+                  ),
+                  onPressed: () => _downloadPodcastEpisode(track),
+                ),
+            ],
+          ),
+          onTap: () {
+            setState(() {
+              _queue.add(track);
+              _selected = _queue.length - 1;
+            });
+            _select(_selected);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _bookmarksView() {
+    if (_bookmarks.isEmpty) return _emptyQueue();
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 12),
+      itemCount: _bookmarks.length,
+      itemBuilder: (_, index) {
+        final track = _bookmarks[index];
+        return ListTile(
+          key: ValueKey(track.identityKey),
+          dense: true,
+          leading: const Icon(Icons.bookmark, color: Color(0xffef4bff)),
+          title: Text(track.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(
+            '${track.artist} · ${track.path}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 10, color: Colors.white38),
+          ),
+          trailing: IconButton(
+            tooltip: 'Remove bookmark',
+            icon: const Icon(Icons.bookmark_remove_outlined, size: 18),
+            onPressed: () => _toggleBookmark(track),
+          ),
+          onTap: () => _playBookmark(track),
+        );
+      },
+    );
+  }
+
+  Widget _historyView() {
+    if (_playHistory.isEmpty) return _emptyQueue();
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: () async {
+              setState(_playHistory.clear);
+              await _saveQueue();
+            },
+            icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+            label: const Text('Clear history'),
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.only(bottom: 12),
+            itemCount: _playHistory.length,
+            itemBuilder: (_, index) {
+              final identity = _playHistory[index];
+              final track = _queue.firstWhere(
+                (item) => item.identityKey == identity,
+                orElse: () => _library.firstWhere(
+                  (item) => item.identityKey == identity,
+                  orElse: () {
+                    try {
+                      final cue = jsonDecode(identity) as List;
+                      final path = cue[0] as String;
+                      final number = (cue[3] as num?)?.toInt();
+                      return Track(
+                        path: path,
+                        name:
+                            '${path.split(RegExp(r'[/\\]')).last} · ${number ?? ''}',
+                        trackNumber: number,
+                        cueStartMs: (cue[1] as num?)?.toInt(),
+                        cueEndMs: (cue[2] as num?)?.toInt(),
+                      );
+                    } on Object {
+                      return Track(
+                        path: identity,
+                        name: identity.split(RegExp(r'[/\\]')).last,
+                      );
+                    }
+                  },
+                ),
+              );
+              return ListTile(
+                dense: true,
+                leading: const Icon(Icons.history, size: 18),
+                title: Text(
+                  track.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  '${track.artist} · ${track.album}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: Colors.white38),
+                ),
+                onTap: () {
+                  setState(() {
+                    _queue.add(track);
+                    _selected = _queue.length - 1;
+                  });
+                  _select(_selected);
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _playlistView() => Column(
+    children: [
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          TextButton.icon(
+            onPressed: _createPlaylist,
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('New playlist'),
+          ),
+          TextButton.icon(
+            onPressed: _createSmartPlaylist,
+            icon: const Icon(Icons.auto_awesome, size: 16),
+            label: const Text('New smart playlist'),
+          ),
+        ],
+      ),
+      Expanded(
+        child: _playlists.isEmpty && _smartPlaylists.isEmpty
+            ? _emptyQueue()
+            : ListView(
+                children: [
+                  if (_playlists.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(18, 8, 18, 2),
+                      child: Text(
+                        'PLAYLISTS',
+                        style: TextStyle(
+                          color: Colors.white38,
+                          fontSize: 10,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                    ),
+                  ..._playlists.keys.map(
+                    (name) => ListTile(
+                      leading: const Icon(
+                        Icons.playlist_play,
+                        color: Color(0xffef4bff),
+                      ),
+                      title: Text(name),
+                      subtitle: Text(
+                        '${_playlists[name]!.length} tracks',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                      onTap: () {
+                        setState(() {
+                          _queue
+                            ..clear()
+                            ..addAll(
+                              _playlists[name]!.map(
+                                (path) => _library.firstWhere(
+                                  (track) => track.path == path,
+                                  orElse: () => Track(
+                                    path: path,
+                                    name: path.split(RegExp(r'[/\\]')).last,
+                                  ),
+                                ),
+                              ),
+                            );
+                          _selected = 0;
+                        });
+                      },
+                      trailing: PopupMenuButton<String>(
+                        tooltip: 'Playlist actions',
+                        onSelected: (action) {
+                          switch (action) {
+                            case 'edit':
+                              _editPlaylist(name);
+                              break;
+                            case 'rename':
+                              _renamePlaylist(name);
+                              break;
+                            case 'delete':
+                              _deletePlaylist(name);
+                              break;
+                          }
+                        },
+                        itemBuilder: (context) => const [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text('Edit tracks'),
+                          ),
+                          PopupMenuItem(value: 'rename', child: Text('Rename')),
+                          PopupMenuItem(value: 'delete', child: Text('Delete')),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (_smartPlaylists.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(18, 16, 18, 2),
+                      child: Text(
+                        'SMART PLAYLISTS',
+                        style: TextStyle(
+                          color: Colors.white38,
+                          fontSize: 10,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                    ),
+                  ..._smartPlaylists.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final playlist = entry.value;
+                    final count = _tracksForSmartPlaylist(playlist).length;
+                    return ListTile(
+                      leading: const Icon(
+                        Icons.auto_awesome,
+                        color: Color(0xffef4bff),
+                      ),
+                      title: Text(playlist.name),
+                      subtitle: Text(
+                        '${playlist.rule}${playlist.value.isEmpty ? '' : ': ${playlist.value}'} · $count tracks',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                      trailing: IconButton(
+                        tooltip: 'Delete smart playlist',
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: Colors.white30,
+                        ),
+                        onPressed: () async {
+                          setState(() => _smartPlaylists.removeAt(index));
+                          await _saveQueue();
+                        },
+                      ),
+                      onTap: () => _playSmartPlaylist(playlist),
+                    );
+                  }),
+                ],
+              ),
+      ),
+    ],
+  );
+
+  Widget _emptyQueue() => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.library_music_outlined, color: Colors.white24, size: 42),
+          const SizedBox(height: 14),
+          const Text(
+            'Your library is quiet.',
+            style: TextStyle(
+              color: Colors.white70,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Drop in a few tracks\nto get the party started.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white38, height: 1.4, fontSize: 12),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _queueItem(int index) {
+    final track = _queue[index];
+    final selected = index == _selected;
+    return KeyedSubtree(
+      key: ValueKey(track.identityKey),
+      child: InkWell(
+        onTap: () => _select(index),
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xff272034) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? const Color(0xffef4bff)
+                      : const Color(0xff222532),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  selected && _isPlaying ? Icons.graphic_eq : Icons.music_note,
+                  size: 17,
+                  color: selected ? Colors.white : Colors.white38,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      track.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: selected ? Colors.white : Colors.white70,
+                        fontWeight: selected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      track.artist,
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: _isBookmarked(track)
+                    ? 'Remove bookmark'
+                    : 'Add bookmark',
+                onPressed: () => _toggleBookmark(track),
+                icon: Icon(
+                  _isBookmarked(track) ? Icons.bookmark : Icons.bookmark_border,
+                  size: 16,
+                  color: _isBookmarked(track)
+                      ? const Color(0xffef4bff)
+                      : Colors.white38,
+                ),
+              ),
+              IconButton(
+                onPressed: () => _remove(index),
+                icon: const Icon(Icons.close, size: 16, color: Colors.white24),
+                tooltip: 'Remove',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _heroPanel({bool compact = false}) => AnimatedBuilder(
+    animation: _pulse,
+    builder: (_, __) => Padding(
+      padding: compact
+          ? const EdgeInsets.fromLTRB(8, 0, 8, 0)
+          : const EdgeInsets.fromLTRB(12, 8, 24, 12),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xff151122), Color(0xff0c1720)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: const Color(0x33ef4bff)),
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -80,
+              right: -80,
+              child: Container(
+                width: 280,
+                height: 280,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xffef4bff)
+                          .withOpacity(.09 + _pulse.value * .03),
+                      blurRadius: 100,
+                      spreadRadius: 30,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.all(compact ? 4 : 32),
+              child: compact
+                  ? Row(
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: _current?.artwork != null
+                              ? Image.memory(
+                                  _current!.artwork!,
+                                  width: 36,
+                                  height: 36,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.graphic_eq,
+                                    size: 42,
+                                    color: Colors.white24,
+                                  ),
+                                )
+                              : const SizedBox(
+                                  width: 36,
+                                  height: 36,
+                                  child: Icon(
+                                    Icons.graphic_eq,
+                                    size: 34,
+                                    color: Colors.white24,
+                                  ),
+                                ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'NOW PLAYING',
+                                style: TextStyle(
+                                  color: Color(0xffef4bff),
+                                  fontSize: 9,
+                                  letterSpacing: 1.6,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _current?.name ?? 'Nothing queued',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                _current?.artist ?? 'Add local music to begin',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          _isPlaying ? Icons.waves : Icons.pause_circle_outline,
+                          color: Colors.white30,
+                          size: 20,
+                        ),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Text(
+                              'NOW PLAYING',
+                              style: TextStyle(
+                                color: Color(0xffef4bff),
+                                fontSize: 11,
+                                letterSpacing: 2,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const Spacer(),
+                            Icon(
+                              _isPlaying
+                                  ? Icons.waves
+                                  : Icons.pause_circle_outline,
+                              color: Colors.white30,
+                              size: 20,
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        Center(
+                          child: _current?.artwork != null
+                              ? ClipRRect(
+                                  borderRadius: BorderRadius.circular(18),
+                                  child: Image.memory(
+                                    _current!.artwork!,
+                                    width: 180,
+                                    height: 180,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const Icon(
+                                      Icons.graphic_eq,
+                                      size: 80,
+                                      color: Colors.white24,
+                                    ),
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.graphic_eq,
+                                  size: 80,
+                                  color: Colors.white24,
+                                ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          _current?.name ?? 'Nothing queued',
+                          style: const TextStyle(
+                            fontSize: 30,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -.7,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _current?.artist ?? 'Add local music to begin',
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  Widget _bottomPlayer() {
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    return Container(
+    padding: compact
+        ? const EdgeInsets.fromLTRB(8, 0, 8, 2)
+        : const EdgeInsets.fromLTRB(24, 10, 24, 18),
+    decoration: const BoxDecoration(
+      color: Color(0xff0c0d14),
+      border: Border(top: BorderSide(color: Colors.white10)),
+    ),
+    child: Theme(
+      data: Theme.of(context).copyWith(
+        materialTapTargetSize: compact
+            ? MaterialTapTargetSize.shrinkWrap
+            : MaterialTapTargetSize.padded,
+        visualDensity: compact
+            ? VisualDensity.compact
+            : VisualDensity.standard,
+      ),
+      child: Column(
+        children: [
+        Row(
+          children: [
+            Text(
+              _time(_position),
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+            Expanded(
+              child: Slider(
+                value: _duration.inMilliseconds == 0
+                    ? 0
+                    : (_position.inMilliseconds / _duration.inMilliseconds)
+                          .clamp(0.0, 1.0),
+                onChanged: _duration.inMilliseconds == 0
+                    ? null
+                    : (value) => _seekCurrent(
+                        Duration(
+                          milliseconds: (_duration.inMilliseconds * value)
+                              .round(),
+                        ),
+                      ),
+                activeColor: const Color(0xffef4bff),
+                inactiveColor: Colors.white12,
+              ),
+            ),
+            Text(
+              _time(_duration),
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+            IconButton(
+              tooltip: _casting
+                  ? 'Casting to ${_castDeviceName ?? 'device'}'
+                  : 'Cast to a network player',
+              onPressed: _showCastDevices,
+              icon: Icon(
+                _casting ? Icons.cast_connected_rounded : Icons.cast_rounded,
+                size: 18,
+              ),
+              color: _casting ? const Color(0xffef4bff) : Colors.white54,
+            ),
+            if (!compact)
+              IconButton(
+                tooltip: 'Customize player controls',
+                onPressed: _showPlayerLayout,
+                icon: const Icon(Icons.tune_rounded, size: 18),
+                color: Colors.white54,
+              ),
+          ],
+        ),
+        Row(
+          children: [
+            if (_playerLayoutCustomized) ...[
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: _playerControls.map(_playerControl).toList(),
+                  ),
+                ),
+              ),
+              if (MediaQuery.sizeOf(context).width >= 600) ...[
+                const Icon(
+                  Icons.volume_up_rounded,
+                  color: Colors.white38,
+                  size: 18,
+                ),
+                SizedBox(
+                  width: 110,
+                  child: Slider(
+                    value: _volume,
+                    onChanged: _midiActive
+                        ? null
+                        : (value) {
+                            setState(() => _volume = value);
+                            if (_casting) {
+                              unawaited(
+                                _chromecastCast.isConnected
+                                    ? _chromecastCast.setVolume(
+                                        _volumeFor(_current),
+                                      )
+                                    : _dlnaCast.isConnected
+                                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                                    : _airplayCast.setVolume(
+                                        _volumeFor(_current),
+                                      ),
+                              );
+                            } else if (_dspActive) {
+                              _dspPlayer.setVolume(_volumeFor(_current));
+                            } else {
+                              _player.setVolume(_volumeFor(_current));
+                            }
+                          },
+                    activeColor: Colors.white70,
+                    inactiveColor: Colors.white12,
+                  ),
+                ),
+              ],
+            ] else ...[
+              IconButton(
+                tooltip: 'Rewind 15 seconds',
+                onPressed: () => _skipBy(const Duration(seconds: -15)),
+                icon: const Icon(Icons.fast_rewind_rounded),
+                color: Colors.white70,
+              ),
+              IconButton(
+                onPressed: _previous,
+                icon: const Icon(Icons.skip_previous_rounded),
+                color: Colors.white70,
+              ),
+              if (MediaQuery.sizeOf(context).width >= 600)
+                IconButton(
+                  onPressed: () => setState(() => _shuffle = !_shuffle),
+                  icon: const Icon(Icons.shuffle_rounded),
+                  color: _shuffle ? const Color(0xffef4bff) : Colors.white38,
+                ),
+              const Spacer(),
+              Container(
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xffef4bff),
+                ),
+                child: IconButton(
+                  onPressed: _togglePlay,
+                  icon: Icon(
+                    _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  ),
+                  iconSize: 28,
+                  color: Colors.white,
+                ),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Skip forward 15 seconds',
+                onPressed: () => _skipBy(const Duration(seconds: 15)),
+                icon: const Icon(Icons.fast_forward_rounded),
+                color: Colors.white70,
+              ),
+              IconButton(
+                onPressed: _next,
+                icon: const Icon(Icons.skip_next_rounded),
+                color: Colors.white70,
+              ),
+              if (MediaQuery.sizeOf(context).width >= 600) ...[
+                IconButton(
+                  onPressed: () => setState(() {
+                    if (!_repeat && !_repeatOne) {
+                      _repeat = true;
+                    } else if (_repeat) {
+                      _repeat = false;
+                      _repeatOne = true;
+                    } else {
+                      _repeatOne = false;
+                    }
+                  }),
+                  icon: Icon(
+                    _repeatOne
+                        ? Icons.repeat_one_rounded
+                        : Icons.repeat_rounded,
+                  ),
+                  color: (_repeat || _repeatOne)
+                      ? const Color(0xffef4bff)
+                      : Colors.white38,
+                ),
+                const SizedBox(width: 14),
+                const Icon(
+                  Icons.volume_up_rounded,
+                  color: Colors.white38,
+                  size: 18,
+                ),
+                SizedBox(
+                  width: 110,
+                  child: Slider(
+                    value: _volume,
+                    onChanged: _midiActive
+                        ? null
+                        : (value) {
+                            setState(() => _volume = value);
+                            if (_casting) {
+                              unawaited(
+                                _chromecastCast.isConnected
+                                    ? _chromecastCast.setVolume(
+                                        _volumeFor(_current),
+                                      )
+                                    : _dlnaCast.isConnected
+                                    ? _dlnaCast.setVolume(_volumeFor(_current))
+                                    : _airplayCast.setVolume(
+                                        _volumeFor(_current),
+                                      ),
+                              );
+                            } else if (_dspActive) {
+                              _dspPlayer.setVolume(_volumeFor(_current));
+                            } else {
+                              _player.setVolume(_volumeFor(_current));
+                            }
+                          },
+                    activeColor: Colors.white70,
+                    inactiveColor: Colors.white12,
+                  ),
+                ),
+              ],
+            ],
+          ],
+        ),
+        ],
+      ),
+    ),
+  );
+}
+}
+
+const visualizerModes = {'spectrum', 'waveform', 'oscilloscope'};
+
+class VisualizerPainter extends CustomPainter {
+  const VisualizerPainter({
+    required this.mode,
+    required this.fft,
+    required this.wave,
+    required this.active,
+  });
+  final String mode;
+  final Float32List? fft;
+  final Float32List? wave;
+  final bool active;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final values = mode == 'spectrum' ? fft : wave;
+    if (!active || values == null || values.isEmpty) return;
+    if (mode == 'spectrum') {
+      _paintSpectrum(canvas, size, values);
+    } else if (mode == 'waveform') {
+      _paintWaveform(canvas, size, values, filled: true);
+    } else {
+      _paintWaveform(canvas, size, values, filled: false);
+    }
+  }
+
+  void _paintSpectrum(Canvas canvas, Size size, Float32List bins) {
+    final paint = Paint()..strokeCap = StrokeCap.round;
+    const count = 52;
+    for (var i = 0; i < count; i++) {
+      final x = (i + .5) * size.width / count;
+      final bin = ((i / count) * bins.length).floor().clamp(0, bins.length - 1);
+      final normalized = (bins[bin] * 3.5).clamp(.025, .82);
+      final height = size.height * normalized.clamp(.08, .82);
+      paint.color = Color.lerp(
+        const Color(0xff5b4aff),
+        const Color(0xffff4ccf),
+        i / count,
+      )!.withOpacity(.55 + normalized * .4);
+      paint.strokeWidth = math.max(2, size.width / count - 5);
+      canvas.drawLine(
+        Offset(x, size.height / 2 - height / 2),
+        Offset(x, size.height / 2 + height / 2),
+        paint,
+      );
+    }
+  }
+
+  void _paintWaveform(
+    Canvas canvas,
+    Size size,
+    Float32List samples, {
+    required bool filled,
+  }) {
+    final path = Path();
+    final center = size.height / 2;
+    final amplitude = size.height * .43;
+    for (var index = 0; index < samples.length; index++) {
+      final x = samples.length == 1
+          ? 0.0
+          : index * size.width / (samples.length - 1);
+      final y = center - samples[index].clamp(-1.0, 1.0) * amplitude;
+      if (index == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    final paint = Paint()
+      ..style = filled ? PaintingStyle.stroke : PaintingStyle.stroke
+      ..strokeWidth = filled ? 2.5 : 1.8
+      ..strokeCap = StrokeCap.round
+      ..color = filled
+          ? const Color(0xffff4ccf)
+          : const Color(0xff5b9dff);
+    canvas.drawLine(
+      Offset(0, center),
+      Offset(size.width, center),
+      Paint()
+        ..color = Colors.white12
+        ..strokeWidth = 1,
+    );
+    canvas.drawPath(path, paint);
+    if (filled) {
+      final glow = Paint()
+        ..color = const Color(0xffff4ccf).withOpacity(.16)
+        ..strokeWidth = 8
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke;
+      canvas.drawPath(path, glow);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant VisualizerPainter oldDelegate) =>
+      oldDelegate.mode != mode ||
+      oldDelegate.fft != fft ||
+      oldDelegate.wave != wave ||
+      oldDelegate.active != active;
+}
+
+), ''),
+      );
+      var name = profile.name.trim();
+      if (!canSaveEqualizerPresetName(
+        name,
+        reservedNames: _plugins.expand((plugin) => plugin.equalizerPresets.keys),
+      )) {
+        name = 'AutoEQ - $name';
+      }
+      setState(() {
+        _customEqPresets[name] = profile.gains;
+        _eqPreset = name;
+        _eqBands.setAll(0, profile.gains);
+      });
+      if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
+        await _setEqualizerEnabled(true);
+      } else if (_dspActive) {
+        _dspPlayer.applyEqualizer(enabled: true, bands: _eqBands);
+      }
+      await _saveQueue();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported AutoEQ profile: $name')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import AutoEQ profile: $error')),
+      );
+    }
   }
 
   Future<void> _importPlugin() async {
