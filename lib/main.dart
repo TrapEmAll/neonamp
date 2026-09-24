@@ -48,6 +48,7 @@ import 'audio_loudness.dart';
 import 'convolution.dart';
 import 'silence_detection.dart';
 import 'media_server.dart';
+import 'unified_search.dart';
 import 'scrobbling.dart';
 import 'loudness_scan.dart';
 import 'custom_metadata.dart';
@@ -7832,6 +7833,175 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _queueUnifiedSearchItem(UnifiedSearchItem item) async {
+    final path = item.path ?? item.streamUrl;
+    if (path == null || path.isEmpty) return;
+    var index = _queue.indexWhere((track) => track.path == path);
+    if (index < 0) {
+      final track = Track(
+        path: path,
+        name: item.title,
+        artist: item.artist,
+        album: item.album,
+        durationMs: item.durationMs,
+      );
+      setState(() {
+        _queue.add(track);
+        if (!_library.any((existing) => existing.path == track.path)) {
+          _library.add(track);
+        }
+        index = _queue.length - 1;
+      });
+      await _saveQueue();
+    }
+    await _select(index);
+  }
+
+  Future<void> _showUnifiedSearch() async {
+    final query = TextEditingController(text: _searchQuery);
+    var results = <UnifiedSearchItem>[];
+    var loading = false;
+    var error = '';
+    Future<void> runSearch(StateSetter setDialogState) async {
+      final normalized = query.text.trim();
+      if (normalized.isEmpty) {
+        setDialogState(() {
+          results = [];
+          error = 'Enter a title, artist, or album.';
+        });
+        return;
+      }
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      final local = filterUnifiedSearch(
+        _library.map(
+          (track) => UnifiedSearchItem(
+            id: track.path,
+            title: track.name,
+            artist: track.artist,
+            album: track.album,
+            source: 'Local library',
+            path: track.path,
+            durationMs: track.durationMs,
+          ),
+        ),
+        normalized,
+      );
+      final remoteResults = <UnifiedSearchItem>[];
+      final remoteRequests = <Future<void>>[];
+      for (var i = 0; i < _mediaServerProfiles.length; i++) {
+        final profile = _mediaServerProfiles[i];
+        remoteRequests.add(() async {
+          final client = MediaServerClient(profile);
+          try {
+            final found = await client.search(normalized);
+            remoteResults.addAll(
+              found.map(
+                (track) => UnifiedSearchItem(
+                  id: track.id,
+                  title: track.name,
+                  artist: track.artist,
+                  album: track.album,
+                  source: '${profile.kind} #${i + 1}',
+                  streamUrl: track.streamUrl,
+                  durationMs: track.durationMs,
+                ),
+              ),
+            );
+          } catch (_) {
+            // A disconnected or invalid remote profile must not hide local results.
+          } finally {
+            client.close();
+          }
+        }());
+      }
+      await Future.wait(remoteRequests);
+      if (!mounted) return;
+      setDialogState(() {
+        results = deduplicateUnifiedSearch([...local, ...remoteResults]);
+        loading = false;
+        if (results.isEmpty) error = 'No matching local or remote tracks found.';
+      });
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Search all sources'),
+          content: SizedBox(
+            width: math.min(MediaQuery.sizeOf(context).width - 48, 620),
+            height: math.min(MediaQuery.sizeOf(context).height * .65, 520),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: query,
+                        autofocus: true,
+                        onSubmitted: (_) => runSearch(setDialogState),
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
+                          hintText: 'Title, artist, or album',
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Search',
+                      onPressed: () => runSearch(setDialogState),
+                      icon: const Icon(Icons.arrow_forward),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (loading) const LinearProgressIndicator(),
+                if (error.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(error, textAlign: TextAlign.center),
+                  ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: results.length,
+                    itemBuilder: (context, index) {
+                      final item = results[index];
+                      return ListTile(
+                        dense: true,
+                        leading: Icon(
+                          item.path == null ? Icons.cloud : Icons.music_note,
+                        ),
+                        title: Text(item.title),
+                        subtitle: Text(
+                          '${item.artist} · ${item.album} · ${item.source}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () async {
+                          Navigator.pop(dialogContext);
+                          await _queueUnifiedSearchItem(item);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+    query.dispose();
+  }
+
   Future<void> _showMediaServers() async {
     final saved = _mediaServerProfiles.firstOrNull;
     var kind = saved?.kind ?? 'subsonic';
@@ -9576,6 +9746,12 @@ class _PlayerPageState extends State<PlayerPage>
                       isDense: true,
                     ),
                   ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: 'Search local and remote sources',
+                  icon: const Icon(Icons.cloud_search, size: 19),
+                  onPressed: _showUnifiedSearch,
                 ),
                 const SizedBox(width: 8),
                 DropdownButton<String>(
