@@ -31,6 +31,8 @@ class DspLocalPlayer {
   bool _completionSent = false;
   bool _disposed = false;
   Duration _duration = Duration.zero;
+  double _volume = 1;
+  double _preamp = 0;
 
   Stream<Duration> get onPositionChanged => _positionController.stream;
   Stream<Duration> get onDurationChanged => _durationController.stream;
@@ -60,6 +62,7 @@ class DspLocalPlayer {
     required double playbackSpeed,
     required bool equalizerEnabled,
     required List<double> bands,
+    double preamp = 0,
     List<PortableAudioEffect> effects = const [],
     double balance = 0,
     bool deleteSourceOnStop = false,
@@ -107,9 +110,11 @@ class DspLocalPlayer {
       rethrow;
     }
     final equalizer = source.filters.parametricEqFilter..activate();
+    _volume = volume.clamp(0.0, 1.0).toDouble();
+    _preamp = preamp.clamp(-12.0, 12.0).toDouble();
     final handle = soloud.SoLoud.instance.play(
       source,
-      volume: volume,
+      volume: _effectiveVolume,
       pan: balance.clamp(-1.0, 1.0),
     );
     equalizer.numBands(soundHandle: handle).value = bands.length.toDouble();
@@ -224,11 +229,25 @@ class DspLocalPlayer {
     _positionController.add(position);
   }
 
+  double get _effectiveVolume =>
+      (_volume * dspGainForDb(_preamp)).clamp(0.0, 1.0).toDouble();
+
   Future<void> setVolume(double volume) async {
+    _volume = volume.clamp(0.0, 1.0).toDouble();
     final handle = _handle;
     if (handle != null &&
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
-      soloud.SoLoud.instance.setVolume(handle, volume);
+      soloud.SoLoud.instance.setVolume(handle, _effectiveVolume);
+    }
+  }
+
+  void setPreamp(double preamp) {
+    _preamp = preamp.clamp(-12.0, 12.0).toDouble();
+    final handle = _handle;
+    if (handle != null &&
+        soloud.SoLoud.instance.isInitialized &&
+        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      soloud.SoLoud.instance.setVolume(handle, _effectiveVolume);
     }
   }
 

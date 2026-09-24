@@ -164,10 +164,14 @@ bool isSupportedLibraryAudioPath(String path) {
           midiFileExtensions.contains(lowerPath.substring(dot + 1)));
 }
 
-bool trackRequiresDspPlayback(String path, {required bool equalizerEnabled}) =>
+bool trackRequiresDspPlayback(
+  String path, {
+  required bool equalizerEnabled,
+  double preamp = 0,
+}) =>
     !path.startsWith('http') &&
     !isMidiFilePath(path) &&
-    (equalizerEnabled ||
+    (equalizerEnabled || preamp != 0 ||
         isTrackerModulePath(path) ||
         isCrossPlatformFallbackAudioPath(path));
 
@@ -2435,6 +2439,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _visualizerMode = 'spectrum';
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
+  double _eqPreamp = 0;
   final Map<String, List<double>> _customEqPresets = {};
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
@@ -3389,6 +3394,7 @@ class _PlayerPageState extends State<PlayerPage>
         _crossfadeSeconds =
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
+        _eqPreamp = ((settings['eqPreamp'] as num?)?.toDouble() ?? 0).clamp(-12, 12).toDouble();
         _midiSoundFontPath = settings['midiSoundFontPath'] as String?;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
         _customEqPresets.addAll(
@@ -3462,6 +3468,7 @@ class _PlayerPageState extends State<PlayerPage>
         'crossfade': _crossfade,
         'crossfadeSeconds': _crossfadeSeconds,
         'equalizerEnabled': _equalizerEnabled,
+        'eqPreamp': _eqPreamp,
         'midiSoundFontPath': _midiSoundFontPath,
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
@@ -4162,6 +4169,7 @@ class _PlayerPageState extends State<PlayerPage>
           trackRequiresDspPlayback(
             track.path,
             equalizerEnabled: _equalizerEnabled,
+            preamp: _eqPreamp,
           );
       if (Platform.isWindows &&
           isMidiFilePath(track.path) &&
@@ -4189,6 +4197,8 @@ class _PlayerPageState extends State<PlayerPage>
           playbackSpeed: _playbackSpeed,
           equalizerEnabled: _equalizerEnabled,
           bands: _eqBands,
+
+          preamp: _eqPreamp,
           effects: _enabledPluginEffects,
           balance: _balance,
           deleteSourceOnStop: renderedMidiPath != null,
@@ -4310,6 +4320,7 @@ class _PlayerPageState extends State<PlayerPage>
     final targetUsesDsp = trackRequiresDspPlayback(
       track.path,
       equalizerEnabled: _equalizerEnabled,
+      preamp: _eqPreamp,
     );
     if (_dspActive && !targetUsesDsp) {
       await _crossfadeDspToAudio(next);
@@ -4384,6 +4395,8 @@ class _PlayerPageState extends State<PlayerPage>
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
+
+        preamp: _eqPreamp,
         effects: _enabledPluginEffects,
         balance: _balance,
       );
@@ -4489,6 +4502,8 @@ class _PlayerPageState extends State<PlayerPage>
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
+
+        preamp: _eqPreamp,
         effects: _enabledPluginEffects,
         balance: _balance,
       );
@@ -7215,6 +7230,31 @@ class _PlayerPageState extends State<PlayerPage>
                           },
                   ),
                   Row(
+                     children: [
+                       const Text('Preamp', style: TextStyle(color: Colors.white54)),
+                       Expanded(
+                         child: Slider(
+                           value: _eqPreamp,
+                           min: -12,
+                           max: 12,
+                           divisions: 48,
+                           label: '${_eqPreamp.toStringAsFixed(1)} dB',
+                           onChanged: (value) {
+                             setState(() => _eqPreamp = value);
+                             if (_dspActive) _dspPlayer.setPreamp(value);
+                             _crossfadeDspPlayer?.setPreamp(value);
+                             setDialogState(() {});
+                           },
+                         ),
+                       ),
+                       Text(
+                         '${_eqPreamp >= 0 ? '+' : ''}${_eqPreamp.toStringAsFixed(1)} dB',
+                         style: const TextStyle(color: Colors.white54),
+                       ),
+                     ],
+                   ),
+                   const SizedBox(height: 4),
+                   Row(
                     children: [
                       const Text('L', style: TextStyle(color: Colors.white54)),
                       Expanded(
