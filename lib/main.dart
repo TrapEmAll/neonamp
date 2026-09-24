@@ -3964,7 +3964,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
     } finally {
       if (temporaryCuePath != null) {
-        final temporary = File(temporaryCuePath!);
+        final temporary = File(temporaryCuePath);
         if (await temporary.exists()) await temporary.delete();
       }
     }
