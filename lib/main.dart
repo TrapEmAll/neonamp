@@ -54,6 +54,7 @@ import 'custom_metadata.dart';
 import 'remote_command_server.dart';
 import 'abx_test.dart';
 import 'track_auditor.dart';
+import 'audio_formats.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -189,6 +190,7 @@ bool trackRequiresDspPlayback(
     !isMidiFilePath(path) &&
     (equalizerEnabled || preamp != 0 ||
         isTrackerModulePath(path) ||
+        isDsdAudioPath(path) ||
         isCrossPlatformFallbackAudioPath(path));
 
 int nextQueueIndex({
@@ -4329,6 +4331,9 @@ class _PlayerPageState extends State<PlayerPage>
               'Tracker module${module.format.trim().isEmpty ? '' : ' · ${module.format.trim()}'}',
           album: 'Tracker modules',
         );
+      }
+      if (isDsdAudioPath(path)) {
+        return Track(path: path, name: fallback, artist: 'DSD audio');
       }
       final metadata = readTrackMetadata(File(path), getImage: true);
       final replayGainDb = readReplayGainDb(File(path));
