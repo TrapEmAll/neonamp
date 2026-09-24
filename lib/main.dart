@@ -7653,6 +7653,10 @@ class _PlayerPageState extends State<PlayerPage>
                         child: Text('Peak / RMS meter'),
                       ),
                       DropdownMenuItem(
+                        value: 'dynamicRange',
+                        child: Text('Dynamic range meter (peak/RMS)'),
+                      ),
+                      DropdownMenuItem(
                         value: 'goniometer',
                         child: Text('Stereo goniometer'),
                       ),
@@ -10182,6 +10186,7 @@ const visualizerModes = {
   'waveform',
   'oscilloscope',
   'meter',
+  'dynamicRange',
   'goniometer',
 };
 
@@ -10212,6 +10217,8 @@ class VisualizerPainter extends CustomPainter {
       _paintWaveform(canvas, size, wave!, filled: false);
     } else if (mode == 'meter' && wave != null && wave!.isNotEmpty) {
       _paintMeter(canvas, size, wave!);
+    } else if (mode == 'dynamicRange' && wave != null && wave!.isNotEmpty) {
+      _paintDynamicRange(canvas, size, wave!);
     } else if (mode == 'goniometer') {
       final channels = waves;
       if (channels != null && channels.length >= 2) {
@@ -10298,6 +10305,36 @@ class VisualizerPainter extends CustomPainter {
       Offset(peakX, size.height * .75),
       Paint()..color = Colors.white..strokeWidth = 2,
     );
+  }
+
+  void _paintDynamicRange(Canvas canvas, Size size, Float32List samples) {
+    final decibels = visualizerDynamicRangeDb(samples);
+    final fillRatio = (decibels / 24).clamp(0.0, 1.0).toDouble();
+    final track = Paint()..color = Colors.white12;
+    final fill = Paint()
+      ..shader = const LinearGradient(
+        colors: [Color(0xff5b9dff), Color(0xffff4ccf), Color(0xffff665b)],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
+    final rect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, size.height * .35, size.width, size.height * .3),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(rect, track);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, size.height * .35, size.width * fillRatio, size.height * .3),
+        const Radius.circular(8),
+      ),
+      fill,
+    );
+    final label = TextPainter(
+      text: TextSpan(
+        text: 'DR peak/RMS ${decibels.toStringAsFixed(1)} dB',
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    label.paint(canvas, Offset(8, 8));
   }
 
   void _paintGoniometer(
