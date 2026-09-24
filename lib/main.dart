@@ -49,6 +49,7 @@ import 'convolution.dart';
 import 'silence_detection.dart';
 import 'media_server.dart';
 import 'unified_search.dart';
+import 'controller_input.dart';
 import 'scrobbling.dart';
 import 'loudness_scan.dart';
 import 'custom_metadata.dart';
@@ -2436,6 +2437,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<SmartPlaylist> _smartPlaylists = [];
   final Map<String, NeonAmpPlugin> _plugins = {};
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _controllerFocusNode = FocusNode();
   late final AnimationController _pulse = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 950),
@@ -2500,6 +2502,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _libreFmSharedSecret = '';
   bool _scrobblingEnabled = false;
   bool _remoteEnabled = false;
+  bool _controllerOverlayVisible = false;
   int _remotePort = 8765;
   RemoteCommandServer? _remoteServer;
   Timer? _sleepTimer;
@@ -9174,6 +9177,7 @@ class _PlayerPageState extends State<PlayerPage>
     _stateSub?.cancel();
     _completeSub?.cancel();
     _searchController.dispose();
+    _controllerFocusNode.dispose();
     unawaited(_remoteServer?.stop());
     _pulse.dispose();
     _player.dispose();
@@ -9187,8 +9191,85 @@ class _PlayerPageState extends State<PlayerPage>
 
   String _ratingLabel(int rating) => '${'★' * rating}${'☆' * (5 - rating)}';
 
+  KeyEventResult _handleControllerKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final action = controllerActionForKeyId(event.logicalKey.keyId);
+    if (action == null) return KeyEventResult.ignored;
+    switch (action) {
+      case ControllerAction.playPause:
+        unawaited(_togglePlay());
+      case ControllerAction.next:
+        unawaited(_next());
+      case ControllerAction.previous:
+        unawaited(_previous());
+      case ControllerAction.seekForward:
+        unawaited(_seekCurrent(
+          (_position + const Duration(seconds: 15)) > _duration
+              ? _duration
+              : _position + const Duration(seconds: 15),
+        ));
+      case ControllerAction.seekBackward:
+        unawaited(_seekCurrent(
+          (_position - const Duration(seconds: 15)) < Duration.zero
+              ? Duration.zero
+              : _position - const Duration(seconds: 15),
+        ));
+      case ControllerAction.mute:
+        final nextVolume = _volume > 0 ? 0.0 : 0.82;
+        setState(() => _volume = nextVolume);
+        unawaited(_player.setVolume(_volumeFor(_current)));
+        unawaited(_dspPlayer.setVolume(_volumeFor(_current)));
+        unawaited(_saveQueue());
+      case ControllerAction.toggleOverlay:
+        setState(() => _controllerOverlayVisible = !_controllerOverlayVisible);
+    }
+    return KeyEventResult.handled;
+  }
+
+  Widget _controllerOverlay() => Align(
+    alignment: Alignment.bottomRight,
+    child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Card(
+        color: const Color(0xee171421),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Previous',
+                onPressed: _previous,
+                icon: const Icon(Icons.skip_previous),
+              ),
+              IconButton(
+                tooltip: _isPlaying ? 'Pause' : 'Play',
+                onPressed: _togglePlay,
+                icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+              ),
+              IconButton(
+                tooltip: 'Next',
+                onPressed: _next,
+                icon: const Icon(Icons.skip_next),
+              ),
+              IconButton(
+                tooltip: 'Close controller overlay',
+                onPressed: () => setState(() => _controllerOverlayVisible = false),
+                icon: const Icon(Icons.close),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+
   @override
-  Widget build(BuildContext context) => Shortcuts(
+  Widget build(BuildContext context) => Focus(
+    focusNode: _controllerFocusNode,
+    autofocus: true,
+    onKeyEvent: _handleControllerKey,
+    child: Shortcuts(
     shortcuts: const <ShortcutActivator, Intent>{
       SingleActivator(LogicalKeyboardKey.space): _TogglePlayIntent(),
       SingleActivator(LogicalKeyboardKey.arrowRight): _NextTrackIntent(),
@@ -9256,21 +9337,27 @@ class _PlayerPageState extends State<PlayerPage>
       },
       child: Scaffold(
         body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 600;
-              return Column(
-                children: [
-                  _topBar(compact),
-                  Expanded(child: compact ? _compactLayout() : _wideLayout()),
-                  _bottomPlayer(),
-                ],
-              );
-            },
+          child: Stack(
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 600;
+                  return Column(
+                    children: [
+                      _topBar(compact),
+                      Expanded(child: compact ? _compactLayout() : _wideLayout()),
+                      _bottomPlayer(),
+                    ],
+                  );
+                },
+              ),
+              if (_controllerOverlayVisible) _controllerOverlay(),
+            ],
           ),
         ),
       ),
     ),
+  ),
   );
 
   Widget _topBar(bool compact) => Padding(
