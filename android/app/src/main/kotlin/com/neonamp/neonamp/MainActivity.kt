@@ -14,6 +14,7 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.net.Uri
+import android.media.AudioManager
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -204,6 +205,26 @@ class MainActivity : AudioServiceActivity() {
                     if (!converted) File(outputPath).delete()
                     runOnUiThread { result.success(converted) }
                 }.start()
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/output")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "getStatus") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val sampleRate = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
+                    ?.toIntOrNull()
+                val bufferFrames = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)
+                    ?.toIntOrNull()
+                result.success(
+                    mapOf(
+                        "backend" to "Android AudioTrack",
+                        "sampleRate" to sampleRate,
+                        "bufferFrames" to bufferFrames,
+                        "formatKnown" to (sampleRate != null),
+                    ),
+                )
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/system_controls")
             .setMethodCallHandler { call, result ->
