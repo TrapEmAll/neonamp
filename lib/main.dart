@@ -4505,9 +4505,10 @@ class _PlayerPageState extends State<PlayerPage>
           );
       });
       final track = _queue[index];
-      final resumePosition = restoreResumePosition(
-        _resumePositions[track.identityKey],
-      );
+      // Manual selection always starts from the beginning. Resume positions are
+      // retained only as transient playback state and must not change the
+      // semantics of selecting a track.
+      _resumePositions.remove(track.identityKey);
       await _ensureLoudnessMeasured(track);
       final trackVolume = _volumeFor(track);
       String? renderedMidiPath;
@@ -4626,8 +4627,10 @@ class _PlayerPageState extends State<PlayerPage>
           await _player.setPlaybackRate(_bitPerfectMode ? 1.0 : _playbackSpeed);
         }
       }
-      if (resumePosition != null || track.cueStartMs != null) {
-        await _seekCurrent(resumePosition ?? Duration.zero);
+      // A cue track still needs its cue offset applied, but ordinary tracks
+      // must start at zero on every explicit selection.
+      if (track.cueStartMs != null) {
+        await _seekCurrent(Duration.zero);
       }
       await _saveQueue();
       _scrobbledTrackIdentity = null;
@@ -4700,10 +4703,9 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _togglePlay() async {
-    if (_current == null) {
-      await _addFiles();
-      return;
-    }
+    // Importing files is an explicit action. The play/pause control must never
+    // open the Android file picker when there is no active queue item.
+    if (_current == null) return;
     if (_isPlaying) {
       await _pauseCurrent();
     } else if (_playerState == PlayerState.paused) {
