@@ -41,7 +41,10 @@ dependencies:
   audio_metadata_reader: ^1.8.0
   audio_service: ^0.18.19
   flutter_soloud: ^5.1.2
-  ffmpeg_kit_flutter_new_audio: ^2.5.2
+  ffmpeg_kit_flutter_new:
+    git:
+      url: https://github.com/sk3llo/ffmpeg_kit_flutter.git
+      ref: 015b53e9a013cbdcd3ab1ff9d2d3b06f68238038
   path_provider: ^2.1.5
   video_player: ^2.14.0
   video_player_win: ^3.3.0
