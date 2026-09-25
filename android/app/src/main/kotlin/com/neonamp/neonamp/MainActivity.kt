@@ -301,9 +301,16 @@ class MainActivity : AudioServiceActivity() {
                         continue
                     }
                     val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                    if (extension !in audioExtensions) continue
+                    val mimeType = cursor.getString(mimeColumn)?.lowercase(Locale.ROOT).orEmpty()
+                    // Some Android document providers expose media with a
+                    // generic or missing filename extension. Keep the
+                    // extension check for containers such as MP4, but use the
+                    // provider MIME type as a fallback for audio-only files.
+                    val isAudioMime = mimeType.startsWith("audio/") || mimeType == "application/ogg"
+                    if (extension !in audioExtensions && !isAudioMime) continue
                     val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
-                    val cacheName = sha256(documentUri.toString()) + "." + extension
+                    val cacheExtension = if (extension in audioExtensions) extension else "audio"
+                    val cacheName = sha256(documentUri.toString()) + "." + cacheExtension
                     val cachedFile = File(cacheDirectory, cacheName)
                     val sourceSize = if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) cursor.getLong(sizeColumn) else -1L
                     val sourceModified = if (modifiedColumn >= 0 && !cursor.isNull(modifiedColumn)) cursor.getLong(modifiedColumn) else -1L
