@@ -94,7 +94,7 @@ jobs:
       - name: Build Android release
         run: |
           for attempt in 1 2 3; do
-            flutter build apk --release && exit 0
+            flutter build apk --release --target-platform android-arm,android-arm64 && exit 0
             if [ "$attempt" -lt 3 ]; then
               echo "Android build attempt $attempt failed; retrying dependency resolution..."
               sleep 15

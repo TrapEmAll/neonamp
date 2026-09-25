@@ -28,6 +28,11 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
+        // NeonAmp ships ARM-only Android binaries; x86 is reserved for emulator builds.
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
+
         externalNativeBuild {
             cmake {
                 cppFlags += "-std=c++17"
