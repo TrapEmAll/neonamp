@@ -4013,7 +4013,6 @@ class _PlayerPageState extends State<PlayerPage>
     if (oldIndex == newIndex || oldIndex < 0 || newIndex < 0) return;
     final selectedPath = _current?.path;
     setState(() {
-      if (newIndex > oldIndex) newIndex -= 1;
       final track = _queue.removeAt(oldIndex);
       _queue.insert(newIndex.clamp(0, _queue.length), track);
       final selectedIndex = selectedPath == null
@@ -4897,6 +4896,7 @@ class _PlayerPageState extends State<PlayerPage>
           });
         }
       }
+      if (!mounted) return;
       final selection = await showDialog<Map<String, dynamic>>(
         context: context,
         builder: (context) => SimpleDialog(
@@ -5401,6 +5401,7 @@ class _PlayerPageState extends State<PlayerPage>
       _selectedLibraryPaths.clear();
     });
     await _saveQueue();
+    if (!mounted) return;
     if (failedCount > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$updatedCount updated; $failedCount failed.')),
@@ -6233,6 +6234,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _createPlaylist();
       if (_playlists.isEmpty) return;
     }
+    if (!mounted) return;
     final name = await showDialog<String>(
       context: context,
       builder: (context) => SimpleDialog(
@@ -6544,8 +6546,7 @@ class _PlayerPageState extends State<PlayerPage>
                 const SizedBox(height: 8),
                 Expanded(
                   child: ReorderableListView(
-                    onReorder: (oldIndex, newIndex) {
-                      if (newIndex > oldIndex) newIndex--;
+                    onReorderItem: (oldIndex, newIndex) {
                       final control = draft.removeAt(oldIndex);
                       draft.insert(newIndex, control);
                       resetToDefault = false;
@@ -7415,7 +7416,7 @@ class _PlayerPageState extends State<PlayerPage>
               : ReorderableListView.builder(
                   padding: const EdgeInsets.only(bottom: 12),
                   itemCount: _queue.length,
-                  onReorder: _reorderQueue,
+                  onReorderItem: _reorderQueue,
                   itemBuilder: (_, index) => _queueItem(index),
                 ),
         ),
