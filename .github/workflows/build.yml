@@ -8,7 +8,7 @@ on:
 
 jobs:
   analyze-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -48,7 +48,7 @@ jobs:
         run: ctest --test-dir build/windows/x64/runner/tracker -C Release --output-on-failure
 
   build-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GRADLE_OPTS: -Dorg.gradle.vfs.watch=false
     steps:
