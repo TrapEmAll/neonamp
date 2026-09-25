@@ -11,6 +11,7 @@ bool hasCustomFrequencyLayout(List<double> frequencies) {
 String buildFfmpegParametricEqFilter({
   required List<double> frequencies,
   required List<double> gains,
+  double q = 1,
 }) {
   if (frequencies.length != gains.length || frequencies.isEmpty) {
     throw ArgumentError('EQ frequencies and gains must have equal non-zero lengths.');
@@ -22,7 +23,12 @@ String buildFfmpegParametricEqFilter({
     if (!frequency.isFinite || frequency < 20 || frequency > 20000 || !gain.isFinite) continue;
     final clampedGain = gain.clamp(-12.0, 12.0).toDouble();
     if (clampedGain.abs() < 0.001) continue;
-    filters.add('equalizer=f=${_format(frequency)}:t=q:w=1:g=${_format(clampedGain)}');
+    if (!q.isFinite || q < 0.1 || q > 10) {
+      throw ArgumentError.value(q, 'q', 'must be between 0.1 and 10');
+    }
+    filters.add(
+      'equalizer=f=' + _format(frequency) + ':t=q:w=' + _format(q) + ':g=' + _format(clampedGain),
+    );
   }
   return filters.isEmpty ? 'anull' : filters.join(',');
 }
