@@ -9087,18 +9087,33 @@ class _PlayerPageState extends State<PlayerPage>
     } on Object {
       info = null;
     }
+    Map<String, dynamic>? nativeOutput;
+    try {
+      final rawOutput = await const MethodChannel('neonamp/output')
+          .invokeMethod<Object?>('getStatus');
+      if (rawOutput is Map) {
+        nativeOutput = Map<String, dynamic>.from(rawOutput);
+      }
+    } on PlatformException {
+      nativeOutput = null;
+    } on MissingPluginException {
+      nativeOutput = null;
+    }
     if (!mounted) return;
     final outputStatus = AudioOutputStatus(
-      backend: _casting
+      backend: nativeOutput?['backend'] as String? ??
+          (_casting
           ? 'Network cast'
           : _midiActive
           ? 'MIDI backend'
           : _dspActive
           ? 'NeonAmp DSP backend'
-          : 'Native audio backend',
+          : 'Native audio backend'),
       bitPerfectRequested: _bitPerfectMode,
       softwareDspActive: _dspActive,
       sourceFormat: info,
+      hardwareSampleRate: (nativeOutput?['sampleRate'] as num?)?.toInt(),
+      hardwareBitDepth: (nativeOutput?['bitDepth'] as num?)?.toInt(),
     );
     await showDialog<void>(
       context: context,
@@ -9107,7 +9122,7 @@ class _PlayerPageState extends State<PlayerPage>
         content: Text(
           info == null
               ? 'The active decoder did not expose format details for this file.\n\n${outputStatus.summary}'
-              : '${info.summary}\n\n${outputStatus.summary}\n\nSource metadata does not prove hardware-exclusive output or DAC sample-rate lock.',
+              : '${info.summary}\n\n${outputStatus.summary}\n\nThe platform reports its active output mix format; this does not prove exclusive-mode routing or DAC sample-rate lock.',
         ),
         actions: [
           TextButton(
