@@ -70,6 +70,20 @@ Map<String, List<double>> decodeCustomEqualizerFrequencies(Object? value) {
   return frequencies;
 }
 
+Map<String, double> decodeCustomEqualizerQ(Object? value) {
+  if (value is! Map) return {};
+  final qValues = <String, double>{};
+  for (final entry in value.entries) {
+    final name = entry.key.toString().trim();
+    final raw = entry.value;
+    if (name.isEmpty || raw is! num || !raw.isFinite) continue;
+    final q = raw.toDouble();
+    if (q < 0.1 || q > 10) continue;
+    qValues[name] = q;
+  }
+  return qValues;
+}
+
 bool canSaveEqualizerPresetName(
   String name, {
   Iterable<String> reservedNames = const [],
