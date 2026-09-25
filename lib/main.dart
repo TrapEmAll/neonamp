@@ -7487,9 +7487,7 @@ class _PlayerPageState extends State<PlayerPage>
         _dspPlayer.applyEqualizer(
           enabled: true,
           bands: _eqBands,
-          frequencies: _eqFrequencies,
-          q: _eqQ,
-        );
+          frequencies: _eqFrequencies,        );
       }
       await _saveQueue();
       if (!mounted) return;
@@ -8809,9 +8807,7 @@ class _PlayerPageState extends State<PlayerPage>
                               _dspPlayer.applyEqualizer(
                                 enabled: _equalizerEnabled,
                                 bands: _eqBands,
-                                frequencies: _eqFrequencies,
-          q: _eqQ,
-                              );
+                                frequencies: _eqFrequencies,                              );
                             }
                             setDialogState(() {});
                           },
