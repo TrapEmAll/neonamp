@@ -18,3 +18,15 @@ void main() {
     expect(filter, 'equalizer=f=1000:t=q:w=1:g=-12');
   });
 }
+
+
+test('parametric Q is validated', () {
+  expect(
+    () => buildFfmpegParametricEqFilter(
+      frequencies: [1000],
+      gains: [3],
+      q: 0.05,
+    ),
+    throwsArgumentError,
+  );
+});
