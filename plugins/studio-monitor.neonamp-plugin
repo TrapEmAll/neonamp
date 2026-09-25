@@ -1,0 +1,23 @@
+{
+  "id": "community.studio-monitor",
+  "name": "Studio Monitor",
+  "version": "1.0.0",
+  "description": "Neutral monitoring with controlled low-end and presence.",
+  "capabilities": [
+    "equalizer-presets"
+  ],
+  "equalizerPresets": {
+    "Studio Monitor": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  }
+}

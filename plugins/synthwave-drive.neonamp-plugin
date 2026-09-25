@@ -1,0 +1,35 @@
+{
+  "id": "community.synthwave-drive",
+  "name": "Synthwave Drive",
+  "version": "1.0.0",
+  "description": "Wide bass and bright treble for electronic music.",
+  "capabilities": [
+    "equalizer-presets",
+    "audio-effects"
+  ],
+  "equalizerPresets": {
+    "Synthwave Drive": [
+      3,
+      2,
+      1,
+      0,
+      1,
+      2,
+      3,
+      4,
+      3,
+      2
+    ]
+  },
+  "audioEffects": [
+    {
+      "type": "echo",
+      "parameters": {
+        "wet": 0.08,
+        "delay": 0.12,
+        "decay": 0.25,
+        "filter": 0.2
+      }
+    }
+  ]
+}

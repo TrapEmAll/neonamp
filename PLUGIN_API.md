@@ -20,3 +20,8 @@ NeonAmp plugins are JSON packages so the same extension can be imported on Windo
 `id` may contain letters, numbers, dots, underscores, and hyphens. Each equalizer preset must contain ten values between -12 and +12 dB. Invalid packages are rejected before they are saved.
 
 Installed plugins can be enabled, disabled, or removed from the Plugins panel. Enabled preset contributions appear alongside NeonAmp's built-in equalizer presets.
+
+
+## Included starter packs
+
+The `plugins/` directory contains ten portable starter packs. Import any `.neonamp-plugin` file from the Plugins panel on Windows or Android; they use only the validated EQ and effect capabilities described above.

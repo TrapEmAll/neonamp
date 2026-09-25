@@ -1,0 +1,36 @@
+{
+  "id": "community.classical-hall",
+  "name": "Classical Hall",
+  "version": "1.0.0",
+  "description": "Open highs and spacious hall-style ambience.",
+  "capabilities": [
+    "equalizer-presets",
+    "audio-effects"
+  ],
+  "equalizerPresets": {
+    "Classical Hall": [
+      0,
+      0,
+      0,
+      1,
+      1,
+      2,
+      3,
+      3,
+      2,
+      1
+    ]
+  },
+  "audioEffects": [
+    {
+      "type": "reverb",
+      "parameters": {
+        "wet": 0.2,
+        "freeze": 0.05,
+        "roomSize": 0.55,
+        "damp": 0.35,
+        "width": 1
+      }
+    }
+  ]
+}

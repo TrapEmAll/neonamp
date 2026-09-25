@@ -1,0 +1,23 @@
+{
+  "id": "community.vocal-clarity",
+  "name": "Vocal Clarity",
+  "version": "1.0.0",
+  "description": "Presence-focused tuning for speech and vocals.",
+  "capabilities": [
+    "equalizer-presets"
+  ],
+  "equalizerPresets": {
+    "Vocal Clarity": [
+      -2,
+      -1,
+      0,
+      2,
+      4,
+      3,
+      1,
+      0,
+      0,
+      0
+    ]
+  }
+}
