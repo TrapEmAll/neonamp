@@ -2042,7 +2042,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _broadcast();
   }
 
-  Future<void> playTrack(Track track) async {
+  Future<void> playTrack(Track track, {double? playbackSpeed}) async {
+    if (playbackSpeed != null) {
+      _playbackSpeed = normalizePlaybackSpeed(playbackSpeed);
+    }
     await player.stop();
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
@@ -2302,6 +2305,10 @@ class _PlayerPageState extends State<PlayerPage>
   StreamSubscription<Duration>? _dspDurationSub;
   StreamSubscription<PlayerState>? _dspStateSub;
   StreamSubscription<void>? _dspCompleteSub;
+  StreamSubscription<Duration>? _midiPositionSub;
+  StreamSubscription<Duration>? _midiDurationSub;
+  StreamSubscription<PlayerState>? _midiStateSub;
+  StreamSubscription<void>? _midiCompleteSub;
   Duration _position = Duration.zero;
   Duration _duration = const Duration(minutes: 4, seconds: 12);
   PlayerState _playerState = PlayerState.stopped;
@@ -2514,22 +2521,26 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   void _bindMidiStreams() {
-    _midiPlayer.onPositionChanged.listen((value) {
+    _midiPositionSub?.cancel();
+    _midiDurationSub?.cancel();
+    _midiStateSub?.cancel();
+    _midiCompleteSub?.cancel();
+    _midiPositionSub = _midiPlayer.onPositionChanged.listen((value) {
       if (!mounted || !_midiActive || _selectionInProgress) return;
       setState(() => _position = value);
       _rememberResumePosition(value);
     });
-    _midiPlayer.onDurationChanged.listen((value) {
+    _midiDurationSub = _midiPlayer.onDurationChanged.listen((value) {
       if (!mounted || !_midiActive) return;
       setState(() => _duration = value);
       unawaited(_syncWindowsMediaSession());
     });
-    _midiPlayer.onPlayerStateChanged.listen((value) {
+    _midiStateSub = _midiPlayer.onPlayerStateChanged.listen((value) {
       if (!mounted || !_midiActive) return;
       setState(() => _playerState = value);
       unawaited(_syncWindowsMediaSession());
     });
-    _midiPlayer.onPlayerComplete.listen((_) {
+    _midiCompleteSub = _midiPlayer.onPlayerComplete.listen((_) {
       if (_midiActive) unawaited(_handleComplete());
     });
   }
@@ -2752,6 +2763,7 @@ class _PlayerPageState extends State<PlayerPage>
       _castPositionTimer?.cancel();
       await _dlnaCast.stop();
       if (mounted) setState(() => _playerState = PlayerState.stopped);
+      return;
     }
     if (_midiActive) {
       await _midiPlayer.stop();
@@ -3053,45 +3065,53 @@ class _PlayerPageState extends State<PlayerPage>
         }
       }
       if (savedSettings != null) {
-        final settings = jsonDecode(savedSettings) as Map<String, dynamic>;
-        final savedRelativePaths = settings['libraryRelativePaths'];
-        if (savedRelativePaths is Map) {
-          _libraryRelativePaths.addAll(
-            savedRelativePaths.map(
-              (key, value) => MapEntry(key.toString(), value.toString()),
-            ),
-          );
-        }
-        _volume = (settings['volume'] as num?)?.toDouble() ?? _volume;
-        _balance = normalizeStereoBalance(
-          (settings['balance'] as num?)?.toDouble() ?? _balance,
-        );
-        _crossfade = settings['crossfade'] as bool? ?? false;
-        _crossfadeSeconds =
-            (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
-        _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
-        _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
-        _playbackSpeed = normalizePlaybackSpeed(
-          (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0,
-        );
-        _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
-        final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
-        _sleepDeadline = sleepTimerEnd == null
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(sleepTimerEnd);
-        _librarySort = settings['librarySort'] as String? ?? 'Added';
-        _librarySortDescending =
-            settings['librarySortDescending'] as bool? ?? false;
-        final savedPlayerControls = settings['playerControls'];
-        if (savedPlayerControls is List) {
-          _playerControls = normalizePlayerControls(savedPlayerControls);
-          _playerLayoutCustomized = true;
-        }
-        final savedBands = (settings['eqBands'] as List?)?.cast<num>();
-        if (savedBands != null && savedBands.length == _eqBands.length) {
-          for (var i = 0; i < _eqBands.length; i++) {
-            _eqBands[i] = savedBands[i].toDouble();
+        try {
+          final decodedSettings = jsonDecode(savedSettings);
+          if (decodedSettings is! Map) {
+            throw const FormatException('Saved settings are not an object.');
           }
+          final settings = Map<String, dynamic>.from(decodedSettings);
+          final savedRelativePaths = settings['libraryRelativePaths'];
+          if (savedRelativePaths is Map) {
+            _libraryRelativePaths.addAll(
+              savedRelativePaths.map(
+                (key, value) => MapEntry(key.toString(), value.toString()),
+              ),
+            );
+          }
+          _volume = (settings['volume'] as num?)?.toDouble() ?? _volume;
+          _balance = normalizeStereoBalance(
+            (settings['balance'] as num?)?.toDouble() ?? _balance,
+          );
+          _crossfade = settings['crossfade'] as bool? ?? false;
+          _crossfadeSeconds =
+              (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
+          _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
+          _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+          _playbackSpeed = normalizePlaybackSpeed(
+            (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0,
+          );
+          _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
+          final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
+          _sleepDeadline = sleepTimerEnd == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(sleepTimerEnd);
+          _librarySort = settings['librarySort'] as String? ?? 'Added';
+          _librarySortDescending =
+              settings['librarySortDescending'] as bool? ?? false;
+          final savedPlayerControls = settings['playerControls'];
+          if (savedPlayerControls is List) {
+            _playerControls = normalizePlayerControls(savedPlayerControls);
+            _playerLayoutCustomized = true;
+          }
+          final savedBands = (settings['eqBands'] as List?)?.cast<num>();
+          if (savedBands != null && savedBands.length == _eqBands.length) {
+            for (var i = 0; i < _eqBands.length; i++) {
+              _eqBands[i] = savedBands[i].toDouble();
+            }
+          }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid saved settings: $error');
         }
       }
     });
@@ -3759,7 +3779,7 @@ class _PlayerPageState extends State<PlayerPage>
         await _player.setBalance(_balance);
         await _player.setVolume(trackVolume);
         if (_audioHandler != null) {
-          await _audioHandler!.playTrack(track);
+          await _audioHandler!.playTrack(track, playbackSpeed: _playbackSpeed);
         } else {
           await _player.stop();
           await _player.play(
@@ -3855,7 +3875,7 @@ class _PlayerPageState extends State<PlayerPage>
         _position = Duration.zero;
         _playHistory
           ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.path));
+          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
         final libraryIndex = _library.indexWhere(
           (item) => item.path == track.path,
         );
@@ -3918,7 +3938,7 @@ class _PlayerPageState extends State<PlayerPage>
         _position = Duration.zero;
         _playHistory
           ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.path));
+          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
         final libraryIndex = _library.indexWhere(
           (item) => item.path == track.path,
         );
@@ -6772,6 +6792,10 @@ class _PlayerPageState extends State<PlayerPage>
     _durationSub?.cancel();
     _stateSub?.cancel();
     _completeSub?.cancel();
+    _midiPositionSub?.cancel();
+    _midiDurationSub?.cancel();
+    _midiStateSub?.cancel();
+    _midiCompleteSub?.cancel();
     _searchController.dispose();
     _pulse.dispose();
     _player.dispose();
