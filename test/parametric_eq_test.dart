@@ -23,7 +23,7 @@ void main() {
       gains: [3],
       q: 1.75,
     );
-    expect(filter, 'equalizer=f=1000:t=q:w=1.75:g=3');
+    expect(filter, 'equalizer=f=1000:t=q:w=1.750:g=3');
   });
 
   test('parametric Q is validated', () {
