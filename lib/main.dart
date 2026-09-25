@@ -2506,6 +2506,7 @@ class _PlayerPageState extends State<PlayerPage>
   double _eqQ = 1.0;
   final Map<String, List<double>> _customEqPresets = {};
   final Map<String, List<double>> _customEqFrequencies = {};
+  final Map<String, double> _customEqQ = {};
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
   bool _cueTransitioning = false;
@@ -3664,6 +3665,7 @@ class _PlayerPageState extends State<PlayerPage>
         _customEqFrequencies.addAll(
           decodeCustomEqualizerFrequencies(settings['customEqFrequencies']),
         );
+        _customEqQ.addAll(decodeCustomEqualizerQ(settings['customEqQ']));
         _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         _r128NormalizationEnabled = settings['r128NormalizationEnabled'] as bool? ?? false;
@@ -3778,6 +3780,7 @@ class _PlayerPageState extends State<PlayerPage>
         'eqFrequencies': _eqFrequencies,
         'customEqPresets': _customEqPresets,
         'customEqFrequencies': _customEqFrequencies,
+        'customEqQ': _customEqQ,
         'playbackSpeed': _playbackSpeed,
         'replayGainEnabled': _replayGainEnabled,
         'r128NormalizationEnabled': _r128NormalizationEnabled,
@@ -4945,6 +4948,8 @@ class _PlayerPageState extends State<PlayerPage>
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
+        frequencies: _eqFrequencies,
+        q: _eqQ,
 
         preamp: _eqPreamp,
         truePeakLimiterEnabled: _truePeakLimiterEnabled,
@@ -7475,6 +7480,7 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() {
         _customEqPresets[name] = profile.gains;
         _customEqFrequencies[name] = List<double>.from(profile.frequencies);
+        _customEqQ[name] = 1.0;
         _eqPreset = name;
         _eqBands.setAll(0, profile.gains);
         _eqFrequencies
@@ -8701,6 +8707,7 @@ class _PlayerPageState extends State<PlayerPage>
     setState(() {
       _customEqPresets[storedName] = List<double>.from(_eqBands);
       _customEqFrequencies[storedName] = List<double>.from(_eqFrequencies);
+      _customEqQ[storedName] = _eqQ;
       _eqPreset = storedName;
     });
     if (!_equalizerEnabled && !_midiEqualizerUnavailable) {
@@ -8792,6 +8799,7 @@ class _PlayerPageState extends State<PlayerPage>
                                   _customEqFrequencies[value] ??
                                       autoEqCenterFrequencies,
                                 );
+                              _eqQ = _customEqQ[value] ?? 1.0;
                               _eqBands.setAll(
                                 0,
                                 equalizerPresetBands(
