@@ -123,6 +123,8 @@ int nextQueueIndex({
 
 double normalizeStereoBalance(double balance) => balance.clamp(-1.0, 1.0);
 
+double normalizePlaybackSpeed(double speed) => speed.clamp(0.5, 2.0).toDouble();
+
 String stereoBalanceLabel(double balance) {
   final normalized = normalizeStereoBalance(balance);
   if (normalized == 0) return 'Center';
@@ -2793,7 +2795,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       return;
     }
-    final value = speed.clamp(0.5, 2.0).toDouble();
+    final value = normalizePlaybackSpeed(speed);
     setState(() => _playbackSpeed = value);
     if (_current != null) {
       if (_dspActive) {
@@ -2811,8 +2813,13 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _setEqualizerEnabled(bool enabled) async {
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
+    final current = _current;
+    final needsLocalDsp =
+        current != null &&
+        !current.path.startsWith('http') &&
+        !isMidiFilePath(current.path);
     setState(() => _equalizerEnabled = enabled);
-    if (_current != null && (wasPlaying || _dspActive)) {
+    if (current != null && (wasPlaying || _dspActive || needsLocalDsp)) {
       await _select(_selected);
       if (previousPosition > Duration.zero) {
         await _seekCurrent(previousPosition);
@@ -3064,7 +3071,9 @@ class _PlayerPageState extends State<PlayerPage>
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
-        _playbackSpeed = (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0;
+        _playbackSpeed = normalizePlaybackSpeed(
+          (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0,
+        );
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
@@ -3185,8 +3194,18 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       final directory = await _pickFolderLocation('Choose a music folder');
       if (directory == null) return;
+      final scanned = await _scanFolder(directory);
+      if (scanned == 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No supported audio files found in that folder.'),
+            ),
+          );
+        }
+        return;
+      }
       if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
-      await _scanFolder(directory);
       await _saveQueue();
     } on Object catch (error) {
       if (!mounted) return;
@@ -3236,7 +3255,7 @@ class _PlayerPageState extends State<PlayerPage>
         .writeAsString(contents);
   }
 
-  Future<void> _scanFolder(String directory) async {
+  Future<int> _scanFolder(String directory) async {
     final List<({String path, String name, String relativePath})> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
@@ -3277,13 +3296,14 @@ class _PlayerPageState extends State<PlayerPage>
       final alreadyInLibrary = _library.any((track) => track.path == file.path);
       if (alreadyQueued && alreadyInLibrary) continue;
       final track = await _readTrack(file.path, file.name);
-      if (!mounted) return;
+      if (!mounted) return 0;
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
         if (!alreadyQueued) _queue.add(track);
         if (!alreadyInLibrary) _library.add(track);
       });
     }
+    return files.length;
   }
 
   Future<void> _rescanFolders() async {

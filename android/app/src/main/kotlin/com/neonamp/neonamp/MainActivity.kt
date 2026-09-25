@@ -309,7 +309,22 @@ class MainActivity : AudioServiceActivity() {
                     val isAudioMime = mimeType.startsWith("audio/") || mimeType == "application/ogg"
                     if (extension !in audioExtensions && !isAudioMime) continue
                     val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
-                    val cacheExtension = if (extension in audioExtensions) extension else "audio"
+                    val cacheExtension = if (extension in audioExtensions) {
+                        extension
+                    } else {
+                        when (mimeType) {
+                            "audio/mpeg", "audio/mp3" -> "mp3"
+                            "audio/flac", "audio/x-flac" -> "flac"
+                            "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
+                            "audio/ogg", "application/ogg" -> "ogg"
+                            "audio/mp4", "audio/x-m4a" -> "m4a"
+                            "audio/aac", "audio/x-aac" -> "aac"
+                            "audio/opus" -> "opus"
+                            "audio/aiff", "audio/x-aiff" -> "aiff"
+                            "audio/x-ms-wma" -> "wma"
+                            else -> "bin"
+                        }
+                    }
                     val cacheName = sha256(documentUri.toString()) + "." + cacheExtension
                     val cachedFile = File(cacheDirectory, cacheName)
                     val sourceSize = if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) cursor.getLong(sizeColumn) else -1L

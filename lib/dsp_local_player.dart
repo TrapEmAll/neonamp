@@ -187,6 +187,7 @@ class DspLocalPlayer {
     final source = _source;
     if (source == null) return;
     final equalizer = source.filters.parametricEqFilter;
+    equalizer.activate();
     equalizer.numBands().value = bands.length.toDouble();
     for (var index = 0; index < bands.length; index++) {
       final gain = enabled ? dspGainForDb(bands[index]) : 1.0;

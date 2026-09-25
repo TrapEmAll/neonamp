@@ -533,6 +533,12 @@ FILE "disc image.flac" WAVE
     expect(stereoBalanceLabel(.5), 'Right 50%');
   });
 
+  test('playback speed clamps invalid persisted values', () {
+    expect(normalizePlaybackSpeed(0.1), 0.5);
+    expect(normalizePlaybackSpeed(1.25), 1.25);
+    expect(normalizePlaybackSpeed(4), 2.0);
+  });
+
   test('video queue wraps in both directions and filters extensions', () {
     expect(wrappedVideoIndex(3, 3), 0);
     expect(wrappedVideoIndex(-1, 3), 2);
