@@ -2503,6 +2503,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<double> _eqBands = List<double>.filled(10, 0);
   final List<double> _eqFrequencies = List<double>.from(autoEqCenterFrequencies);
   double _eqPreamp = 0;
+  double _eqQ = 1.0;
   final Map<String, List<double>> _customEqPresets = {};
   final Map<String, List<double>> _customEqFrequencies = {};
   String _eqPreset = 'Flat';
@@ -3654,6 +3655,7 @@ class _PlayerPageState extends State<PlayerPage>
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _eqPreamp = ((settings['eqPreamp'] as num?)?.toDouble() ?? 0).clamp(-12, 12).toDouble();
+        _eqQ = ((settings['eqQ'] as num?)?.toDouble() ?? 1).clamp(0.1, 10).toDouble();
         _midiSoundFontPath = settings['midiSoundFontPath'] as String?;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
         _customEqPresets.addAll(
@@ -3769,6 +3771,7 @@ class _PlayerPageState extends State<PlayerPage>
         'crossfadeSeconds': _crossfadeSeconds,
         'equalizerEnabled': _equalizerEnabled,
         'eqPreamp': _eqPreamp,
+        'eqQ': _eqQ,
         'midiSoundFontPath': _midiSoundFontPath,
         'eqPreset': _eqPreset,
         'eqBands': _eqBands,
@@ -4588,6 +4591,7 @@ class _PlayerPageState extends State<PlayerPage>
           equalizerEnabled: _equalizerEnabled,
           bands: _eqBands,
           frequencies: _eqFrequencies,
+          q: _eqQ,
           convolutionImpulsePath: _convolutionImpulsePath,
           preamp: _eqPreamp,
           truePeakLimiterEnabled: _truePeakLimiterEnabled,
@@ -4829,6 +4833,7 @@ class _PlayerPageState extends State<PlayerPage>
         equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
         frequencies: _eqFrequencies,
+          q: _eqQ,
         convolutionImpulsePath: _convolutionImpulsePath,
 
         preamp: _eqPreamp,
@@ -7483,6 +7488,7 @@ class _PlayerPageState extends State<PlayerPage>
           enabled: true,
           bands: _eqBands,
           frequencies: _eqFrequencies,
+          q: _eqQ,
         );
       }
       await _saveQueue();
@@ -8804,6 +8810,7 @@ class _PlayerPageState extends State<PlayerPage>
                                 enabled: _equalizerEnabled,
                                 bands: _eqBands,
                                 frequencies: _eqFrequencies,
+          q: _eqQ,
                               );
                             }
                             setDialogState(() {});
@@ -8829,6 +8836,34 @@ class _PlayerPageState extends State<PlayerPage>
                        ),
                        Text(
                          '${_eqPreamp >= 0 ? '+' : ''}${_eqPreamp.toStringAsFixed(1)} dB',
+                         style: const TextStyle(color: Colors.white54),
+                       ),
+                     ],
+                   ),
+                   const SizedBox(height: 4),
+                   Row(
+                     children: [
+                       const Text('Q', style: TextStyle(color: Colors.white54)),
+                       Expanded(
+                         child: Slider(
+                           value: _eqQ,
+                           min: 0.1,
+                           max: 10,
+                           divisions: 99,
+                           label: _eqQ.toStringAsFixed(2),
+                           onChanged: _equalizerEnabled
+                               ? (value) {
+                                   setState(() => _eqQ = value);
+                                   if (_dspActive) {
+                                     unawaited(_select(_selected));
+                                   }
+                                   setDialogState(() {});
+                                 }
+                               : null,
+                         ),
+                       ),
+                       Text(
+                         _eqQ.toStringAsFixed(2),
                          style: const TextStyle(color: Colors.white54),
                        ),
                      ],
