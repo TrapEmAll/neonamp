@@ -17,16 +17,23 @@ void main() {
     final filter = buildFfmpegParametricEqFilter(frequencies: [10, 1000, 30000], gains: [20, -20, 4]);
     expect(filter, 'equalizer=f=1000:t=q:w=1:g=-12');
   });
-}
-
-
-test('parametric Q is validated', () {
-  expect(
-    () => buildFfmpegParametricEqFilter(
+  test('builds a custom Q value', () {
+    final filter = buildFfmpegParametricEqFilter(
       frequencies: [1000],
       gains: [3],
-      q: 0.05,
-    ),
-    throwsArgumentError,
-  );
-});
+      q: 1.75,
+    );
+    expect(filter, 'equalizer=f=1000:t=q:w=1.75:g=3');
+  });
+
+  test('parametric Q is validated', () {
+    expect(
+      () => buildFfmpegParametricEqFilter(
+        frequencies: [1000],
+        gains: [3],
+        q: 0.05,
+      ),
+      throwsArgumentError,
+    );
+  });
+}
