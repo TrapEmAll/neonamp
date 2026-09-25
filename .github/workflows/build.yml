@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -31,7 +31,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -57,7 +57,7 @@ jobs:
           & $iscc "/DAppVersion=$version" 'installer\neonamp.iss'
           Copy-Item -LiteralPath "release\NeonAmp-Setup-$version.exe" -Destination "NeonAmp-Setup-$version.exe"
       - name: Upload Windows release package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: NeonAmp-windows-x64
           path: |
@@ -76,7 +76,7 @@ jobs:
       GRADLE_OPTS: -Dorg.gradle.vfs.watch=false
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
@@ -102,7 +102,7 @@ jobs:
           done
           exit 1
       - name: Upload Android release package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: NeonAmp-android
           path: build/app/outputs/flutter-apk/app-release.apk
@@ -115,11 +115,11 @@ jobs:
       contents: write
     steps:
       - name: Download Windows package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: NeonAmp-windows-x64
       - name: Download Android package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: NeonAmp-android
           path: android
