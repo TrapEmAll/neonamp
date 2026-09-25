@@ -53,6 +53,18 @@ void main() {
     );
   });
 
+  test('saved parametric Q values are clamped by validation', () {
+    expect(
+      decodeCustomEqualizerQ({
+        'Headphones': 1.75,
+        'Invalid low': 0.05,
+        'Invalid high': 10.1,
+        'Invalid type': 'wide',
+      }),
+      {'Headphones': 1.75},
+    );
+  });
+
   test('custom preset names cannot shadow built-in or plugin presets', () {
     expect(canSaveEqualizerPresetName('  My curve  '), isTrue);
     expect(canSaveEqualizerPresetName(''), isFalse);
