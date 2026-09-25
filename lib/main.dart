@@ -3691,9 +3691,10 @@ class _PlayerPageState extends State<PlayerPage>
           );
       });
       final track = _queue[index];
-      final resumePosition = restoreResumePosition(
-        _resumePositions[track.identityKey],
-      );
+      // Selecting a track explicitly is a user request to start that track.
+      // Persisted positions are only playback bookkeeping and must not make a
+      // later manual selection unexpectedly resume in the middle.
+      _resumePositions.remove(track.identityKey);
       final trackVolume = _volumeFor(track);
       final shouldUseDsp =
           !track.path.startsWith('http') &&
@@ -3749,8 +3750,10 @@ class _PlayerPageState extends State<PlayerPage>
           await _player.setPlaybackRate(_playbackSpeed);
         }
       }
-      if (resumePosition != null || track.cueStartMs != null) {
-        await _seekCurrent(resumePosition ?? Duration.zero);
+      // Cue tracks still need their source cue offset applied. Ordinary tracks
+      // already start at zero after playTrack()/AudioPlayer.play().
+      if (track.cueStartMs != null) {
+        await _seekCurrent(Duration.zero);
       }
       await _saveQueue();
     } finally {
@@ -3769,10 +3772,9 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _togglePlay() async {
-    if (_current == null) {
-      await _addFiles();
-      return;
-    }
+    // Importing media is an explicit library action. The transport control
+    // must never open Android's file picker just because the queue is empty.
+    if (_current == null) return;
     if (_isPlaying) {
       await _pauseCurrent();
     } else if (_playerState == PlayerState.paused) {
