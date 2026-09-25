@@ -66,6 +66,7 @@ class DspLocalPlayer {
     required bool equalizerEnabled,
     required List<double> bands,
     List<double> frequencies = const [],
+    double q = 1,
     double preamp = 0,
     bool truePeakLimiterEnabled = true,
     List<PortableAudioEffect> effects = const [],
@@ -83,7 +84,7 @@ class DspLocalPlayer {
     final customFrequencyEq = equalizerEnabled &&
         !isTrackerModule &&
         bands.length == frequencies.length &&
-        hasCustomFrequencyLayout(frequencies);
+        (hasCustomFrequencyLayout(frequencies) || (q - 1).abs() > 0.001);
     if (isTrackerModule) {
       sourcePath =
           '${Directory.systemTemp.path}${Platform.pathSeparator}'
@@ -103,6 +104,7 @@ class DspLocalPlayer {
           path,
           frequencies: customFrequencyEq ? frequencies : const [],
           gains: customFrequencyEq ? bands : const [],
+          q: q,
           impulseResponsePath: hasConvolution ? convolutionImpulsePath : null,
         );
         sourcePath = transcodedAudioPath;
@@ -184,6 +186,7 @@ class DspLocalPlayer {
     String inputPath, {
     required List<double> frequencies,
     required List<double> gains,
+    double q = 1,
     String? impulseResponsePath,
   }) async {
     final outputPath = '${Directory.systemTemp.path}${Platform.pathSeparator}'
@@ -194,6 +197,7 @@ class DspLocalPlayer {
           : buildFfmpegParametricEqFilter(
               frequencies: frequencies,
               gains: gains,
+              q: q,
             );
       final arguments = <String>[
         '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', inputPath,
