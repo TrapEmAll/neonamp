@@ -9,6 +9,8 @@
 #include <vector>
 #include <string>
 
+#include <audioclient.h>
+#include <mmdeviceapi.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
@@ -204,6 +206,43 @@ std::string ToUtf8(const std::wstring& value) {
                       static_cast<int>(value.size()), result.data(), size,
                       nullptr, nullptr);
   return result;
+}
+
+flutter::EncodableMap GetDefaultAudioOutputStatus() {
+  flutter::EncodableMap status;
+  status[flutter::EncodableValue("backend")] =
+      flutter::EncodableValue("WASAPI shared");
+  IMMDeviceEnumerator* enumerator = nullptr;
+  IMMDevice* device = nullptr;
+  IAudioClient* client = nullptr;
+  WAVEFORMATEX* format = nullptr;
+  const auto cleanup = [&]() {
+    if (format != nullptr) CoTaskMemFree(format);
+    if (client != nullptr) client->Release();
+    if (device != nullptr) device->Release();
+    if (enumerator != nullptr) enumerator->Release();
+  };
+  if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                              CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                              reinterpret_cast<void**>(&enumerator))) ||
+      FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device)) ||
+      FAILED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                              reinterpret_cast<void**>(&client))) ||
+      FAILED(client->GetMixFormat(&format)) ||
+      format == nullptr) {
+    cleanup();
+    return status;
+  }
+  status[flutter::EncodableValue("sampleRate")] =
+      flutter::EncodableValue(static_cast<int32_t>(format->nSamplesPerSec));
+  status[flutter::EncodableValue("bitDepth")] =
+      flutter::EncodableValue(static_cast<int32_t>(format->wBitsPerSample));
+  status[flutter::EncodableValue("channels")] =
+      flutter::EncodableValue(static_cast<int32_t>(format->nChannels));
+  status[flutter::EncodableValue("formatKnown")] =
+      flutter::EncodableValue(true);
+  cleanup();
+  return status;
 }
 
 std::wstring CdDevicePath(const std::wstring& drive) {
@@ -482,6 +521,18 @@ bool FlutterWindow::OnCreate() {
           return;
         }
         result->NotImplemented();
+      });
+  output_channel_ = std::make_unique<
+      flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "neonamp/output",
+      &flutter::StandardMethodCodec::GetInstance());
+  output_channel_->SetMethodCallHandler(
+      [](const auto& call, auto result) {
+        if (call.method_name() == "getStatus") {
+          result->Success(flutter::EncodableValue(GetDefaultAudioOutputStatus()));
+        } else {
+          result->NotImplemented();
+        }
       });
   midi_channel_ = std::make_unique<
       flutter::MethodChannel<flutter::EncodableValue>>(
