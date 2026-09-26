@@ -408,14 +408,18 @@ class MainActivity : AudioServiceActivity() {
         .joinToString("") { "%02x".format(it) }
 
     private fun hasChildDocuments(treeUri: Uri, documentId: String): Boolean {
-        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
-        return contentResolver.query(
-            childrenUri,
-            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
-            null,
-            null,
-            null,
-        )?.use { cursor -> cursor.moveToFirst() } == true
+        return try {
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
+            contentResolver.query(
+                childrenUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                null,
+                null,
+                null,
+            )?.use { cursor -> cursor.moveToFirst() } == true
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun writeFileToSafFolder(treeUri: Uri, source: File, fileName: String) {
