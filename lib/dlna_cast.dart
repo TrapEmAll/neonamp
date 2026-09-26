@@ -37,7 +37,11 @@ class DlnaCast {
       discoverer.stop();
       if (identical(_discoverer, discoverer)) _discoverer = null;
       if (Platform.isAndroid) {
-        await _androidChannel.invokeMethod<void>('endDiscovery');
+        try {
+          await _androidChannel.invokeMethod<void>('endDiscovery');
+        } on Object {
+          // Permission/activity teardown must not replace a discovery error.
+        }
       }
     }
   }
@@ -273,7 +277,8 @@ class DlnaCast {
   Future<void> setVolume(double value) async {
     final control = _renderer?.renderingControl;
     if (control == null) return;
-    await control.setVolume(volume: (value.clamp(0.0, 1.0) * 100).round());
+    final safeValue = value.isFinite ? value.clamp(0.0, 1.0) : 0.0;
+    await control.setVolume(volume: (safeValue * 100).round());
   }
 
   Future<Duration?> getPosition() async {
@@ -302,7 +307,8 @@ class DlnaCast {
     final fraction = match.group(4);
     final milliseconds = fraction == null
         ? 0
-        : int.parse('${fraction}000'.substring(0, 3));
+        : int.tryParse('${fraction}000'.substring(0, 3));
+    if (milliseconds == null) return null;
     return Duration(
       hours: hours,
       minutes: minutes,
@@ -351,7 +357,11 @@ class DlnaCast {
       _renderer = null;
       _segmentStart = Duration.zero;
       _segmentEnd = null;
-      await _server?.close(force: true);
+      try {
+        await _server?.close(force: true);
+      } on Object {
+        // The local server may already be closed by a failed request.
+      }
       _server = null;
     }
   }

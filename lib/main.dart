@@ -4112,6 +4112,7 @@ class _PlayerPageState extends State<PlayerPage>
     final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = AudioPlayer();
+    var promoted = false;
     _crossfadeAudioPlayer = incomingPlayer;
     try {
       await incomingPlayer.setBalance(_balance);
@@ -4156,12 +4157,13 @@ class _PlayerPageState extends State<PlayerPage>
       await previousPlayer.stop();
       await previousPlayer.dispose();
       _activePlayer = incomingPlayer;
+      promoted = true;
       _bindPlayerStreams();
       await _audioHandler?.switchPlayer(incomingPlayer);
       _audioHandler?.publishTrack(track);
       await _saveQueue();
     } catch (_) {
-      await incomingPlayer.dispose();
+      if (!promoted) await incomingPlayer.dispose();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -4184,8 +4186,10 @@ class _PlayerPageState extends State<PlayerPage>
     final previousTrack = _queue[_selected];
     final track = _queue[next];
     final incomingPlayer = DspLocalPlayer();
+    var promoted = false;
     _crossfadeDspPlayer = incomingPlayer;
     try {
+      if (!mounted) return;
       setState(() {
         _selected = next;
         _position = Duration.zero;
@@ -4224,11 +4228,12 @@ class _PlayerPageState extends State<PlayerPage>
       await previousPlayer.stop();
       await previousPlayer.dispose();
       _dspPlayer = incomingPlayer;
+      promoted = true;
       _bindDspStreams();
       _audioHandler?.publishTrack(track);
       await _saveQueue();
     } catch (_) {
-      await incomingPlayer.dispose();
+      if (!promoted) await incomingPlayer.dispose();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -5643,6 +5648,7 @@ class _PlayerPageState extends State<PlayerPage>
       lyrics: values[10].trim().isEmpty ? null : values[10],
       clearLyrics: values[10].trim().isEmpty,
     );
+    if (!mounted) return;
     setState(() {
       final libraryIndex = _library.indexWhere(
         (item) => item.path == track.path,
@@ -5899,6 +5905,7 @@ class _PlayerPageState extends State<PlayerPage>
           ]);
         });
       }
+      if (!mounted) return;
       final updated = track.copyWith(artwork: bytes);
       setState(() {
         final libraryIndex = _library.indexWhere(
@@ -5949,7 +5956,7 @@ class _PlayerPageState extends State<PlayerPage>
         ],
       ),
     );
-    if (name == null || name.isEmpty) return;
+    if (!mounted || name == null || name.isEmpty) return;
     setState(() => _playlists[name] = []);
     await _saveQueue();
   }
@@ -5977,7 +5984,7 @@ class _PlayerPageState extends State<PlayerPage>
         ],
       ),
     );
-    if (name == null || name.isEmpty || name == oldName) return;
+    if (!mounted || name == null || name.isEmpty || name == oldName) return;
     if (_playlists.containsKey(name)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -6020,7 +6027,7 @@ class _PlayerPageState extends State<PlayerPage>
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (!mounted || confirmed != true) return;
     setState(() => _playlists.remove(name));
     await _saveQueue();
   }
@@ -6299,7 +6306,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
-    if (result == null) return;
+    if (!mounted || result == null) return;
     setState(() => _smartPlaylists.add(result));
     await _saveQueue();
   }
@@ -6340,6 +6347,7 @@ class _PlayerPageState extends State<PlayerPage>
       final plugin = NeonAmpPlugin.fromJson(
         jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
       );
+      if (!mounted) return;
       setState(() => _plugins[plugin.id] = plugin);
       await _saveQueue();
       if (!mounted) return;

@@ -128,7 +128,7 @@ class DspLocalPlayer {
           // Continue releasing the source and temporary file.
         }
       }
-      await soloud.SoLoud.instance.disposeSource(source);
+      await _disposeSourceSafely(source);
       if (isTrackerModule) {
         final output = File(sourcePath);
         if (await output.exists()) await output.delete();
@@ -203,7 +203,8 @@ class DspLocalPlayer {
 
   Future<void> seek(Duration position) async {
     final handle = _handle;
-    if (handle == null) return;
+    if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
+      return;
     final duration = _source == null
         ? Duration.zero
         : soloud.SoLoud.instance.getLength(_source!);
@@ -220,7 +221,8 @@ class DspLocalPlayer {
     final handle = _handle;
     if (handle != null &&
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
-      soloud.SoLoud.instance.setVolume(handle, volume.clamp(0.0, 1.0));
+      final safeVolume = volume.isFinite ? volume.clamp(0.0, 1.0) : 0.0;
+      soloud.SoLoud.instance.setVolume(handle, safeVolume);
     }
   }
 
@@ -239,7 +241,7 @@ class DspLocalPlayer {
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
       soloud.SoLoud.instance.setRelativePlaySpeed(
         handle,
-        speed.clamp(0.5, 2.0).toDouble(),
+        (speed.isFinite ? speed.clamp(0.5, 2.0) : 1.0).toDouble(),
       );
     }
   }
@@ -277,7 +279,7 @@ class DspLocalPlayer {
       final source = _source;
       _source = null;
       if (source != null && soloud.SoLoud.instance.isInitialized) {
-        await soloud.SoLoud.instance.disposeSource(source);
+        await _disposeSourceSafely(source);
       }
       final renderedModulePath = _renderedModulePath;
       _renderedModulePath = null;

@@ -298,6 +298,7 @@ class MainActivity : AudioServiceActivity() {
                     DocumentsContract.Document.COLUMN_MIME_TYPE,
                     DocumentsContract.Document.COLUMN_SIZE,
                     DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                    DocumentsContract.Document.COLUMN_FLAGS,
                 ),
                 null,
                 null,
@@ -308,15 +309,23 @@ class MainActivity : AudioServiceActivity() {
                 val mimeColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
                 val sizeColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
                 val modifiedColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                val flagsColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_FLAGS)
                 while (cursor.moveToNext()) {
                     val documentId = cursor.getString(idColumn)
                     val name = cursor.getString(nameColumn) ?: continue
-                    if (cursor.getString(mimeColumn) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    val mimeType = cursor.getString(mimeColumn)?.lowercase(Locale.ROOT).orEmpty()
+                    val flags = if (flagsColumn >= 0 && !cursor.isNull(flagsColumn)) {
+                        cursor.getInt(flagsColumn)
+                    } else {
+                        0
+                    }
+                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
+                        flags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE != 0
+                    ) {
                         pending.add(documentId)
                         continue
                     }
                     val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                    val mimeType = cursor.getString(mimeColumn)?.lowercase(Locale.ROOT).orEmpty()
                     // Some Android document providers expose media with a
                     // generic or missing filename extension. Keep the
                     // extension check for containers such as MP4, but use the

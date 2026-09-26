@@ -67,7 +67,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       await controller.setVolume(_volume);
       await controller.setPlaybackSpeed(_speed);
       await controller.play();
-      if (!mounted || generation != _loadGeneration) return;
+      if (!mounted || generation != _loadGeneration) {
+        await controller.dispose();
+        return;
+      }
       setState(() => _loading = false);
     } on Object catch (error) {
       try {
