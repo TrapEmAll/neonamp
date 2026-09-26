@@ -288,6 +288,7 @@ class MainActivity : AudioServiceActivity() {
         return "Selected folder"
     }
 
+    @Synchronized
     private fun scanSafFolder(treeUri: Uri): List<Map<String, String>> {
         val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
         cacheDirectory.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach {
