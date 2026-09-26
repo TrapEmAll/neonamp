@@ -430,6 +430,7 @@ class MainActivity : AudioServiceActivity() {
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
 
+    @Synchronized
     private fun materializeContentUri(sourceUri: Uri, displayName: String): String {
         val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
         val extension = displayName.substringAfterLast('.', "")
@@ -453,7 +454,11 @@ class MainActivity : AudioServiceActivity() {
         if (cachedFile.isFile && (sourceSize < 0 || cachedFile.length() == sourceSize)) {
             return cachedFile.absolutePath
         }
-        val temporaryFile = File(cacheDirectory, "${cachedFile.name}.tmp")
+        val temporaryFile = File.createTempFile(
+            "${cachedFile.name}.",
+            ".tmp",
+            cacheDirectory,
+        )
         try {
             val input = contentResolver.openInputStream(sourceUri)
                 ?: throw IllegalStateException("Android could not read the selected media.")
