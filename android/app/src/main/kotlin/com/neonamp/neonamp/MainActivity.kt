@@ -274,7 +274,7 @@ class MainActivity : AudioServiceActivity() {
             it.delete()
         }
         val audioExtensions = setOf(
-            "mp3", "flac", "wav", "ogg", "m4a", "mp4", "aac", "wma",
+            "mp3", "flac", "wav", "wave", "ogg", "oga", "m4a", "mp4", "aac", "wma",
             "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
             "mka", "mid", "midi", "kar", "669", "amf", "ams", "dbm",
             "dmf", "dsm", "far", "gdm", "gtk", "it", "j2b", "m15",
@@ -299,6 +299,7 @@ class MainActivity : AudioServiceActivity() {
                     DocumentsContract.Document.COLUMN_MIME_TYPE,
                     DocumentsContract.Document.COLUMN_SIZE,
                     DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                    DocumentsContract.Document.COLUMN_FLAGS,
                 ),
                 null,
                 null,
@@ -309,16 +310,26 @@ class MainActivity : AudioServiceActivity() {
                 val mimeColumn = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
                 val sizeColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
                 val modifiedColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                val flagsColumn = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_FLAGS)
                 while (cursor.moveToNext()) {
                     val documentId = cursor.getString(idColumn)
                     if (!seenDocuments.add(documentId)) continue
                     val name = cursor.getString(nameColumn) ?: continue
                     val mimeType = cursor.getString(mimeColumn)?.lowercase(Locale.ROOT).orEmpty()
-                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    val flags = if (flagsColumn >= 0 && !cursor.isNull(flagsColumn)) {
+                        cursor.getLong(flagsColumn)
+                    } else {
+                        0L
+                    }
+                    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                    val isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
+                        mimeType == "application/vnd.google-apps.folder" ||
+                        (extension.isEmpty() &&
+                            (flags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong()) != 0L)
+                    if (isDirectory) {
                         pending.add(documentId)
                         continue
                     }
-                    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                     // Some Android document providers expose media with a
                     // generic or missing filename extension. Keep the
                     // extension check for containers such as MP4, but use the
@@ -330,15 +341,18 @@ class MainActivity : AudioServiceActivity() {
                         extension
                     } else {
                         when (mimeType) {
-                            "audio/mpeg", "audio/mp3" -> "mp3"
+                            "audio/mpeg", "audio/mp3", "audio/mpeg3", "audio/x-mpeg" -> "mp3"
                             "audio/flac", "audio/x-flac" -> "flac"
                             "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
-                            "audio/ogg", "application/ogg" -> "ogg"
+                            "audio/ogg", "application/ogg", "audio/oga" -> "ogg"
                             "audio/mp4", "audio/x-m4a" -> "m4a"
-                            "audio/aac", "audio/x-aac" -> "aac"
+                            "audio/aac", "audio/x-aac", "audio/aacp" -> "aac"
                             "audio/opus" -> "opus"
                             "audio/aiff", "audio/x-aiff" -> "aiff"
                             "audio/x-ms-wma" -> "wma"
+                            "audio/webm" -> "webm"
+                            "audio/x-matroska" -> "mka"
+                            "audio/x-ape" -> "ape"
                             else -> "bin"
                         }
                     }

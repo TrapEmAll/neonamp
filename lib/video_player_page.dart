@@ -35,6 +35,23 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     _loadVideo(0);
   }
 
+  @override
+  void didUpdateWidget(covariant VideoPlayerPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.files.length != widget.files.length ||
+        !_sameFiles(oldWidget.files, widget.files)) {
+      _loadVideo(0);
+    }
+  }
+
+  bool _sameFiles(List<File> left, List<File> right) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index++) {
+      if (left[index].path != right[index].path) return false;
+    }
+    return true;
+  }
+
   Future<void> _loadVideo(int index) async {
     if (widget.files.isEmpty || !mounted) return;
     index = _wrappedVideoIndex(index, widget.files.length);
@@ -126,11 +143,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     await SystemChrome.setPreferredOrientations(const []);
   }
 
-  Future<void> _runVideoCommand(Future<void> command) async {
+  Future<void> _runVideoCommand(
+    Future<void> command, {
+    required int generation,
+  }) async {
     try {
       await command;
     } on Object catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _loading = false;
         _error = error.toString();
@@ -138,13 +158,29 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     }
   }
 
+  void _runVideoCommandSafely(Future<void> command, {required int generation}) {
+    unawaited(_runVideoCommand(command, generation: generation));
+  }
+
+  void _disposeVideoResource(Future<void> operation, String description) {
+    unawaited(
+      operation.catchError((error, stackTrace) {
+        debugPrint('$description failed: $error\n$stackTrace');
+      }),
+    );
+  }
+
   @override
   void dispose() {
     _loadGeneration++;
     final controller = _controller;
     controller?.removeListener(_onVideoChanged);
-    if (controller != null) unawaited(controller.dispose());
-    if (_fullScreen) unawaited(_restoreSystemUi());
+    if (controller != null) {
+      _disposeVideoResource(controller.dispose(), 'Disposing video controller');
+    }
+    if (_fullScreen) {
+      _disposeVideoResource(_restoreSystemUi(), 'Restoring system UI');
+    }
     super.dispose();
   }
 
@@ -257,12 +293,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
             ),
             IconButton.filledTonal(
               tooltip: controller.value.isPlaying ? 'Pause' : 'Play',
-              onPressed: () => unawaited(
-                _runVideoCommand(
-                  controller.value.isPlaying
-                      ? controller.pause()
-                      : controller.play(),
-                ),
+              onPressed: () => _runVideoCommandSafely(
+                controller.value.isPlaying
+                    ? controller.pause()
+                    : controller.play(),
+                generation: _loadGeneration,
               ),
               icon: Icon(
                 controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
@@ -285,7 +320,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                 value: _volume,
                 onChanged: (value) {
                   setState(() => _volume = value);
-                  unawaited(_runVideoCommand(controller.setVolume(value)));
+                  _runVideoCommandSafely(
+                    controller.setVolume(value),
+                    generation: _loadGeneration,
+                  );
                 },
               ),
             ),
@@ -301,7 +339,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               onChanged: (speed) {
                 if (speed == null) return;
                 setState(() => _speed = speed);
-                unawaited(_runVideoCommand(controller.setPlaybackSpeed(speed)));
+                _runVideoCommandSafely(
+                  controller.setPlaybackSpeed(speed),
+                  generation: _loadGeneration,
+                );
               },
             ),
             if (Platform.isWindows)

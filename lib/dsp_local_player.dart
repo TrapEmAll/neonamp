@@ -67,7 +67,7 @@ class DspLocalPlayer {
     final generation = ++_generation;
     await _ensureInitialized();
     if (_disposed || generation != _generation) return;
-    await stop(invalidate: false);
+    await stop(invalidate: false, expectedGeneration: generation);
     if (_disposed || generation != _generation) return;
     final isTrackerModule = isTrackerModulePath(path);
     var sourcePath = path;
@@ -281,7 +281,10 @@ class DspLocalPlayer {
     }
   }
 
-  Future<void> stop({bool invalidate = true}) async {
+  Future<void> stop({bool invalidate = true, int? expectedGeneration}) async {
+    if (expectedGeneration != null && expectedGeneration != _generation) {
+      return;
+    }
     final generation = invalidate ? ++_generation : _generation;
     _pollTimer?.cancel();
     final handle = _handle;

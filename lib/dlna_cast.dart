@@ -294,19 +294,56 @@ class DlnaCast {
         'application/octet-stream';
   }
 
-  Future<void> pause() async => _renderer?.avTransport?.pause();
-  Future<void> resume() async => _renderer?.avTransport?.play();
-  Future<void> seek(Duration position) async => _renderer?.avTransport?.seek(
-    SeekMode.relTime,
-    _formatDlnaTime(
-      segmentToSourcePosition(position, _segmentStart, _segmentEnd),
-    ),
-  );
+  Future<void> pause() async {
+    final generation = _operationGeneration;
+    final renderer = _renderer;
+    final transport = renderer?.avTransport;
+    if (transport == null) return;
+    await transport.pause();
+    if (generation != _operationGeneration || !identical(renderer, _renderer)) {
+      return;
+    }
+  }
+
+  Future<void> resume() async {
+    final generation = _operationGeneration;
+    final renderer = _renderer;
+    final transport = renderer?.avTransport;
+    if (transport == null) return;
+    await transport.play();
+    if (generation != _operationGeneration || !identical(renderer, _renderer)) {
+      return;
+    }
+  }
+
+  Future<void> seek(Duration position) async {
+    final generation = _operationGeneration;
+    final renderer = _renderer;
+    final transport = renderer?.avTransport;
+    if (transport == null) return;
+    final segmentStart = _segmentStart;
+    final segmentEnd = _segmentEnd;
+    final sourcePosition = segmentToSourcePosition(
+      position,
+      segmentStart,
+      segmentEnd,
+    );
+    await transport.seek(SeekMode.relTime, _formatDlnaTime(sourcePosition));
+    if (generation != _operationGeneration || !identical(renderer, _renderer)) {
+      return;
+    }
+  }
+
   Future<void> setVolume(double value) async {
+    final generation = _operationGeneration;
+    final renderer = _renderer;
     final control = _renderer?.renderingControl;
     if (control == null) return;
     final safeValue = value.isFinite ? value.clamp(0.0, 1.0) : 0.0;
     await control.setVolume(volume: (safeValue * 100).round());
+    if (generation != _operationGeneration || !identical(renderer, _renderer)) {
+      return;
+    }
   }
 
   Future<Duration?> getPosition() async {
