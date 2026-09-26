@@ -3074,6 +3074,32 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _selectEqualizerPreset(
+    String preset,
+    Map<String, List<double>> pluginPresets,
+  ) async {
+    final bands = equalizerPresetBands(
+      preset,
+      pluginPresets: pluginPresets,
+      bandCount: _eqBands.length,
+    );
+    final shouldEnable = preset != 'Flat' || _equalizerEnabled;
+    if (!mounted) return;
+    setState(() {
+      _eqPreset = preset;
+      _eqBands.setAll(0, bands);
+    });
+    // Selecting a preset must apply it to ordinary local playback too. Those
+    // tracks use the DSP player only while EQ is enabled, so updating the
+    // sliders alone leaves the already-playing audio unchanged.
+    if (shouldEnable) {
+      await _setEqualizerEnabled(true);
+    } else if (_dspActive) {
+      _dspPlayer.applyEqualizer(enabled: false, bands: _eqBands);
+    }
+    await _saveQueue();
+  }
+
   Future<void> _setReplayGainEnabled(bool enabled) async {
     if (!mounted) return;
     setState(() => _replayGainEnabled = enabled);
@@ -7144,25 +7170,10 @@ class _PlayerPageState extends State<PlayerPage>
                         : (value) {
                             if (value == null) return;
                             dialogPreset = value;
-                            setState(() {
-                              _eqPreset = value;
-                              if (value != 'Flat') _equalizerEnabled = true;
-                              _eqBands.setAll(
-                                0,
-                                equalizerPresetBands(
-                                  value,
-                                  pluginPresets: pluginPresets,
-                                  bandCount: _eqBands.length,
-                                ),
-                              );
-                            });
-                            if (_dspActive) {
-                              _dspPlayer.applyEqualizer(
-                                enabled: _equalizerEnabled,
-                                bands: _eqBands,
-                              );
-                            }
-                            _saveQueueSafely();
+                            _runAsyncSafely(
+                              _selectEqualizerPreset(value, pluginPresets),
+                              'Applying equalizer preset',
+                            );
                             setDialogState(() {});
                           },
                   ),
