@@ -7202,7 +7202,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playSmartPlaylist(SmartPlaylist playlist) async {
-    if (_crossfadeInProgress) return;
+    if (_selectionInProgress || _crossfadeInProgress) return;
     final tracks = _tracksForSmartPlaylist(playlist);
     if (tracks.isEmpty) {
       if (!mounted) return;
@@ -7212,12 +7212,16 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     if (!mounted) return;
+    final operation = ++_queueOperationGeneration;
+    await _stopCurrent();
+    if (!mounted || operation != _queueOperationGeneration) return;
     setState(() {
       _queue
         ..clear()
         ..addAll(tracks);
       _selected = 0;
     });
+    if (!mounted || operation != _queueOperationGeneration) return;
     await _select(0);
   }
 
@@ -7250,7 +7254,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playPlaylist(String name) async {
-    if (_crossfadeInProgress) return;
+    if (_selectionInProgress || _crossfadeInProgress) return;
     final paths = _playlists[name];
     if (paths == null || paths.isEmpty) return;
     final tracks = paths
@@ -7263,15 +7267,18 @@ class _PlayerPageState extends State<PlayerPage>
         )
         .toList();
     if (!mounted || tracks.isEmpty) return;
+    final operation = ++_queueOperationGeneration;
+    await _stopCurrent();
+    if (!mounted || operation != _queueOperationGeneration) return;
     setState(() {
       _queue
         ..clear()
         ..addAll(tracks);
       _selected = 0;
     });
-    if (!mounted) return;
+    if (!mounted || operation != _queueOperationGeneration) return;
     await _saveQueue();
-    if (mounted) await _select(0);
+    if (mounted && operation == _queueOperationGeneration) await _select(0);
   }
 
   Future<void> _showEqualizer() async {
