@@ -4464,18 +4464,6 @@ class _PlayerPageState extends State<PlayerPage>
         _selected = index;
         _position = Duration.zero;
         _cueTransitioning = false;
-        final track = _queue[index];
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
-        final libraryIndex = _library.indexWhere(
-          (item) => item.identityKey == track.identityKey,
-        );
-        if (libraryIndex >= 0)
-          _library[libraryIndex] = track.copyWith(
-            playCount: track.playCount + 1,
-          );
-        _queue[index] = track.copyWith(playCount: track.playCount + 1);
       });
       final track = _queue[index];
       // Selecting a track explicitly is a user request to start that track.
@@ -4543,6 +4531,26 @@ class _PlayerPageState extends State<PlayerPage>
         await _seekCurrent(Duration.zero);
       }
       if (!mounted || operation != _queueOperationGeneration) return;
+      // Count and record a track only after its source has opened successfully.
+      // Provider permission failures and decoder errors must not create fake
+      // history entries or discard the position that should be retried later.
+      setState(() {
+        _playHistory
+          ..clear()
+          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        final libraryIndex = _library.indexWhere(
+          (item) => item.identityKey == track.identityKey,
+        );
+        if (libraryIndex >= 0) {
+          _library[libraryIndex] = _library[libraryIndex].copyWith(
+            playCount: _library[libraryIndex].playCount + 1,
+          );
+        }
+        _queue[index] = _queue[index].copyWith(
+          playCount: _queue[index].playCount + 1,
+        );
+      });
+      _resumePositions.remove(track.identityKey);
       await _saveQueue();
       if (!mounted || operation != _queueOperationGeneration) return;
     } on Object catch (error) {
