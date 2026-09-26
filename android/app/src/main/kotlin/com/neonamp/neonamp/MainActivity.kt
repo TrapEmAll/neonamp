@@ -46,7 +46,7 @@ class MainActivity : AudioServiceActivity() {
                     "pickFolder" -> pickLibraryFolder(result)
                     "scanFolder" -> {
                         val folderUri = call.argument<String>("uri")
-                        if (folderUri.isNullOrBlank()) {
+                        if (folderUri.isNullOrBlank() || !isTreeUri(Uri.parse(folderUri))) {
                             result.error("invalid_arguments", "A folder URI is required.", null)
                         } else {
                             Thread {
@@ -65,7 +65,8 @@ class MainActivity : AudioServiceActivity() {
                         val folderUri = call.argument<String>("uri")
                         val sourcePath = call.argument<String>("sourcePath")
                         val fileName = call.argument<String>("fileName")
-                        if (folderUri.isNullOrBlank() || sourcePath.isNullOrBlank() || fileName.isNullOrBlank()) {
+                        if (folderUri.isNullOrBlank() || !isTreeUri(Uri.parse(folderUri)) ||
+                            sourcePath.isNullOrBlank() || fileName.isNullOrBlank()) {
                             result.error("invalid_arguments", "Folder URI, source file, and name are required.", null)
                         } else {
                             Thread {
@@ -84,7 +85,8 @@ class MainActivity : AudioServiceActivity() {
                         val folderUri = call.argument<String>("uri")
                         val fileName = call.argument<String>("fileName")
                         val contents = call.argument<String>("contents")
-                        if (folderUri.isNullOrBlank() || fileName.isNullOrBlank() || contents == null) {
+                        if (folderUri.isNullOrBlank() || !isTreeUri(Uri.parse(folderUri)) ||
+                            fileName.isNullOrBlank() || contents == null) {
                             result.error("invalid_arguments", "Folder URI, file name, and contents are required.", null)
                         } else {
                             Thread {
@@ -215,6 +217,10 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    private fun isTreeUri(uri: Uri): Boolean =
+        uri.scheme.equals("content", ignoreCase = true) &&
+            DocumentsContract.isTreeUri(uri)
+
     @Deprecated("Deprecated in Android, retained for the Storage Access Framework result")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -227,6 +233,10 @@ class MainActivity : AudioServiceActivity() {
             return
         }
         try {
+            if (!isTreeUri(uri)) {
+                pendingResult.error("invalid_folder", "The selected item is not a folder.", null)
+                return
+            }
             val persistableFlags = (data.flags) and
                 (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             if (persistableFlags != 0) {
@@ -450,6 +460,10 @@ class MainActivity : AudioServiceActivity() {
     }
 
     private fun beginDlnaDiscovery(result: MethodChannel.Result) {
+        if (nearbyPermissionResult != null) {
+            result.error("permission_busy", "A network permission request is already pending.", null)
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -487,6 +501,10 @@ class MainActivity : AudioServiceActivity() {
     }
 
     override fun onDestroy() {
+        folderPickerResult?.error("activity_destroyed", "The folder picker was closed.", null)
+        folderPickerResult = null
+        nearbyPermissionResult?.error("activity_destroyed", "The activity was closed.", null)
+        nearbyPermissionResult = null
         releaseMulticastLock()
         super.onDestroy()
     }

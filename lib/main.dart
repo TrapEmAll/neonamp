@@ -536,24 +536,7 @@ Future<void> writeAiffTags(
   final output = <int>[...source.sublist(0, 12), ...body, ...tagChunk];
   final formSize = output.length - 8;
   output.setRange(4, 8, _bigEndian32(formSize));
-  final suffix = '.neonamp-${DateTime.now().microsecondsSinceEpoch}';
-  final temporary = File('${file.path}$suffix.tmp');
-  final backup = File('${file.path}$suffix.bak');
-  var movedOriginal = false;
-  try {
-    await temporary.writeAsBytes(output, flush: true);
-    await file.rename(backup.path);
-    movedOriginal = true;
-    await temporary.rename(file.path);
-    await backup.delete();
-  } catch (_) {
-    if (movedOriginal && !await file.exists() && await backup.exists()) {
-      await backup.rename(file.path);
-    }
-    rethrow;
-  } finally {
-    if (await temporary.exists()) await temporary.delete();
-  }
+  await _replaceFileAtomically(file, output);
 }
 
 Future<void> writeWavTags(
@@ -611,24 +594,7 @@ Future<void> writeWavTags(
   ];
   final output = <int>[...source.sublist(0, 12), ...body, ...tagChunk];
   output.setRange(4, 8, _littleEndian32(output.length - 8));
-  final suffix = '.neonamp-${DateTime.now().microsecondsSinceEpoch}';
-  final temporary = File('${file.path}$suffix.tmp');
-  final backup = File('${file.path}$suffix.bak');
-  var movedOriginal = false;
-  try {
-    await temporary.writeAsBytes(output, flush: true);
-    await file.rename(backup.path);
-    movedOriginal = true;
-    await temporary.rename(file.path);
-    await backup.delete();
-  } catch (_) {
-    if (movedOriginal && !await file.exists() && await backup.exists()) {
-      await backup.rename(file.path);
-    }
-    rethrow;
-  } finally {
-    if (await temporary.exists()) await temporary.delete();
-  }
+  await _replaceFileAtomically(file, output);
 }
 
 double? parseReplayGainDb(String? value) {
@@ -957,24 +923,7 @@ Future<void> writeVorbisTags(
     artwork: artwork,
     artworkMimeType: artworkMimeType,
   );
-  final suffix = '.neonamp-${DateTime.now().microsecondsSinceEpoch}';
-  final temporary = File('${file.path}$suffix.tmp');
-  final backup = File('${file.path}$suffix.bak');
-  var movedOriginal = false;
-  try {
-    await temporary.writeAsBytes(output, flush: true);
-    await file.rename(backup.path);
-    movedOriginal = true;
-    await temporary.rename(file.path);
-    await backup.delete();
-  } catch (_) {
-    if (movedOriginal && !await file.exists() && await backup.exists()) {
-      await backup.rename(file.path);
-    }
-    rethrow;
-  } finally {
-    if (await temporary.exists()) await temporary.delete();
-  }
+  await _replaceFileAtomically(file, output);
 }
 
 Future<void> writeAacTags(File file, List<String> values) async {
@@ -1766,6 +1715,7 @@ class Track {
     double? replayGainDb,
     int? cueStartMs,
     int? cueEndMs,
+    bool clearLyrics = false,
   }) => Track(
     path: path ?? this.path,
     name: name ?? this.name,
@@ -1777,7 +1727,7 @@ class Track {
     trackTotal: trackTotal ?? this.trackTotal,
     discNumber: discNumber ?? this.discNumber,
     discTotal: discTotal ?? this.discTotal,
-    lyrics: lyrics ?? this.lyrics,
+    lyrics: clearLyrics ? null : lyrics ?? this.lyrics,
     rating: rating ?? this.rating,
     playCount: playCount ?? this.playCount,
     favorite: favorite ?? this.favorite,
@@ -2448,7 +2398,7 @@ class _PlayerPageState extends State<PlayerPage>
         'isPlaying': _isPlaying,
         'durationMs': _duration.inMilliseconds,
       });
-    } on PlatformException catch (error) {
+    } on Object catch (error) {
       debugPrint('Could not update Windows media session: $error');
     }
   }
@@ -2496,7 +2446,9 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() => _playerState = value);
       unawaited(_syncWindowsMediaSession());
     });
-    _completeSub = _player.onPlayerComplete.listen((_) => _handleComplete());
+    _completeSub = _player.onPlayerComplete.listen(
+      (_) => unawaited(_handleCompletionSafely()),
+    );
   }
 
   void _bindDspStreams() {
@@ -2544,7 +2496,7 @@ class _PlayerPageState extends State<PlayerPage>
       unawaited(_syncWindowsMediaSession());
     });
     _dspCompleteSub = _dspPlayer.onPlayerComplete.listen((_) {
-      if (_dspActive) unawaited(_handleComplete());
+      if (_dspActive) unawaited(_handleCompletionSafely());
     });
   }
 
@@ -2571,7 +2523,7 @@ class _PlayerPageState extends State<PlayerPage>
       unawaited(_syncWindowsMediaSession());
     });
     _midiCompleteSub = _midiPlayer.onPlayerComplete.listen((_) {
-      if (_midiActive) unawaited(_handleComplete());
+      if (_midiActive) unawaited(_handleCompletionSafely());
     });
   }
 
@@ -3622,8 +3574,9 @@ class _PlayerPageState extends State<PlayerPage>
           var path = resolvePlaylistPath(entry.path, playlistPath);
           if (path.isEmpty || path.startsWith('#')) continue;
           final uri = Uri.tryParse(path);
-          final isStream = uri?.scheme == 'http' || uri?.scheme == 'https';
-          if (!isStream && Platform.isAndroid) {
+          final scheme = uri?.scheme.toLowerCase();
+          final isStream = scheme == 'http' || scheme == 'https';
+          if (!isStream) {
             path =
                 resolvePlaylistLibraryPath(
                   entryPath: entry.path,
@@ -3631,7 +3584,7 @@ class _PlayerPageState extends State<PlayerPage>
                   libraryRelativePaths: _libraryRelativePaths,
                 ) ??
                 path;
-            if (!File(path).existsSync()) {
+            if (!path.startsWith('content:') && !File(path).existsSync()) {
               skipped++;
               continue;
             }
@@ -3695,10 +3648,14 @@ class _PlayerPageState extends State<PlayerPage>
       var addedPlaylists = 0;
       setState(() {
         for (final json in imported.tracks) {
-          final track = Track.fromJson(Map<String, dynamic>.from(json));
-          if (_library.any((item) => item.path == track.path)) continue;
-          _library.add(track);
-          addedTracks++;
+          try {
+            final track = Track.fromJson(Map<String, dynamic>.from(json));
+            if (_library.any((item) => item.path == track.path)) continue;
+            _library.add(track);
+            addedTracks++;
+          } on Object catch (trackError) {
+            debugPrint('Skipping invalid iTunes track: $trackError');
+          }
         }
         for (final playlist in imported.playlists.entries) {
           var name = playlist.key;
@@ -3925,6 +3882,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (index < 0 || index >= _queue.length || _selectionInProgress) return;
     _castPositionTimer?.cancel();
     if (_casting) await _dlnaCast.stop();
+    if (!mounted) return;
     _selectionInProgress = true;
     try {
       setState(() {
@@ -3942,6 +3900,7 @@ class _PlayerPageState extends State<PlayerPage>
           _library[libraryIndex] = track.copyWith(
             playCount: track.playCount + 1,
           );
+        _queue[index] = track.copyWith(playCount: track.playCount + 1);
       });
       final track = _queue[index];
       // Selecting a track explicitly is a user request to start that track.
@@ -4017,11 +3976,24 @@ class _PlayerPageState extends State<PlayerPage>
   void _rememberResumePosition(Duration position) {
     final identity = _current?.identityKey;
     if (identity == null || position <= Duration.zero) return;
-    _resumePositions[identity] = position.inMilliseconds;
+    final bounded = _duration > Duration.zero && position > _duration
+        ? _duration
+        : position;
+    if (bounded <= Duration.zero) return;
+    _resumePositions[identity] = bounded.inMilliseconds;
     _resumeSaveTimer?.cancel();
     _resumeSaveTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
       unawaited(_saveQueue());
     });
+  }
+
+  Future<void> _handleCompletionSafely() async {
+    try {
+      await _handleComplete();
+    } on Object catch (error) {
+      debugPrint('Playback completion handling failed: $error');
+    }
   }
 
   Future<void> _togglePlay() async {
@@ -5606,7 +5578,8 @@ class _PlayerPageState extends State<PlayerPage>
       trackTotal: int.tryParse(values[7]) ?? track.trackTotal,
       discNumber: int.tryParse(values[8]) ?? track.discNumber,
       discTotal: int.tryParse(values[9]) ?? track.discTotal,
-      lyrics: values[10].trim().isEmpty ? track.lyrics : values[10],
+      lyrics: values[10].trim().isEmpty ? null : values[10],
+      clearLyrics: values[10].trim().isEmpty,
     );
     setState(() {
       final libraryIndex = _library.indexWhere(
@@ -5768,16 +5741,16 @@ class _PlayerPageState extends State<PlayerPage>
     }
     final result = await FilePicker.pickFiles(type: FileType.image);
     if (result.isEmpty || result.first.path == null) return;
-    final imageFile = File(result.first.path!);
-    final bytes = await imageFile.readAsBytes();
-    if (bytes.isEmpty) return;
-    final extension = imageFile.path.split('.').last.toLowerCase();
-    final mimeType = switch (extension) {
-      'png' => 'image/png',
-      'webp' => 'image/webp',
-      _ => 'image/jpeg',
-    };
     try {
+      final imageFile = File(result.first.path!);
+      final bytes = await imageFile.readAsBytes();
+      if (bytes.isEmpty) throw const FormatException('The image is empty.');
+      final extension = imageFile.path.split('.').last.toLowerCase();
+      final mimeType = switch (extension) {
+        'png' => 'image/png',
+        'webp' => 'image/webp',
+        _ => 'image/jpeg',
+      };
       if (isAiffAudioPath(track.path) || isWavAudioPath(track.path)) {
         final writer = isWavAudioPath(track.path)
             ? writeWavTags

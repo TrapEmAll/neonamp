@@ -70,6 +70,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       if (!mounted || generation != _loadGeneration) return;
       setState(() => _loading = false);
     } on Object catch (error) {
+      try {
+        await controller.dispose();
+      } on Object catch (disposeError) {
+        debugPrint('Could not dispose failed video controller: $disposeError');
+      }
+      if (identical(_controller, controller)) _controller = null;
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _loading = false;
@@ -115,6 +121,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     if (!Platform.isAndroid) return;
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     await SystemChrome.setPreferredOrientations(const []);
+  }
+
+  Future<void> _runVideoCommand(Future<void> command) async {
+    try {
+      await command;
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString();
+      });
+    }
   }
 
   @override
@@ -231,9 +249,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
             ),
             IconButton.filledTonal(
               tooltip: controller.value.isPlaying ? 'Pause' : 'Play',
-              onPressed: () => controller.value.isPlaying
-                  ? controller.pause()
-                  : controller.play(),
+              onPressed: () => unawaited(
+                _runVideoCommand(
+                  controller.value.isPlaying
+                      ? controller.pause()
+                      : controller.play(),
+                ),
+              ),
               icon: Icon(
                 controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
               ),
@@ -255,7 +277,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
                 value: _volume,
                 onChanged: (value) {
                   setState(() => _volume = value);
-                  unawaited(controller.setVolume(value));
+                  unawaited(_runVideoCommand(controller.setVolume(value)));
                 },
               ),
             ),
@@ -271,7 +293,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               onChanged: (speed) {
                 if (speed == null) return;
                 setState(() => _speed = speed);
-                unawaited(controller.setPlaybackSpeed(speed));
+                unawaited(_runVideoCommand(controller.setPlaybackSpeed(speed)));
               },
             ),
             if (Platform.isWindows)
