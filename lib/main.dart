@@ -107,6 +107,14 @@ bool isRemoteMediaPath(String path) {
   return scheme == 'http' || scheme == 'https';
 }
 
+bool isContentMediaPath(String path) {
+  return Uri.tryParse(path)?.scheme.toLowerCase() == 'content';
+}
+
+bool isUriMediaPath(String path) {
+  return isRemoteMediaPath(path) || isContentMediaPath(path);
+}
+
 bool isHttpUri(Uri? uri) {
   final scheme = uri?.scheme.toLowerCase();
   return scheme == 'http' || scheme == 'https';
@@ -2048,7 +2056,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       ),
     );
     await player.play(
-      isRemoteMediaPath(track.path)
+      isUriMediaPath(track.path)
           ? UrlSource(track.path)
           : DeviceFileSource(track.path),
     );
@@ -3012,7 +3020,7 @@ class _PlayerPageState extends State<PlayerPage>
     final identity = current?.identityKey;
     final needsLocalDsp =
         current != null &&
-        !isRemoteMediaPath(current.path) &&
+        !isUriMediaPath(current.path) &&
         !isMidiFilePath(current.path);
     if (!mounted) return;
     setState(() => _equalizerEnabled = enabled);
@@ -4190,7 +4198,7 @@ class _PlayerPageState extends State<PlayerPage>
       _resumePositions.remove(track.identityKey);
       final trackVolume = _volumeFor(track);
       final shouldUseDsp =
-          !isRemoteMediaPath(track.path) &&
+          !isUriMediaPath(track.path) &&
           !isMidiFilePath(track.path) &&
           (_equalizerEnabled || isTrackerModulePath(track.path));
       if (Platform.isWindows && isMidiFilePath(track.path)) {
@@ -4236,7 +4244,7 @@ class _PlayerPageState extends State<PlayerPage>
         } else {
           await _player.stop();
           await _player.play(
-            isRemoteMediaPath(track.path)
+            isUriMediaPath(track.path)
                 ? UrlSource(track.path)
                 : DeviceFileSource(track.path),
           );
@@ -4382,7 +4390,7 @@ class _PlayerPageState extends State<PlayerPage>
       await incomingPlayer.setVolume(0);
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
-        isRemoteMediaPath(track.path)
+        isUriMediaPath(track.path)
             ? UrlSource(track.path)
             : DeviceFileSource(track.path),
       );
@@ -5373,7 +5381,7 @@ class _PlayerPageState extends State<PlayerPage>
     final tracks = <Track>[];
     final seen = <String>{};
     for (final track in selected) {
-      if (isRemoteMediaPath(track.path)) continue;
+      if (isUriMediaPath(track.path)) continue;
       if (seen.add(track.path)) tracks.add(track);
     }
     if (tracks.isEmpty) {
@@ -5436,7 +5444,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _convertTrackToM4a(Track track) async {
-    if (isRemoteMediaPath(track.path)) return;
+    if (isUriMediaPath(track.path)) return;
     final destination = await _pickFolderLocation('Choose a conversion folder');
     if (!mounted || destination == null) return;
     final usedNames = <String>{};
@@ -6076,7 +6084,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _replaceArtwork(Track track) async {
-    if (isRemoteMediaPath(track.path)) {
+    if (isUriMediaPath(track.path)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Cover art can only be embedded in local files.'),
@@ -8269,7 +8277,7 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
                 onPressed: () => _replaceArtwork(track),
               ),
-              if (!isRemoteMediaPath(track.path))
+              if (!isUriMediaPath(track.path))
                 IconButton(
                   tooltip: 'Convert to M4A',
                   icon: const Icon(

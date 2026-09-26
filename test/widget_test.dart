@@ -545,6 +545,8 @@ FILE "disc image.flac" WAVE
     expect(isRemoteMediaPath('HTTP://example.test/song.mp3'), isTrue);
     expect(isRemoteMediaPath('https://example.test/song.mp3'), isTrue);
     expect(isRemoteMediaPath('content://media/song.mp3'), isFalse);
+    expect(isContentMediaPath('content://media/song.mp3'), isTrue);
+    expect(isUriMediaPath('content://media/song.mp3'), isTrue);
     expect(isRemoteMediaPath(r'C:\Music\song.mp3'), isFalse);
   });
 
