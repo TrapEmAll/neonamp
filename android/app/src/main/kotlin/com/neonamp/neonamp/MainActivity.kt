@@ -274,7 +274,7 @@ class MainActivity : AudioServiceActivity() {
             it.delete()
         }
         val audioExtensions = setOf(
-            "mp3", "flac", "wav", "wave", "ogg", "oga", "m4a", "mp4", "aac", "wma",
+            "mp3", "flac", "wav", "wave", "ogg", "oga", "m4a", "m4b", "mp4", "aac", "wma",
             "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
             "mka", "mid", "midi", "kar", "669", "amf", "ams", "dbm",
             "dmf", "dsm", "far", "gdm", "gtk", "it", "j2b", "m15",
@@ -347,7 +347,7 @@ class MainActivity : AudioServiceActivity() {
                             "audio/flac", "audio/x-flac" -> "flac"
                             "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
                             "audio/ogg", "application/ogg", "audio/oga" -> "ogg"
-                            "audio/mp4", "audio/x-m4a" -> "m4a"
+                            "audio/mp4", "audio/x-m4a", "audio/x-m4b" -> "m4a"
                             "audio/aac", "audio/x-aac", "audio/aacp" -> "aac"
                             "audio/opus" -> "opus"
                             "audio/aiff", "audio/x-aiff" -> "aiff"
