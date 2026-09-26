@@ -3567,8 +3567,14 @@ class _PlayerPageState extends State<PlayerPage>
     var added = 0;
     var skipped = 0;
     for (final file in result) {
-      final path = file.path;
-      if (path == null || _queue.any((track) => track.path == path)) {
+      late final String path;
+      try {
+        path = await _localPickedFilePath(file);
+      } on Object {
+        skipped++;
+        continue;
+      }
+      if (_queue.any((track) => track.path == path)) {
         skipped++;
         continue;
       }
@@ -4782,10 +4788,15 @@ class _PlayerPageState extends State<PlayerPage>
       dialogTitle: 'Choose videos to play',
     );
     if (!mounted) return;
-    final files = selectedFiles
-        .where((file) => file.path != null && isSupportedVideoPath(file.path!))
-        .map((file) => File(file.path!))
-        .toList();
+    final files = <File>[];
+    for (final selected in selectedFiles) {
+      try {
+        final path = await _localPickedFilePath(selected);
+        if (isSupportedVideoPath(path)) files.add(File(path));
+      } on Object {
+        // Provider-backed selections that cannot be materialized are skipped.
+      }
+    }
     if (files.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No playable video files were selected.')),
@@ -6189,9 +6200,10 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     final result = await FilePicker.pickFiles(type: FileType.image);
-    if (!mounted || result.isEmpty || result.first.path == null) return;
+    if (!mounted || result.isEmpty) return;
     try {
-      final imageFile = File(result.first.path!);
+      final imagePath = await _localPickedFilePath(result.first);
+      final imageFile = File(imagePath);
       final bytes = await imageFile.readAsBytes();
       if (bytes.isEmpty) throw const FormatException('The image is empty.');
       final extension = imageFile.path.split('.').last.toLowerCase();
