@@ -102,6 +102,16 @@ bool isSupportedLibraryAudioPath(String path) {
           midiFileExtensions.contains(lowerPath.substring(dot + 1)));
 }
 
+bool isRemoteMediaPath(String path) {
+  final scheme = Uri.tryParse(path)?.scheme.toLowerCase();
+  return scheme == 'http' || scheme == 'https';
+}
+
+bool isHttpUri(Uri? uri) {
+  final scheme = uri?.scheme.toLowerCase();
+  return scheme == 'http' || scheme == 'https';
+}
+
 int nextQueueIndex({
   required int selected,
   required int length,
@@ -2030,7 +2040,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       ),
     );
     await player.play(
-      track.path.startsWith('http')
+      isRemoteMediaPath(track.path)
           ? UrlSource(track.path)
           : DeviceFileSource(track.path),
     );
@@ -2882,7 +2892,7 @@ class _PlayerPageState extends State<PlayerPage>
     final current = _current;
     final needsLocalDsp =
         current != null &&
-        !current.path.startsWith('http') &&
+        !isRemoteMediaPath(current.path) &&
         !isMidiFilePath(current.path);
     if (!mounted) return;
     setState(() => _equalizerEnabled = enabled);
@@ -3572,6 +3582,7 @@ class _PlayerPageState extends State<PlayerPage>
           )
           .toList();
       if (oldFilesystemFolders.isNotEmpty) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -3649,7 +3660,7 @@ class _PlayerPageState extends State<PlayerPage>
           if (path.isEmpty || path.startsWith('#')) continue;
           final uri = Uri.tryParse(path);
           final scheme = uri?.scheme.toLowerCase();
-          final isStream = scheme == 'http' || scheme == 'https';
+          final isStream = isHttpUri(uri);
           if (!isStream) {
             path =
                 resolvePlaylistLibraryPath(
@@ -3985,7 +3996,7 @@ class _PlayerPageState extends State<PlayerPage>
       _resumePositions.remove(track.identityKey);
       final trackVolume = _volumeFor(track);
       final shouldUseDsp =
-          !track.path.startsWith('http') &&
+          !isRemoteMediaPath(track.path) &&
           !isMidiFilePath(track.path) &&
           (_equalizerEnabled || isTrackerModulePath(track.path));
       if (Platform.isWindows && isMidiFilePath(track.path)) {
@@ -4031,7 +4042,7 @@ class _PlayerPageState extends State<PlayerPage>
         } else {
           await _player.stop();
           await _player.play(
-            track.path.startsWith('http')
+            isRemoteMediaPath(track.path)
                 ? UrlSource(track.path)
                 : DeviceFileSource(track.path),
           );
@@ -4159,19 +4170,19 @@ class _PlayerPageState extends State<PlayerPage>
         _playHistory
           ..clear()
           ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        final updatedTrack = track.copyWith(playCount: track.playCount + 1);
         final libraryIndex = _library.indexWhere(
           (item) => item.path == track.path,
         );
         if (libraryIndex >= 0) {
-          _library[libraryIndex] = track.copyWith(
-            playCount: track.playCount + 1,
-          );
+          _library[libraryIndex] = updatedTrack;
         }
+        _queue[next] = updatedTrack;
       });
       await incomingPlayer.setVolume(0);
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
-        track.path.startsWith('http')
+        isRemoteMediaPath(track.path)
             ? UrlSource(track.path)
             : DeviceFileSource(track.path),
       );
@@ -4229,14 +4240,14 @@ class _PlayerPageState extends State<PlayerPage>
         _playHistory
           ..clear()
           ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        final updatedTrack = track.copyWith(playCount: track.playCount + 1);
         final libraryIndex = _library.indexWhere(
           (item) => item.path == track.path,
         );
         if (libraryIndex >= 0) {
-          _library[libraryIndex] = track.copyWith(
-            playCount: track.playCount + 1,
-          );
+          _library[libraryIndex] = updatedTrack;
         }
+        _queue[next] = updatedTrack;
       });
       await incomingPlayer.play(
         track.path,
@@ -4289,7 +4300,12 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _remove(int index) async {
-    if (index < 0 || index >= _queue.length) return;
+    if (!mounted ||
+        _selectionInProgress ||
+        index < 0 ||
+        index >= _queue.length) {
+      return;
+    }
     final removedIdentity = _queue[index].identityKey;
     final removingCurrent = index == _selected;
     if (removingCurrent) await _stopCurrent();
@@ -4345,7 +4361,9 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _reorderQueue(int oldIndex, int newIndex) async {
-    if (oldIndex == newIndex ||
+    if (!mounted ||
+        _selectionInProgress ||
+        oldIndex == newIndex ||
         oldIndex < 0 ||
         oldIndex >= _queue.length ||
         newIndex < 0) {
@@ -4364,6 +4382,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _clearQueue() async {
+    if (_selectionInProgress) return;
     _castPositionTimer?.cancel();
     _resumeSaveTimer?.cancel();
     await _stopCurrent();
@@ -4410,7 +4429,7 @@ class _PlayerPageState extends State<PlayerPage>
     );
     if (!mounted || url == null || url.isEmpty) return;
     final uri = Uri.tryParse(url);
-    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+    if (!isHttpUri(uri)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -4789,11 +4808,9 @@ class _PlayerPageState extends State<PlayerPage>
         ],
       ),
     );
-    if (url == null || url.isEmpty) return;
+    if (!mounted || url == null || url.isEmpty) return;
     final parsed = Uri.tryParse(url);
-    if (parsed == null ||
-        (parsed.scheme != 'http' && parsed.scheme != 'https') ||
-        parsed.host.isEmpty) {
+    if (parsed == null || !isHttpUri(parsed) || parsed.host.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Enter a valid podcast HTTP(S) URL.')),
@@ -4961,7 +4978,7 @@ class _PlayerPageState extends State<PlayerPage>
       final enclosure = enclosurePattern.firstMatch(item)?.group(1);
       final enclosureUri = enclosure == null ? null : Uri.tryParse(enclosure);
       if (enclosureUri == null ||
-          (enclosureUri.scheme != 'http' && enclosureUri.scheme != 'https') ||
+          !isHttpUri(enclosureUri) ||
           enclosureUri.host.isEmpty) {
         continue;
       }
@@ -4994,8 +5011,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _downloadPodcastEpisode(Track track) async {
     final episodeUri = Uri.tryParse(track.path);
-    if (episodeUri == null ||
-        (episodeUri.scheme != 'http' && episodeUri.scheme != 'https')) {
+    if (episodeUri == null || !isHttpUri(episodeUri)) {
       return;
     }
     final directory = await _pickFolderLocation(
@@ -5135,7 +5151,7 @@ class _PlayerPageState extends State<PlayerPage>
     final tracks = <Track>[];
     final seen = <String>{};
     for (final track in selected) {
-      if (track.path.startsWith('http')) continue;
+      if (isRemoteMediaPath(track.path)) continue;
       if (seen.add(track.path)) tracks.add(track);
     }
     if (tracks.isEmpty) {
@@ -5198,7 +5214,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _convertTrackToM4a(Track track) async {
-    if (track.path.startsWith('http')) return;
+    if (isRemoteMediaPath(track.path)) return;
     final destination = await _pickFolderLocation('Choose a conversion folder');
     if (destination == null) return;
     final usedNames = <String>{};
@@ -5837,7 +5853,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _replaceArtwork(Track track) async {
-    if (track.path.startsWith('http')) {
+    if (isRemoteMediaPath(track.path)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Cover art can only be embedded in local files.'),
@@ -6431,6 +6447,7 @@ class _PlayerPageState extends State<PlayerPage>
                                 Switch(
                                   value: plugin.enabled,
                                   onChanged: (value) {
+                                    if (!mounted) return;
                                     setState(
                                       () => _plugins[plugin.id] = plugin
                                           .copyWith(enabled: value),
@@ -6443,6 +6460,7 @@ class _PlayerPageState extends State<PlayerPage>
                                   tooltip: 'Remove plugin',
                                   icon: const Icon(Icons.delete_outline),
                                   onPressed: () {
+                                    if (!mounted) return;
                                     setState(() => _plugins.remove(plugin.id));
                                     unawaited(_saveQueue());
                                     setDialogState(() {});
@@ -7989,7 +8007,7 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
                 onPressed: () => _replaceArtwork(track),
               ),
-              if (!track.path.startsWith('http'))
+              if (!isRemoteMediaPath(track.path))
                 IconButton(
                   tooltip: 'Convert to M4A',
                   icon: const Icon(
@@ -8017,7 +8035,7 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
                 onPressed: () => _addTrackToPlaylist(track),
               ),
-              if (track.album == 'Podcast' && track.path.startsWith('http'))
+              if (track.album == 'Podcast' && isRemoteMediaPath(track.path))
                 IconButton(
                   tooltip: 'Download episode',
                   icon: const Icon(

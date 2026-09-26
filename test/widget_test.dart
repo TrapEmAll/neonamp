@@ -539,6 +539,19 @@ FILE "disc image.flac" WAVE
     expect(normalizePlaybackSpeed(4), 2.0);
   });
 
+  test('remote media detection accepts mixed-case HTTP URLs only', () {
+    expect(isRemoteMediaPath('HTTP://example.test/song.mp3'), isTrue);
+    expect(isRemoteMediaPath('https://example.test/song.mp3'), isTrue);
+    expect(isRemoteMediaPath('content://media/song.mp3'), isFalse);
+    expect(isRemoteMediaPath(r'C:\Music\song.mp3'), isFalse);
+  });
+
+  test('HTTP URI validation is case-insensitive and rejects local paths', () {
+    expect(isHttpUri(Uri.parse('HtTpS://example.test/feed.xml')), isTrue);
+    expect(isHttpUri(Uri.parse('file:///song.mp3')), isFalse);
+    expect(isHttpUri(null), isFalse);
+  });
+
   test('video queue wraps in both directions and filters extensions', () {
     expect(wrappedVideoIndex(3, 3), 0);
     expect(wrappedVideoIndex(-1, 3), 2);
