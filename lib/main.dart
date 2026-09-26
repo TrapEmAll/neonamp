@@ -1990,6 +1990,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Duration? _trackEnd;
   Duration _lastPosition = Duration.zero;
   bool _closed = false;
+  int _commandGeneration = 0;
 
   void _bindPlayerStreams() {
     _positionSubscription = player.onPositionChanged.listen(
@@ -2010,19 +2011,24 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   Future<void> switchPlayer(AudioPlayer nextPlayer) async {
     if (_closed) return;
+    final generation = ++_commandGeneration;
     await _positionSubscription?.cancel();
     await _durationSubscription?.cancel();
     await _stateSubscription?.cancel();
+    if (_closed || generation != _commandGeneration) return;
     player = nextPlayer;
     _bindPlayerStreams();
     _broadcast();
   }
 
   Future<void> playTrack(Track track, {double? playbackSpeed}) async {
+    if (_closed) return;
+    final generation = ++_commandGeneration;
     if (playbackSpeed != null) {
       _playbackSpeed = normalizePlaybackSpeed(playbackSpeed);
     }
     await player.stop();
+    if (_closed || generation != _commandGeneration) return;
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
     _lastPosition = Duration.zero;
@@ -2044,16 +2050,23 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           ? UrlSource(track.path)
           : DeviceFileSource(track.path),
     );
+    if (_closed || generation != _commandGeneration) {
+      return;
+    }
     await player.setPlaybackRate(_playbackSpeed);
   }
 
   Future<void> setPlaybackSpeed(double speed) async {
+    if (_closed) return;
+    final generation = ++_commandGeneration;
     _playbackSpeed = normalizePlaybackSpeed(speed);
     await player.setPlaybackRate(_playbackSpeed);
+    if (_closed || generation != _commandGeneration) return;
     _broadcast();
   }
 
   void publishTrack(Track track) {
+    if (_closed) return;
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
     _lastPosition = Duration.zero;
@@ -2083,6 +2096,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     Duration? duration,
     required PlayerState state,
   }) {
+    if (_closed) return;
     final current = mediaItem.value;
     if (current != null && duration != null) {
       mediaItem.add(current.copyWith(duration: duration));
@@ -2091,16 +2105,22 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   @override
-  Future<void> play() => onPlayRequested?.call() ?? player.resume();
+  Future<void> play() => _closed
+      ? Future<void>.value()
+      : onPlayRequested?.call() ?? player.resume();
 
   @override
-  Future<void> pause() => onPauseRequested?.call() ?? player.pause();
+  Future<void> pause() => _closed
+      ? Future<void>.value()
+      : onPauseRequested?.call() ?? player.pause();
 
   @override
-  Future<void> stop() => onStopRequested?.call() ?? player.stop();
+  Future<void> stop() =>
+      _closed ? Future<void>.value() : onStopRequested?.call() ?? player.stop();
 
   @override
   Future<void> seek(Duration position) {
+    if (_closed) return Future<void>.value();
     final duration = mediaItem.value?.duration;
     final target = position.isNegative
         ? Duration.zero
@@ -2112,11 +2132,13 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   @override
   Future<void> skipToNext() async {
+    if (_closed) return;
     await onNext?.call();
   }
 
   @override
   Future<void> skipToPrevious() async {
+    if (_closed) return;
     await onPrevious?.call();
   }
 
@@ -2135,6 +2157,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   void _broadcast({Duration? position, PlayerState? state}) {
+    if (_closed) return;
     final currentState = state ?? player.state;
     final duration = mediaItem.value?.duration;
     if (position != null) _lastPosition = position;
