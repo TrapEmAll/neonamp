@@ -3390,7 +3390,9 @@ class _PlayerPageState extends State<PlayerPage>
       });
       added++;
     }
+    if (!mounted) return;
     await _saveQueue();
+    if (!mounted) return;
     if (queueWasEmpty && _queue.isNotEmpty) await _select(0);
     if (mounted && skipped > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3414,6 +3416,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
         return;
       }
+      if (!mounted) return;
       if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
       await _saveQueue();
     } on Object catch (error) {
@@ -3515,6 +3518,7 @@ class _PlayerPageState extends State<PlayerPage>
           )
           .toList();
     }
+    var added = 0;
     for (final file in files) {
       final existingLibrary = _library
           .where((track) => track.path == file.path)
@@ -3522,7 +3526,12 @@ class _PlayerPageState extends State<PlayerPage>
       final existingQueue = _queue
           .where((track) => track.path == file.path)
           .firstOrNull;
-      final scannedTrack = await _readTrack(file.path, file.name);
+      late final Track scannedTrack;
+      try {
+        scannedTrack = await _readTrack(file.path, file.name);
+      } on Object {
+        continue;
+      }
       final track = scannedTrack.copyWith(
         rating: existingLibrary?.rating ?? existingQueue?.rating,
         playCount: existingLibrary?.playCount ?? existingQueue?.playCount,
@@ -3546,8 +3555,9 @@ class _PlayerPageState extends State<PlayerPage>
           _queue.add(track);
         }
       });
+      added++;
     }
-    return files.length;
+    return added;
   }
 
   Future<void> _rescanFolders() async {
@@ -3576,6 +3586,7 @@ class _PlayerPageState extends State<PlayerPage>
             );
             if (directory == null) return;
             await _scanFolder(directory);
+            if (!mounted) return;
             final index = _libraryFolders.indexOf(oldFolder);
             if (index >= 0) _libraryFolders[index] = directory;
             await _saveQueue();
@@ -3596,6 +3607,7 @@ class _PlayerPageState extends State<PlayerPage>
       try {
         if (Platform.isAndroid || Directory(folder).existsSync()) {
           await _scanFolder(folder);
+          if (!mounted) return;
         }
       } on Object catch (error) {
         if (!mounted) return;
@@ -3604,6 +3616,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     }
+    if (!mounted) return;
     await _saveQueue();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4395,7 +4408,7 @@ class _PlayerPageState extends State<PlayerPage>
         ],
       ),
     );
-    if (url == null || url.isEmpty) return;
+    if (!mounted || url == null || url.isEmpty) return;
     final uri = Uri.tryParse(url);
     if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
       if (mounted) {
@@ -4424,6 +4437,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
+    if (!mounted) return;
     await _saveQueue();
   }
 
