@@ -4682,6 +4682,7 @@ class _PlayerPageState extends State<PlayerPage>
         if (path != null) selected['streamUrl'] = path;
       }
       if (path == null) return;
+      if (!mounted) return;
       final name = (selected['name'] as String? ?? 'Internet radio').trim();
       final track = Track(
         path: path,
@@ -4729,7 +4730,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _toggleRadioFavorite(Map<String, dynamic> station) async {
     final path = _stationStreamUrl(station);
-    if (path == null) return;
+    if (!mounted || path == null) return;
     final name = (station['name'] as String? ?? 'Internet radio').trim();
     final existingIndex = _library.indexWhere((track) => track.path == path);
     setState(() {
@@ -6639,11 +6640,13 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _playSmartPlaylist(SmartPlaylist playlist) async {
     final tracks = _tracksForSmartPlaylist(playlist);
     if (tracks.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('No tracks match ${playlist.name}.')),
       );
       return;
     }
+    if (!mounted) return;
     setState(() {
       _queue
         ..clear()
@@ -6673,7 +6676,7 @@ class _PlayerPageState extends State<PlayerPage>
             .toList(),
       ),
     );
-    if (name == null) return;
+    if (!mounted || name == null) return;
     setState(() {
       final tracks = _playlists[name]!;
       if (!tracks.contains(track.path)) tracks.add(track.path);
