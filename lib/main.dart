@@ -3038,7 +3038,7 @@ class _PlayerPageState extends State<PlayerPage>
     final identity = current?.identityKey;
     final needsLocalDsp =
         current != null &&
-        !isUriMediaPath(current.path) &&
+        (!isUriMediaPath(current.path) || isContentMediaPath(current.path)) &&
         !isMidiFilePath(current.path);
     if (!mounted) return;
     setState(() => _equalizerEnabled = enabled);
@@ -4157,8 +4157,11 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _playStandardTrack(Track track) async {
-    final sourcePath = await _playbackSourcePath(track);
+  Future<void> _playStandardTrack(
+    Track track, {
+    String? sourcePath,
+  }) async {
+    sourcePath ??= await _playbackSourcePath(track);
     await _player.setBalance(_balance);
     await _player.setVolume(_volumeFor(track));
     if (_audioHandler != null) {
@@ -4242,8 +4245,11 @@ class _PlayerPageState extends State<PlayerPage>
       // later manual selection unexpectedly resume in the middle.
       _resumePositions.remove(track.identityKey);
       final trackVolume = _volumeFor(track);
+      // Provider-backed Android media is stored as content:// so the library
+      // can be restored, but the DSP engine requires a local file path.
+      final sourcePath = await _playbackSourcePath(track);
       final shouldUseDsp =
-          !isUriMediaPath(track.path) &&
+          !isUriMediaPath(sourcePath) &&
           !isMidiFilePath(track.path) &&
           (_equalizerEnabled || isTrackerModulePath(track.path));
       if (Platform.isWindows && isMidiFilePath(track.path)) {
@@ -4266,7 +4272,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
         try {
           await _dspPlayer.play(
-            track.path,
+            sourcePath,
             volume: trackVolume,
             playbackSpeed: _playbackSpeed,
             equalizerEnabled: _equalizerEnabled,
@@ -4280,7 +4286,7 @@ class _PlayerPageState extends State<PlayerPage>
           );
           await _dspPlayer.stop();
           _dspActive = false;
-          await _playStandardTrack(track);
+          await _playStandardTrack(track, sourcePath: sourcePath);
         }
       } else {
         if (_midiActive) {
@@ -4291,7 +4297,7 @@ class _PlayerPageState extends State<PlayerPage>
           await _dspPlayer.stop();
           _dspActive = false;
         }
-        await _playStandardTrack(track);
+        await _playStandardTrack(track, sourcePath: sourcePath);
       }
       // Cue tracks still need their source cue offset applied. Ordinary tracks
       // already start at zero after playTrack()/AudioPlayer.play().
@@ -4397,6 +4403,14 @@ class _PlayerPageState extends State<PlayerPage>
     if (_current?.cueStartMs != null || _queue[next].cueStartMs != null) {
       return;
     }
+    if (_dspActive &&
+        (isHttpUri(Uri.tryParse(_queue[next].path)) ||
+            isMidiFilePath(_queue[next].path))) {
+      // DSP playback only accepts local decoded files. Do not leave the
+      // current track playing when the next queue item is a stream or MIDI.
+      await _select(next);
+      return;
+    }
     if (_dspActive) {
       await _crossfadeDspToNext(next);
       return;
@@ -4500,8 +4514,9 @@ class _PlayerPageState extends State<PlayerPage>
         }
         _queue[next] = updatedTrack;
       });
+      final sourcePath = await _playbackSourcePath(track);
       await incomingPlayer.play(
-        track.path,
+        sourcePath,
         volume: 0,
         playbackSpeed: _playbackSpeed,
         equalizerEnabled: _equalizerEnabled,
