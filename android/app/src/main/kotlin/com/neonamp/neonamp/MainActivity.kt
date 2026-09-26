@@ -669,7 +669,9 @@ class MainActivity : AudioServiceActivity() {
             try { encoder?.stop() } catch (_: Throwable) { }
             decoder?.release()
             encoder?.release()
-            if (muxerStarted) muxer?.stop()
+            if (muxerStarted) {
+                try { muxer?.stop() } catch (_: Throwable) { }
+            }
             muxer?.release()
             extractor.release()
         }

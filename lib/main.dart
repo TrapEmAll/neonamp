@@ -4028,6 +4028,19 @@ class _PlayerPageState extends State<PlayerPage>
         await _seekCurrent(Duration.zero);
       }
       await _saveQueue();
+    } on Object catch (error) {
+      _midiActive = false;
+      _dspActive = false;
+      if (mounted) {
+        setState(() {
+          _playerState = PlayerState.stopped;
+          _position = Duration.zero;
+          _duration = Duration.zero;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not play this track: $error')),
+        );
+      }
     } finally {
       _selectionInProgress = false;
     }
