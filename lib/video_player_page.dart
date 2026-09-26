@@ -147,6 +147,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.files.isEmpty) {
+      return const Scaffold(
+        body: Center(child: Text('No playable videos were selected.')),
+      );
+    }
     final controller = _controller;
     return Scaffold(
       backgroundColor: Colors.black,

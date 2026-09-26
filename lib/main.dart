@@ -1978,6 +1978,8 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   double _playbackSpeed = 1.0;
   Duration _trackStart = Duration.zero;
   Duration? _trackEnd;
+  Duration _lastPosition = Duration.zero;
+  bool _closed = false;
 
   void _bindPlayerStreams() {
     _positionSubscription = player.onPositionChanged.listen(
@@ -1997,6 +1999,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   Future<void> switchPlayer(AudioPlayer nextPlayer) async {
+    if (_closed) return;
     await _positionSubscription?.cancel();
     await _durationSubscription?.cancel();
     await _stateSubscription?.cancel();
@@ -2012,6 +2015,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     await player.stop();
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
+    _lastPosition = Duration.zero;
     final duration = track.cueEnd == null
         ? null
         : track.cueEnd! - track.cueStart;
@@ -2042,6 +2046,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   void publishTrack(Track track) {
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
+    _lastPosition = Duration.zero;
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
@@ -2105,10 +2110,25 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     await onPrevious?.call();
   }
 
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _positionSubscription?.cancel();
+    await _durationSubscription?.cancel();
+    await _stateSubscription?.cancel();
+    onNext = null;
+    onPrevious = null;
+    onPlayRequested = null;
+    onPauseRequested = null;
+    onStopRequested = null;
+    onSeekRequested = null;
+  }
+
   void _broadcast({Duration? position, PlayerState? state}) {
     final currentState = state ?? player.state;
     final duration = mediaItem.value?.duration;
-    var updatePosition = position ?? Duration.zero;
+    if (position != null) _lastPosition = position;
+    var updatePosition = _lastPosition;
     if (updatePosition.isNegative) updatePosition = Duration.zero;
     if (duration != null && updatePosition > duration)
       updatePosition = duration;
@@ -2366,25 +2386,31 @@ class _PlayerPageState extends State<PlayerPage>
     const channel = MethodChannel('neonamp/system_controls');
     channel.setMethodCallHandler((call) async {
       if (call.method != 'mediaKey') return null;
-      switch (call.arguments as String?) {
-        case 'playPause':
-          await _togglePlay();
-          break;
-        case 'play':
-          if (!_isPlaying) await _togglePlay();
-          break;
-        case 'pause':
-          if (_isPlaying) await _pauseCurrent();
-          break;
-        case 'next':
-          await _next();
-          break;
-        case 'previous':
-          await _previous();
-          break;
-        case 'stop':
-          await _stopCurrent();
-          break;
+      final action = call.arguments;
+      if (action is! String || !mounted) return null;
+      try {
+        switch (action) {
+          case 'playPause':
+            await _togglePlay();
+            break;
+          case 'play':
+            if (!_isPlaying) await _togglePlay();
+            break;
+          case 'pause':
+            if (_isPlaying) await _pauseCurrent();
+            break;
+          case 'next':
+            await _next();
+            break;
+          case 'previous':
+            await _previous();
+            break;
+          case 'stop':
+            await _stopCurrent();
+            break;
+        }
+      } on Object catch (error) {
+        debugPrint('Windows media key action failed: $error');
       }
       return null;
     });
@@ -2544,6 +2570,11 @@ class _PlayerPageState extends State<PlayerPage>
           androidStopForegroundOnPause: false,
         ),
       );
+      if (!mounted) {
+        await _audioHandler?.close();
+        _audioHandler = null;
+        return;
+      }
     } on Object catch (error) {
       debugPrint('Android audio service unavailable: $error');
       return;
@@ -4224,6 +4255,7 @@ class _PlayerPageState extends State<PlayerPage>
     final removedIdentity = _queue[index].identityKey;
     final removingCurrent = index == _selected;
     if (removingCurrent) await _stopCurrent();
+    if (!mounted) return;
     setState(() {
       _queue.removeAt(index);
       if (_queue.isEmpty) {
@@ -4236,7 +4268,7 @@ class _PlayerPageState extends State<PlayerPage>
         _midiActive = false;
         _dspActive = false;
         _position = Duration.zero;
-        _duration = _queue.isEmpty ? Duration.zero : _duration;
+        _duration = Duration.zero;
         _playerState = PlayerState.stopped;
       }
     });
@@ -4295,6 +4327,7 @@ class _PlayerPageState extends State<PlayerPage>
     _resumeSaveTimer?.cancel();
     await _stopCurrent();
     if (_dspActive) await _dspPlayer.stop();
+    if (!mounted) return;
     setState(() {
       _midiActive = false;
       _dspActive = false;
@@ -7158,6 +7191,10 @@ class _PlayerPageState extends State<PlayerPage>
     _midiDurationSub?.cancel();
     _midiStateSub?.cancel();
     _midiCompleteSub?.cancel();
+    unawaited(_audioHandler?.close());
+    if (Platform.isWindows) {
+      const MethodChannel('neonamp/system_controls').setMethodCallHandler(null);
+    }
     _searchController.dispose();
     _pulse.dispose();
     _player.dispose();

@@ -151,7 +151,7 @@ class DspLocalPlayer {
         final renderedModulePath = _renderedModulePath;
         _renderedModulePath = null;
         if (source != null) {
-          unawaited(soloud.SoLoud.instance.disposeSource(source));
+          unawaited(_disposeSourceSafely(source));
         }
         if (renderedModulePath != null) {
           unawaited(_deleteRenderedModule(renderedModulePath));
@@ -174,6 +174,14 @@ class DspLocalPlayer {
       if (await file.exists()) await file.delete();
     } on Object {
       // Temporary tracker output is best-effort cleanup.
+    }
+  }
+
+  Future<void> _disposeSourceSafely(soloud.AudioSource source) async {
+    try {
+      await soloud.SoLoud.instance.disposeSource(source);
+    } on Object {
+      // SoLoud may already have released a source after voice completion.
     }
   }
 
