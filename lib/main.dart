@@ -6278,10 +6278,30 @@ class _PlayerPageState extends State<PlayerPage>
       );
       if (libraryIndex >= 0) _library[libraryIndex] = updated;
       for (var i = 0; i < _queue.length; i++) {
-        if (_queue[i].path == track.path) _queue[i] = updated;
+        if (_queue[i].path == track.path) {
+          _queue[i] = _mergeEditedMetadata(_queue[i], updated);
+        }
       }
     });
     await _saveQueue();
+  }
+
+  Track _mergeEditedMetadata(Track existing, Track updated) {
+    final isCueTrack = existing.cueStartMs != null;
+    return existing.copyWith(
+      name: isCueTrack ? existing.name : updated.name,
+      artist: isCueTrack ? existing.artist : updated.artist,
+      album: isCueTrack ? existing.album : updated.album,
+      genre: updated.genre,
+      year: updated.year,
+      trackNumber: isCueTrack ? existing.trackNumber : updated.trackNumber,
+      trackTotal: isCueTrack ? existing.trackTotal : updated.trackTotal,
+      discNumber: isCueTrack ? existing.discNumber : updated.discNumber,
+      discTotal: isCueTrack ? existing.discTotal : updated.discTotal,
+      lyrics: updated.lyrics,
+      clearLyrics: updated.lyrics == null,
+      rating: updated.rating,
+    );
   }
 
   void _toggleLibrarySelection(Track track) {
@@ -6404,7 +6424,9 @@ class _PlayerPageState extends State<PlayerPage>
       }
       for (var index = 0; index < _queue.length; index++) {
         final updated = updatedTracks[_queue[index].path];
-        if (updated != null) _queue[index] = updated;
+        if (updated != null) {
+          _queue[index] = _mergeEditedMetadata(_queue[index], updated);
+        }
       }
       _selectedLibraryPaths.clear();
     });
