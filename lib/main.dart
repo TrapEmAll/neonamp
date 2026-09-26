@@ -2420,13 +2420,17 @@ class _PlayerPageState extends State<PlayerPage>
     final track = _current;
     if (track == null) return;
     const channel = MethodChannel('neonamp/system_controls');
-    await channel.invokeMethod<void>('setMediaSession', {
-      'title': track.name,
-      'artist': track.artist,
-      'album': track.album,
-      'isPlaying': _isPlaying,
-      'durationMs': _duration.inMilliseconds,
-    });
+    try {
+      await channel.invokeMethod<void>('setMediaSession', {
+        'title': track.name,
+        'artist': track.artist,
+        'album': track.album,
+        'isPlaying': _isPlaying,
+        'durationMs': _duration.inMilliseconds,
+      });
+    } on PlatformException catch (error) {
+      debugPrint('Could not update Windows media session: $error');
+    }
   }
 
   void _bindPlayerStreams() {
@@ -2462,11 +2466,13 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _durationSub = _player.onDurationChanged.listen((value) {
+      if (!mounted) return;
       final duration = _cueRelativeDuration(_current, value);
       setState(() => _duration = duration);
       _audioHandler?.syncExternalState(duration: duration, state: _playerState);
     });
     _stateSub = _player.onPlayerStateChanged.listen((value) {
+      if (!mounted) return;
       setState(() => _playerState = value);
       unawaited(_syncWindowsMediaSession());
     });
@@ -2531,6 +2537,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || !_midiActive || _selectionInProgress) return;
       setState(() => _position = value);
       _rememberResumePosition(value);
+      _audioHandler?.syncExternalState(position: value, state: _playerState);
     });
     _midiDurationSub = _midiPlayer.onDurationChanged.listen((value) {
       if (!mounted || !_midiActive) return;
@@ -2540,6 +2547,7 @@ class _PlayerPageState extends State<PlayerPage>
     _midiStateSub = _midiPlayer.onPlayerStateChanged.listen((value) {
       if (!mounted || !_midiActive) return;
       setState(() => _playerState = value);
+      _audioHandler?.syncExternalState(position: _position, state: value);
       unawaited(_syncWindowsMediaSession());
     });
     _midiCompleteSub = _midiPlayer.onPlayerComplete.listen((_) {
@@ -2549,15 +2557,20 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _initializeAudioService() async {
     if (!Platform.isAndroid) return;
-    _audioHandler = await AudioService.init(
-      builder: () => NeonAudioHandler(_player),
-      config: AudioServiceConfig(
-        androidNotificationChannelId: 'com.neonamp.audio',
-        androidNotificationChannelName: 'NeonAmp playback',
-        androidNotificationOngoing: true,
-        androidStopForegroundOnPause: false,
-      ),
-    );
+    try {
+      _audioHandler = await AudioService.init(
+        builder: () => NeonAudioHandler(_player),
+        config: AudioServiceConfig(
+          androidNotificationChannelId: 'com.neonamp.audio',
+          androidNotificationChannelName: 'NeonAmp playback',
+          androidNotificationOngoing: true,
+          androidStopForegroundOnPause: false,
+        ),
+      );
+    } on Object catch (error) {
+      debugPrint('Android audio service unavailable: $error');
+      return;
+    }
     _audioHandler!.onNext = _next;
     _audioHandler!.onPrevious = _previous;
     _audioHandler!.onPlayRequested = _playCurrent;
@@ -2731,6 +2744,12 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playCurrent() async {
+    if (_current == null) return;
+    if (_playerState == PlayerState.stopped ||
+        _playerState == PlayerState.completed) {
+      await _select(_selected);
+      return;
+    }
     if (_casting) {
       await _dlnaCast.resume();
       if (mounted) setState(() => _playerState = PlayerState.playing);
@@ -2815,6 +2834,7 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     final value = normalizePlaybackSpeed(speed);
+    if (!mounted) return;
     setState(() => _playbackSpeed = value);
     if (_current != null) {
       if (_dspActive) {
@@ -2837,6 +2857,7 @@ class _PlayerPageState extends State<PlayerPage>
         current != null &&
         !current.path.startsWith('http') &&
         !isMidiFilePath(current.path);
+    if (!mounted) return;
     setState(() => _equalizerEnabled = enabled);
     if (current != null && (wasPlaying || _dspActive || needsLocalDsp)) {
       await _select(_selected);
@@ -2852,6 +2873,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _setReplayGainEnabled(bool enabled) async {
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
+    if (!mounted) return;
     setState(() => _replayGainEnabled = enabled);
     if (_current != null && (wasPlaying || _dspActive)) {
       await _select(_selected);
@@ -2955,6 +2977,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _setSleepTimer(Duration? duration) async {
     _sleepTimer?.cancel();
+    if (!mounted) return;
     setState(
       () => _sleepDeadline = duration == null
           ? null
@@ -3151,13 +3174,17 @@ class _PlayerPageState extends State<PlayerPage>
               ),
             );
           }
-          _volume = (settings['volume'] as num?)?.toDouble() ?? _volume;
+          _volume = ((settings['volume'] as num?)?.toDouble() ?? _volume)
+              .clamp(0.0, 1.0)
+              .toDouble();
           _balance = normalizeStereoBalance(
             (settings['balance'] as num?)?.toDouble() ?? _balance,
           );
           _crossfade = settings['crossfade'] as bool? ?? false;
           _crossfadeSeconds =
-              (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
+              ((settings['crossfadeSeconds'] as num?)?.toInt() ?? 3)
+                  .clamp(1, 12)
+                  .toInt();
           _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
           _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
           _playbackSpeed = normalizePlaybackSpeed(
@@ -3259,6 +3286,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _addFiles() async {
+    final queueWasEmpty = _queue.isEmpty;
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: [
@@ -3295,7 +3323,7 @@ class _PlayerPageState extends State<PlayerPage>
       });
     }
     await _saveQueue();
-    if (_queue.length == result.length && _queue.isNotEmpty) await _select(0);
+    if (queueWasEmpty && _queue.isNotEmpty) await _select(0);
   }
 
   Future<void> _addFolder() async {
@@ -3441,7 +3469,9 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (Platform.isAndroid) {
       final oldFilesystemFolders = _libraryFolders
-          .where((folder) => Uri.tryParse(folder)?.scheme != 'content')
+          .where(
+            (folder) => Uri.tryParse(folder)?.scheme.toLowerCase() != 'content',
+          )
           .toList();
       if (oldFilesystemFolders.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4120,6 +4150,8 @@ class _PlayerPageState extends State<PlayerPage>
         if (_selected >= _queue.length) _selected = _queue.length - 1;
       }
       if (removingCurrent) {
+        _midiActive = false;
+        _dspActive = false;
         _position = Duration.zero;
         _duration = _queue.isEmpty ? Duration.zero : _duration;
         _playerState = PlayerState.stopped;
@@ -4151,12 +4183,18 @@ class _PlayerPageState extends State<PlayerPage>
         _queue.add(track);
         index = _queue.length - 1;
       });
+      await _saveQueue();
     }
     await _select(index);
   }
 
   Future<void> _reorderQueue(int oldIndex, int newIndex) async {
-    if (oldIndex == newIndex || oldIndex < 0 || newIndex < 0) return;
+    if (oldIndex == newIndex ||
+        oldIndex < 0 ||
+        oldIndex >= _queue.length ||
+        newIndex < 0) {
+      return;
+    }
     final selectedIdentity = _current?.identityKey;
     setState(() {
       final track = _queue.removeAt(oldIndex);
@@ -4170,6 +4208,8 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _clearQueue() async {
+    _castPositionTimer?.cancel();
+    _resumeSaveTimer?.cancel();
     await _stopCurrent();
     if (_dspActive) await _dspPlayer.stop();
     setState(() {
@@ -4219,6 +4259,14 @@ class _PlayerPageState extends State<PlayerPage>
           const SnackBar(
             content: Text('Enter a valid HTTP or HTTPS stream URL.'),
           ),
+        );
+      }
+      return;
+    }
+    if (_queue.any((track) => track.path == url)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('That stream is already in the queue.')),
         );
       }
       return;
@@ -5209,8 +5257,18 @@ class _PlayerPageState extends State<PlayerPage>
   void _toggleFavorite(Track track) {
     final index = _library.indexWhere((item) => item.path == track.path);
     if (index < 0) return;
-    setState(() => _library[index] = track.copyWith(favorite: !track.favorite));
-    _saveQueue();
+    final updated = track.copyWith(favorite: !track.favorite);
+    setState(() {
+      _library[index] = updated;
+      for (var queueIndex = 0; queueIndex < _queue.length; queueIndex++) {
+        if (_queue[queueIndex].path == track.path) {
+          _queue[queueIndex] = _queue[queueIndex].copyWith(
+            favorite: updated.favorite,
+          );
+        }
+      }
+    });
+    unawaited(_saveQueue());
   }
 
   Future<void> _editTrack(Track track) async {
@@ -5352,6 +5410,7 @@ class _PlayerPageState extends State<PlayerPage>
       ),
     );
     if (values == null || values.length != 11) return;
+    var metadataPersisted = true;
     try {
       await writeTrackMetadata(File(track.path), values);
       final written = readTrackMetadata(File(track.path));
@@ -5402,6 +5461,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     } catch (_) {
+      metadataPersisted = false;
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -5409,12 +5469,13 @@ class _PlayerPageState extends State<PlayerPage>
           ),
         );
     }
+    if (!metadataPersisted) return;
     final updated = track.copyWith(
       name: values[0],
       artist: values[1],
       album: values[2],
       genre: values[3],
-      rating: int.tryParse(values[4]) ?? track.rating,
+      rating: (int.tryParse(values[4]) ?? track.rating).clamp(0, 5).toInt(),
       year: int.tryParse(values[5]) ?? track.year,
       trackNumber: int.tryParse(values[6]) ?? track.trackNumber,
       trackTotal: int.tryParse(values[7]) ?? track.trackTotal,
@@ -6415,6 +6476,29 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _playPlaylist(String name) async {
+    final paths = _playlists[name];
+    if (paths == null || paths.isEmpty) return;
+    final tracks = paths
+        .map(
+          (path) => _library.firstWhere(
+            (track) => track.path == path,
+            orElse: () =>
+                Track(path: path, name: path.split(RegExp(r'[/\\]')).last),
+          ),
+        )
+        .toList();
+    if (!mounted || tracks.isEmpty) return;
+    setState(() {
+      _queue
+        ..clear()
+        ..addAll(tracks);
+      _selected = 0;
+    });
+    await _saveQueue();
+    await _select(0);
+  }
+
   Future<void> _showEqualizer() async {
     final builtInPresets = builtInEqualizerPresets.keys.toList();
     final pluginPresets = <String, List<double>>{};
@@ -6930,6 +7014,10 @@ class _PlayerPageState extends State<PlayerPage>
     _durationSub?.cancel();
     _stateSub?.cancel();
     _completeSub?.cancel();
+    _dspPositionSub?.cancel();
+    _dspDurationSub?.cancel();
+    _dspStateSub?.cancel();
+    _dspCompleteSub?.cancel();
     _midiPositionSub?.cancel();
     _midiDurationSub?.cancel();
     _midiStateSub?.cancel();
@@ -7878,24 +7966,7 @@ class _PlayerPageState extends State<PlayerPage>
                           fontSize: 11,
                         ),
                       ),
-                      onTap: () {
-                        setState(() {
-                          _queue
-                            ..clear()
-                            ..addAll(
-                              _playlists[name]!.map(
-                                (path) => _library.firstWhere(
-                                  (track) => track.path == path,
-                                  orElse: () => Track(
-                                    path: path,
-                                    name: path.split(RegExp(r'[/\\]')).last,
-                                  ),
-                                ),
-                              ),
-                            );
-                          _selected = 0;
-                        });
-                      },
+                      onTap: () => _playPlaylist(name),
                       trailing: PopupMenuButton<String>(
                         tooltip: 'Playlist actions',
                         onSelected: (action) {
