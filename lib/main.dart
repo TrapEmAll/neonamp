@@ -2680,6 +2680,10 @@ class _PlayerPageState extends State<PlayerPage>
         return;
       }
       setState(() => _duration = value);
+      _audioHandler?.syncExternalState(
+        duration: value,
+        state: _playerState,
+      );
       _runAsyncSafely(
         _syncWindowsMediaSession(),
         'Updating Windows media session',
