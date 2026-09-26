@@ -2414,6 +2414,19 @@ class _PlayerPageState extends State<PlayerPage>
     replayGainEnabled: _replayGainEnabled,
   );
 
+  Future<void> _applyCurrentVolume() async {
+    final current = _current;
+    if (current == null) return;
+    final volume = _volumeFor(current);
+    if (_casting) {
+      await _dlnaCast.setVolume(volume);
+    } else if (_dspActive) {
+      await _dspPlayer.setVolume(volume);
+    } else if (!_midiActive) {
+      await _player.setVolume(volume);
+    }
+  }
+
   void _applyBalance(double value) {
     final balance = normalizeStereoBalance(value);
     if (_current == null) return;
@@ -3043,20 +3056,9 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _setReplayGainEnabled(bool enabled) async {
-    final wasPlaying = _isPlaying;
-    final previousPosition = _position;
-    final identity = _current?.identityKey;
     if (!mounted) return;
     setState(() => _replayGainEnabled = enabled);
-    if (_current != null && (wasPlaying || _dspActive)) {
-      await _select(_selected);
-      if (mounted && identity == _current?.identityKey) {
-        if (previousPosition > Duration.zero) {
-          await _seekCurrent(previousPosition);
-        }
-        if (!wasPlaying) await _pauseCurrent();
-      }
-    }
+    await _applyCurrentVolume();
     if (!mounted) return;
     await _saveQueue();
   }
