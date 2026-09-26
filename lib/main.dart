@@ -5970,7 +5970,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   List<Track> _tracksForSmartPlaylist(SmartPlaylist playlist) {
-    final tracks = _library.where((track) {
+    var tracks = _library.where((track) {
       bool matches(SmartCriterion criterion) {
         final value = criterion.value.toLowerCase();
         switch (criterion.rule) {
@@ -5999,19 +5999,20 @@ class _PlayerPageState extends State<PlayerPage>
           : results.any((result) => result);
     }).toList();
     if (playlist.sortBy == 'Added') {
-      return playlist.descending ? tracks.reversed.toList() : tracks;
+      if (playlist.descending) tracks = tracks.reversed.toList();
+    } else {
+      tracks.sort((a, b) {
+        final comparison = switch (playlist.sortBy) {
+          'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          'Artist' => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+          'Album' => a.album.toLowerCase().compareTo(b.album.toLowerCase()),
+          'Rating' => a.rating.compareTo(b.rating),
+          'Play count' => a.playCount.compareTo(b.playCount),
+          _ => 0,
+        };
+        return playlist.descending ? -comparison : comparison;
+      });
     }
-    tracks.sort((a, b) {
-      final comparison = switch (playlist.sortBy) {
-        'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-        'Artist' => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
-        'Album' => a.album.toLowerCase().compareTo(b.album.toLowerCase()),
-        'Rating' => a.rating.compareTo(b.rating),
-        'Play count' => a.playCount.compareTo(b.playCount),
-        _ => 0,
-      };
-      return playlist.descending ? -comparison : comparison;
-    });
     if (playlist.limit > 0 && tracks.length > playlist.limit) {
       return tracks.sublist(0, playlist.limit);
     }
