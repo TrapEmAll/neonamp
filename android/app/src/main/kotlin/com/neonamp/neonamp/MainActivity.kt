@@ -61,6 +61,26 @@ class MainActivity : AudioServiceActivity() {
                             }.start()
                         }
                     }
+                    "materializeUri" -> {
+                        val sourceUri = call.argument<String>("uri")
+                        val displayName = call.argument<String>("name").orEmpty()
+                        if (sourceUri.isNullOrBlank() ||
+                            !sourceUri.startsWith("content:", ignoreCase = true)
+                        ) {
+                            result.error("invalid_arguments", "A content URI is required.", null)
+                        } else {
+                            Thread {
+                                try {
+                                    val path = materializeContentUri(Uri.parse(sourceUri), displayName)
+                                    runOnUiThread { result.success(path) }
+                                } catch (error: Throwable) {
+                                    runOnUiThread {
+                                        result.error("uri_materialization_failed", error.message, null)
+                                    }
+                                }
+                            }.start()
+                        }
+                    }
                     "copyFileToFolder" -> {
                         val folderUri = call.argument<String>("uri")
                         val sourcePath = call.argument<String>("sourcePath")
@@ -409,6 +429,47 @@ class MainActivity : AudioServiceActivity() {
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
+
+    private fun materializeContentUri(sourceUri: Uri, displayName: String): String {
+        val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        val extension = displayName.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
+            ?: "bin"
+        val cachedFile = File(cacheDirectory, "${sha256(sourceUri.toString())}.$extension")
+        var sourceSize = -1L
+        contentResolver.query(
+            sourceUri,
+            arrayOf(OpenableColumns.SIZE),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (sizeColumn >= 0 && cursor.moveToFirst() && !cursor.isNull(sizeColumn)) {
+                sourceSize = cursor.getLong(sizeColumn)
+            }
+        }
+        if (cachedFile.isFile && (sourceSize < 0 || cachedFile.length() == sourceSize)) {
+            return cachedFile.absolutePath
+        }
+        val temporaryFile = File(cacheDirectory, "${cachedFile.name}.tmp")
+        try {
+            val input = contentResolver.openInputStream(sourceUri)
+                ?: throw IllegalStateException("Android could not read the selected media.")
+            input.use { stream ->
+                FileOutputStream(temporaryFile).use { output -> stream.copyTo(output) }
+            }
+            if (!temporaryFile.renameTo(cachedFile)) {
+                temporaryFile.copyTo(cachedFile, overwrite = true)
+            }
+            temporaryFile.delete()
+            return cachedFile.absolutePath
+        } catch (error: Throwable) {
+            temporaryFile.delete()
+            throw error
+        }
+    }
 
     private fun hasChildDocuments(treeUri: Uri, documentId: String): Boolean {
         return try {

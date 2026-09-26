@@ -2032,7 +2032,11 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _broadcast();
   }
 
-  Future<void> playTrack(Track track, {double? playbackSpeed}) async {
+  Future<void> playTrack(
+    Track track, {
+    double? playbackSpeed,
+    String? sourcePath,
+  }) async {
     if (_closed) return;
     final generation = ++_commandGeneration;
     if (playbackSpeed != null) {
@@ -2056,10 +2060,11 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         duration: duration,
       ),
     );
+    final playbackPath = sourcePath ?? track.path;
     await player.play(
-      isUriMediaPath(track.path)
-          ? UrlSource(track.path)
-          : DeviceFileSource(track.path),
+      isUriMediaPath(playbackPath)
+          ? UrlSource(playbackPath)
+          : DeviceFileSource(playbackPath),
     );
     if (_closed || generation != _commandGeneration) {
       return;
@@ -3852,7 +3857,7 @@ class _PlayerPageState extends State<PlayerPage>
                   libraryRelativePaths: _libraryRelativePaths,
                 ) ??
                 path;
-            if (!path.startsWith('content:') && !File(path).existsSync()) {
+            if (!isContentMediaPath(path) && !File(path).existsSync()) {
               skipped++;
               continue;
             }
@@ -4154,19 +4159,39 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playStandardTrack(Track track) async {
+    final sourcePath = await _playbackSourcePath(track);
     await _player.setBalance(_balance);
     await _player.setVolume(_volumeFor(track));
     if (_audioHandler != null) {
-      await _audioHandler!.playTrack(track, playbackSpeed: _playbackSpeed);
+      await _audioHandler!.playTrack(
+        track,
+        playbackSpeed: _playbackSpeed,
+        sourcePath: sourcePath,
+      );
     } else {
       await _player.stop();
       await _player.play(
-        isUriMediaPath(track.path)
-            ? UrlSource(track.path)
-            : DeviceFileSource(track.path),
+        isUriMediaPath(sourcePath)
+            ? UrlSource(sourcePath)
+            : DeviceFileSource(sourcePath),
       );
       await _player.setPlaybackRate(_playbackSpeed);
     }
+  }
+
+  Future<String> _playbackSourcePath(Track track) async {
+    if (!Platform.isAndroid || !isContentMediaPath(track.path)) {
+      return track.path;
+    }
+    final path = await const MethodChannel('neonamp/library')
+        .invokeMethod<String>('materializeUri', {
+          'uri': track.path,
+          'name': track.name,
+        });
+    if (path == null || path.isEmpty) {
+      throw StateError('Android could not prepare this media provider file.');
+    }
+    return path;
   }
 
   Future<void> _select(int index) async {
@@ -4405,10 +4430,11 @@ class _PlayerPageState extends State<PlayerPage>
       });
       await incomingPlayer.setVolume(0);
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
+      final sourcePath = await _playbackSourcePath(track);
       await incomingPlayer.play(
-        isUriMediaPath(track.path)
-            ? UrlSource(track.path)
-            : DeviceFileSource(track.path),
+        isUriMediaPath(sourcePath)
+            ? UrlSource(sourcePath)
+            : DeviceFileSource(sourcePath),
       );
       final steps = math.max(1, _crossfadeSeconds * 10);
       for (var step = 1; step <= steps; step++) {
