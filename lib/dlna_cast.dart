@@ -70,7 +70,9 @@ class DlnaCast {
     final isUrl =
         parsedPath?.scheme.toLowerCase() == 'http' ||
         parsedPath?.scheme.toLowerCase() == 'https';
-    final uri = isUrl ? path : await _serveFile(path, renderer, generation);
+    final uri = isUrl
+        ? await _closeServer().then((_) => path)
+        : await _serveFile(path, renderer, generation);
     if (uri.isEmpty || generation != _operationGeneration) {
       if (!isUrl) await _closeServer();
       return;
