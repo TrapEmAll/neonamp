@@ -4655,21 +4655,6 @@ class _PlayerPageState extends State<PlayerPage>
         await incomingPlayer.dispose();
         return;
       }
-      setState(() {
-        _selected = next;
-        _position = Duration.zero;
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
-        final updatedTrack = track.copyWith(playCount: track.playCount + 1);
-        final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
-        );
-        if (libraryIndex >= 0) {
-          _library[libraryIndex] = updatedTrack;
-        }
-        _queue[next] = updatedTrack;
-      });
       await incomingPlayer.setVolume(0);
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       final sourcePath = await _playbackSourcePath(track);
@@ -4692,6 +4677,21 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await previousPlayer.stop();
       await previousPlayer.dispose();
+      setState(() {
+        _selected = next;
+        _position = Duration.zero;
+        _playHistory
+          ..clear()
+          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        final updatedTrack = track.copyWith(playCount: track.playCount + 1);
+        final libraryIndex = _library.indexWhere(
+          (item) => item.path == track.path,
+        );
+        if (libraryIndex >= 0) {
+          _library[libraryIndex] = updatedTrack;
+        }
+        _queue[next] = updatedTrack;
+      });
       _activePlayer = incomingPlayer;
       promoted = true;
       _bindPlayerStreams();
@@ -4726,21 +4726,6 @@ class _PlayerPageState extends State<PlayerPage>
     _crossfadeDspPlayer = incomingPlayer;
     try {
       if (!mounted) return;
-      setState(() {
-        _selected = next;
-        _position = Duration.zero;
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
-        final updatedTrack = track.copyWith(playCount: track.playCount + 1);
-        final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
-        );
-        if (libraryIndex >= 0) {
-          _library[libraryIndex] = updatedTrack;
-        }
-        _queue[next] = updatedTrack;
-      });
       final sourcePath = await _playbackSourcePath(track);
       await incomingPlayer.play(
         sourcePath,
@@ -4764,6 +4749,21 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await previousPlayer.stop();
       await previousPlayer.dispose();
+      setState(() {
+        _selected = next;
+        _position = Duration.zero;
+        _playHistory
+          ..clear()
+          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        final updatedTrack = track.copyWith(playCount: track.playCount + 1);
+        final libraryIndex = _library.indexWhere(
+          (item) => item.path == track.path,
+        );
+        if (libraryIndex >= 0) {
+          _library[libraryIndex] = updatedTrack;
+        }
+        _queue[next] = updatedTrack;
+      });
       _dspPlayer = incomingPlayer;
       promoted = true;
       _bindDspStreams();
