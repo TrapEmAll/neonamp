@@ -2379,6 +2379,7 @@ class _PlayerPageState extends State<PlayerPage>
   int _dspStreamGeneration = 0;
   int _midiStreamGeneration = 0;
   int _libraryOperationGeneration = 0;
+  int _queueOperationGeneration = 0;
 
   bool get _casting => _dlnaCast.isConnected;
 
@@ -4080,9 +4081,10 @@ class _PlayerPageState extends State<PlayerPage>
         _crossfadeInProgress) {
       return;
     }
+    final operation = ++_queueOperationGeneration;
     _castPositionTimer?.cancel();
     if (_casting) await _dlnaCast.stop();
-    if (!mounted) return;
+    if (!mounted || operation != _queueOperationGeneration) return;
     _selectionInProgress = true;
     try {
       setState(() {
@@ -4167,6 +4169,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (track.cueStartMs != null) {
         await _seekCurrent(Duration.zero);
       }
+      if (!mounted || operation != _queueOperationGeneration) return;
       await _saveQueue();
     } on Object catch (error) {
       _midiActive = false;
@@ -4420,10 +4423,11 @@ class _PlayerPageState extends State<PlayerPage>
         index >= _queue.length) {
       return;
     }
+    final operation = ++_queueOperationGeneration;
     final removedIdentity = _queue[index].identityKey;
     final removingCurrent = index == _selected;
     if (removingCurrent) await _stopCurrent();
-    if (!mounted) return;
+    if (!mounted || operation != _queueOperationGeneration) return;
     setState(() {
       _queue.removeAt(index);
       if (_queue.isEmpty) {
@@ -4441,7 +4445,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _resumePositions.remove(removedIdentity);
-    await _saveQueue();
+    if (operation == _queueOperationGeneration) await _saveQueue();
   }
 
   bool _isBookmarked(Track track) =>
@@ -4460,6 +4464,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _playBookmark(Track track) async {
     if (!mounted || _crossfadeInProgress) return;
+    final operation = ++_queueOperationGeneration;
     var index = _queue.indexWhere(
       (item) => item.identityKey == track.identityKey,
     );
@@ -4468,9 +4473,10 @@ class _PlayerPageState extends State<PlayerPage>
         _queue.add(track);
         index = _queue.length - 1;
       });
+      if (operation != _queueOperationGeneration) return;
       await _saveQueue();
     }
-    if (!mounted) return;
+    if (!mounted || operation != _queueOperationGeneration) return;
     await _select(index);
   }
 
@@ -4484,6 +4490,7 @@ class _PlayerPageState extends State<PlayerPage>
         newIndex < 0) {
       return;
     }
+    final operation = ++_queueOperationGeneration;
     final selectedIdentity = _current?.identityKey;
     setState(() {
       final track = _queue.removeAt(oldIndex);
@@ -4493,16 +4500,17 @@ class _PlayerPageState extends State<PlayerPage>
           : _queue.indexWhere((item) => item.identityKey == selectedIdentity);
       if (selectedIndex >= 0) _selected = selectedIndex;
     });
-    await _saveQueue();
+    if (operation == _queueOperationGeneration) await _saveQueue();
   }
 
   Future<void> _clearQueue() async {
     if (_selectionInProgress || _crossfadeInProgress) return;
+    final operation = ++_queueOperationGeneration;
     _castPositionTimer?.cancel();
     _resumeSaveTimer?.cancel();
     await _stopCurrent();
     if (_dspActive) await _dspPlayer.stop();
-    if (!mounted) return;
+    if (!mounted || operation != _queueOperationGeneration) return;
     setState(() {
       _midiActive = false;
       _dspActive = false;
@@ -4513,10 +4521,11 @@ class _PlayerPageState extends State<PlayerPage>
       _playerState = PlayerState.stopped;
       _resumePositions.clear();
     });
-    await _saveQueue();
+    if (operation == _queueOperationGeneration) await _saveQueue();
   }
 
   Future<void> _addStream() async {
+    final operation = ++_queueOperationGeneration;
     final controller = TextEditingController();
     final url = await showDialog<String>(
       context: context,
@@ -4542,7 +4551,12 @@ class _PlayerPageState extends State<PlayerPage>
         ],
       ),
     );
-    if (!mounted || url == null || url.isEmpty) return;
+    if (!mounted ||
+        operation != _queueOperationGeneration ||
+        url == null ||
+        url.isEmpty) {
+      return;
+    }
     final uri = Uri.tryParse(url);
     if (!isHttpUri(uri)) {
       if (mounted) {
@@ -4571,7 +4585,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
-    if (!mounted) return;
+    if (!mounted || operation != _queueOperationGeneration) return;
     await _saveQueue();
   }
 
