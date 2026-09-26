@@ -44,6 +44,7 @@ class DspLocalPlayer {
   }
 
   Future<void> _ensureInitialized() async {
+    if (_disposed) throw StateError('The DSP player has been disposed.');
     if (!soloud.SoLoud.instance.isInitialized) {
       await soloud.SoLoud.instance.init();
     }
@@ -145,8 +146,16 @@ class DspLocalPlayer {
   Future<void> seek(Duration position) async {
     final handle = _handle;
     if (handle == null) return;
-    soloud.SoLoud.instance.seek(handle, position);
-    _positionController.add(position);
+    final duration = _source == null
+        ? Duration.zero
+        : soloud.SoLoud.instance.getLength(_source!);
+    final target = position.isNegative
+        ? Duration.zero
+        : duration > Duration.zero && position > duration
+        ? duration
+        : position;
+    soloud.SoLoud.instance.seek(handle, target);
+    _positionController.add(target);
   }
 
   Future<void> setVolume(double volume) async {
@@ -170,7 +179,10 @@ class DspLocalPlayer {
     final handle = _handle;
     if (handle != null &&
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
-      soloud.SoLoud.instance.setRelativePlaySpeed(handle, speed);
+      soloud.SoLoud.instance.setRelativePlaySpeed(
+        handle,
+        speed.clamp(0.5, 2.0).toDouble(),
+      );
     }
   }
 

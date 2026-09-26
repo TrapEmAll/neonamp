@@ -37,6 +37,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   Future<void> _loadVideo(int index) async {
     if (widget.files.isEmpty || !mounted) return;
+    index = _wrappedVideoIndex(index, widget.files.length);
     final generation = ++_loadGeneration;
     final previous = _controller;
     previous?.removeListener(_onVideoChanged);
@@ -45,7 +46,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       _loading = true;
       _error = null;
     });
-    if (previous != null) await previous.dispose();
+    if (previous != null) {
+      try {
+        await previous.dispose();
+      } on Object catch (error) {
+        debugPrint('Could not dispose previous video controller: $error');
+      }
+    }
     if (!mounted || generation != _loadGeneration) return;
 
     final controller = VideoPlayerController.file(_currentFile);
@@ -88,14 +95,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     final entering = !_fullScreen;
     setState(() => _fullScreen = entering);
     if (!Platform.isAndroid) return;
-    if (entering) {
-      await SystemChrome.setPreferredOrientations(const [
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    } else {
-      await _restoreSystemUi();
+    try {
+      if (entering) {
+        await SystemChrome.setPreferredOrientations(const [
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+        await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      } else {
+        await _restoreSystemUi();
+      }
+    } on Object catch (error) {
+      debugPrint('Could not change video fullscreen mode: $error');
+      if (mounted) setState(() => _fullScreen = !entering);
     }
   }
 
@@ -252,10 +264,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               underline: const SizedBox.shrink(),
               items: const <double>[0.5, 0.75, 1, 1.25, 1.5, 2]
                   .map(
-                    (speed) => DropdownMenuItem(
-                      value: speed,
-                      child: Text('$speed×'),
-                    ),
+                    (speed) =>
+                        DropdownMenuItem(value: speed, child: Text('$speed×')),
                   )
                   .toList(),
               onChanged: (speed) {

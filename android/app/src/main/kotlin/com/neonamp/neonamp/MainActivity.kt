@@ -229,7 +229,9 @@ class MainActivity : AudioServiceActivity() {
         try {
             val persistableFlags = (data.flags) and
                 (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            contentResolver.takePersistableUriPermission(uri, persistableFlags)
+            if (persistableFlags != 0) {
+                contentResolver.takePersistableUriPermission(uri, persistableFlags)
+            }
             pendingResult.success(mapOf("uri" to uri.toString(), "name" to folderName(uri)))
         } catch (error: Throwable) {
             pendingResult.error("folder_permission_failed", error.message, null)
@@ -258,6 +260,9 @@ class MainActivity : AudioServiceActivity() {
 
     private fun scanSafFolder(treeUri: Uri): List<Map<String, String>> {
         val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        cacheDirectory.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach {
+            it.delete()
+        }
         val audioExtensions = setOf(
             "mp3", "flac", "wav", "ogg", "m4a", "mp4", "aac", "wma",
             "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
@@ -333,14 +338,19 @@ class MainActivity : AudioServiceActivity() {
                         (sourceModified > 0 && cachedFile.lastModified() != sourceModified)
                     ) {
                         val temporaryFile = File(cacheDirectory, "$cacheName.tmp")
-                        contentResolver.openInputStream(documentUri)?.use { input ->
-                            FileOutputStream(temporaryFile).use { output -> input.copyTo(output) }
-                        } ?: continue
-                        if (!temporaryFile.renameTo(cachedFile)) {
-                            temporaryFile.copyTo(cachedFile, overwrite = true)
+                        try {
+                            contentResolver.openInputStream(documentUri)?.use { input ->
+                                FileOutputStream(temporaryFile).use { output -> input.copyTo(output) }
+                            } ?: continue
+                            if (!temporaryFile.renameTo(cachedFile)) {
+                                temporaryFile.copyTo(cachedFile, overwrite = true)
+                            }
                             temporaryFile.delete()
+                            if (sourceModified > 0) cachedFile.setLastModified(sourceModified)
+                        } catch (_: Throwable) {
+                            temporaryFile.delete()
+                            continue
                         }
-                        if (sourceModified > 0) cachedFile.setLastModified(sourceModified)
                     }
                     val relativePath = if (documentId.startsWith("$rootDocumentId/")) {
                         documentId.removePrefix("$rootDocumentId/")
@@ -366,6 +376,10 @@ class MainActivity : AudioServiceActivity() {
 
     private fun writeFileToSafFolder(treeUri: Uri, source: File, fileName: String) {
         if (!source.isFile) throw IllegalArgumentException("The source audio file is unavailable.")
+        val safeFileName = fileName.substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[<>:\"|?*]"), "_")
+            .trim()
+            .ifEmpty { "neonamp-export.${source.extension}" }
         val mimeType = when (source.extension.lowercase(Locale.ROOT)) {
             "mp3" -> "audio/mpeg"
             "m4a", "aac" -> "audio/mp4"
@@ -374,14 +388,18 @@ class MainActivity : AudioServiceActivity() {
             "ogg", "opus" -> "audio/ogg"
             else -> "application/octet-stream"
         }
-        val destination = createSafFile(treeUri, fileName, mimeType)
+        val destination = createSafFile(treeUri, safeFileName, mimeType)
         contentResolver.openOutputStream(destination, "w")?.use { output ->
             source.inputStream().use { input -> input.copyTo(output) }
         } ?: throw IllegalStateException("Android could not write the selected folder.")
     }
 
     private fun writeTextToSafFolder(treeUri: Uri, fileName: String, contents: String) {
-        val destination = createSafFile(treeUri, fileName, "application/x-mpegURL")
+        val safeFileName = fileName.substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[<>:\"|?*]"), "_")
+            .trim()
+            .ifEmpty { "neonamp-export.txt" }
+        val destination = createSafFile(treeUri, safeFileName, "application/x-mpegURL")
         contentResolver.openOutputStream(destination, "w")?.bufferedWriter()?.use { writer ->
             writer.write(contents)
         } ?: throw IllegalStateException("Android could not write the selected folder.")

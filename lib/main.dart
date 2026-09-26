@@ -2071,8 +2071,8 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   Future<void> setPlaybackSpeed(double speed) async {
-    _playbackSpeed = speed;
-    await player.setPlaybackRate(speed);
+    _playbackSpeed = normalizePlaybackSpeed(speed);
+    await player.setPlaybackRate(_playbackSpeed);
     _broadcast();
   }
 
@@ -2122,8 +2122,15 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<void> stop() => onStopRequested?.call() ?? player.stop();
 
   @override
-  Future<void> seek(Duration position) =>
-      onSeekRequested?.call(position) ?? player.seek(position);
+  Future<void> seek(Duration position) {
+    final duration = mediaItem.value?.duration;
+    final target = position.isNegative
+        ? Duration.zero
+        : duration != null && position > duration
+        ? duration
+        : position;
+    return onSeekRequested?.call(target) ?? player.seek(target);
+  }
 
   @override
   Future<void> skipToNext() async {
@@ -4403,11 +4410,16 @@ class _PlayerPageState extends State<PlayerPage>
         },
       );
       final client = HttpClient();
-      final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
-      final response = await request.close();
-      final body = await utf8.decoder.bind(response).join();
-      client.close(force: true);
+      late final HttpClientResponse response;
+      String body;
+      try {
+        final request = await client.getUrl(uri);
+        request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
+        response = await request.close();
+        body = await utf8.decoder.bind(response).join();
+      } finally {
+        client.close(force: true);
+      }
       if (response.statusCode != HttpStatus.ok)
         throw const HttpException('Radio directory request failed');
       final radioBrowserStations = (jsonDecode(body) as List)
@@ -4533,6 +4545,11 @@ class _PlayerPageState extends State<PlayerPage>
                 .first
                 .trim(),
       );
+      final existingIndex = _queue.indexWhere((item) => item.path == path);
+      if (existingIndex >= 0) {
+        await _select(existingIndex);
+        return;
+      }
       setState(() {
         _queue.add(track);
         _library.removeWhere((item) => item.path == path);
@@ -4567,7 +4584,11 @@ class _PlayerPageState extends State<PlayerPage>
     setState(() {
       if (existingIndex >= 0) {
         final track = _library[existingIndex];
-        _library[existingIndex] = track.copyWith(favorite: !track.favorite);
+        final updated = track.copyWith(favorite: !track.favorite);
+        _library[existingIndex] = updated;
+        for (var index = 0; index < _queue.length; index++) {
+          if (_queue[index].path == path) _queue[index] = updated;
+        }
       } else {
         _library.add(
           Track(
@@ -4617,6 +4638,18 @@ class _PlayerPageState extends State<PlayerPage>
       ),
     );
     if (url == null || url.isEmpty) return;
+    final parsed = Uri.tryParse(url);
+    if (parsed == null ||
+        (parsed.scheme != 'http' && parsed.scheme != 'https') ||
+        parsed.host.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter a valid podcast HTTP(S) URL.')),
+        );
+      }
+      return;
+    }
+    if (_podcastFeeds.contains(url)) return;
     try {
       final added = await _loadPodcastFeed(url);
       if (!_podcastFeeds.contains(url)) _podcastFeeds.add(url);
@@ -4749,12 +4782,19 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<int> _loadPodcastFeed(String feedUrl) async {
-    final request = await HttpClient().getUrl(Uri.parse(feedUrl));
-    final response = await request.close();
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException('Podcast feed returned ${response.statusCode}');
+    final client = HttpClient();
+    final String xml;
+    try {
+      final request = await client.getUrl(Uri.parse(feedUrl));
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/0.1');
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('Podcast feed returned ${response.statusCode}');
+      }
+      xml = await response.transform(utf8.decoder).join();
+    } finally {
+      client.close(force: true);
     }
-    final xml = await response.transform(utf8.decoder).join();
     final itemPattern = RegExp(
       r'<item\b[^>]*>([\s\S]*?)</item>',
       caseSensitive: false,
@@ -4767,14 +4807,19 @@ class _PlayerPageState extends State<PlayerPage>
     for (final match in itemPattern.allMatches(xml)) {
       final item = match.group(1) ?? '';
       final enclosure = enclosurePattern.firstMatch(item)?.group(1);
-      if (enclosure == null || enclosure.isEmpty) continue;
+      final enclosureUri = enclosure == null ? null : Uri.tryParse(enclosure);
+      if (enclosureUri == null ||
+          (enclosureUri.scheme != 'http' && enclosureUri.scheme != 'https') ||
+          enclosureUri.host.isEmpty) {
+        continue;
+      }
       final title = _rssValue(item, 'title') ?? 'Podcast episode';
       final author =
           _rssValue(item, 'author') ?? _rssValue(item, 'creator') ?? 'Podcast';
       if (_queue.any((track) => track.path == enclosure)) continue;
       episodes.add(
         Track(
-          path: enclosure,
+          path: enclosureUri.toString(),
           name: title,
           artist: author,
           album: 'Podcast',
@@ -4796,14 +4841,18 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _downloadPodcastEpisode(Track track) async {
-    if (!track.path.startsWith('http')) return;
+    final episodeUri = Uri.tryParse(track.path);
+    if (episodeUri == null ||
+        (episodeUri.scheme != 'http' && episodeUri.scheme != 'https')) {
+      return;
+    }
     final directory = await _pickFolderLocation(
       'Choose a podcast download folder',
     );
     if (directory == null) return;
     final client = HttpClient();
     try {
-      final request = await client.getUrl(Uri.parse(track.path));
+      final request = await client.getUrl(episodeUri);
       final response = await request.close();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('Episode returned ${response.statusCode}');
@@ -4812,9 +4861,10 @@ class _PlayerPageState extends State<PlayerPage>
           .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
-      final extension = Uri.tryParse(track.path)?.path.split('.').last;
+      final baseName = safeName.isEmpty ? 'podcast-episode' : safeName;
+      final extension = episodeUri.path.split('.').last.toLowerCase();
       final filename =
-          '$safeName.${extension != null && extension.length <= 5 ? extension : 'mp3'}';
+          '$baseName.${RegExp(r'^[a-z0-9]{1,5}$').hasMatch(extension) ? extension : 'mp3'}';
       final usedNames = <String>{};
       final safeFilename = nextSyncFileName(filename, usedNames);
       final target = Platform.isAndroid
