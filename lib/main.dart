@@ -2852,9 +2852,12 @@ class _PlayerPageState extends State<PlayerPage>
                                 }
                                 Navigator.pop(dialogContext);
                                 try {
+                                  final castPath = await _playbackSourcePath(
+                                    track,
+                                  );
                                   await _dlnaCast.play(
                                     renderer: device,
-                                    path: track.path,
+                                    path: castPath,
                                     title: track.name,
                                     artist: track.artist,
                                     album: track.album,
