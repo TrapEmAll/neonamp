@@ -2096,6 +2096,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
     _lastPosition = Duration.zero;
+    final duration = track.cueEnd == null
+        ? null
+        : track.cueEnd! - track.cueStart;
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
@@ -2103,8 +2106,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         artist: track.artist,
         album: track.album,
         artUri: null,
+        duration: duration,
       ),
     );
+    _broadcast(position: Duration.zero);
   }
 
   Duration _relativePosition(Duration source) {

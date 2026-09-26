@@ -388,7 +388,15 @@ class MainActivity : AudioServiceActivity() {
                     if (!cachedFile.isFile || (sourceSize >= 0 && cachedFile.length() != sourceSize) ||
                         (sourceModified > 0 && cachedFile.lastModified() != sourceModified)
                     ) {
-                        val temporaryFile = File(cacheDirectory, "$cacheName.tmp")
+                        val temporaryFile = try {
+                            File.createTempFile(
+                                "$cacheName.",
+                                ".tmp",
+                                cacheDirectory,
+                            )
+                        } catch (_: Throwable) {
+                            continue
+                        }
                         try {
                             val input = contentResolver.openInputStream(documentUri)
                             if (input == null) {
