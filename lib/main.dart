@@ -2901,6 +2901,17 @@ class _PlayerPageState extends State<PlayerPage>
                                     _startCastPositionPolling();
                                   }
                                 } catch (e) {
+                                  _castPositionTimer?.cancel();
+                                  try {
+                                    if (_dlnaCast.isConnected) {
+                                      await _dlnaCast.stop();
+                                    }
+                                  } on Object catch (cleanupError) {
+                                    debugPrint(
+                                      'Could not roll back failed cast handoff: '
+                                      '$cleanupError',
+                                    );
+                                  }
                                   if (mounted)
                                     ScaffoldMessenger.of(this.context)
                                         .showSnackBar(
