@@ -92,33 +92,37 @@ class WindowsMidiPlayer {
 
   Future<void> pause() async {
     if (_disposed) return;
+    final generation = _generation;
     await _channel.invokeMethod<void>('pause');
-    if (_disposed) return;
+    if (_disposed || generation != _generation) return;
     _setState(PlayerState.paused);
   }
 
   Future<void> resume() async {
     if (_disposed) return;
+    final generation = _generation;
     await _channel.invokeMethod<void>('resume');
-    if (_disposed) return;
+    if (_disposed || generation != _generation) return;
     _setState(PlayerState.playing);
   }
 
   Future<void> stop() async {
     if (_disposed) return;
-    _generation++;
+    final generation = ++_generation;
     _pollTimer?.cancel();
     try {
       await _channel.invokeMethod<void>('stop');
     } on Object {
       // Native playback may already be stopped during activity teardown.
     }
+    if (_disposed || generation != _generation) return;
     _setState(PlayerState.stopped);
     _positionController.add(Duration.zero);
   }
 
   Future<void> seek(Duration position) async {
     if (_disposed) return;
+    final generation = _generation;
     final clamped = position < Duration.zero
         ? Duration.zero
         : position > _duration
@@ -127,16 +131,17 @@ class WindowsMidiPlayer {
     await _channel.invokeMethod<void>('seek', {
       'positionMs': clamped.inMilliseconds,
     });
-    if (_disposed) return;
+    if (_disposed || generation != _generation) return;
     _positionController.add(clamped);
   }
 
   Future<void> setPlaybackSpeed(double speed) async {
     if (_disposed) return;
+    final generation = _generation;
     await _channel.invokeMethod<void>('setPlaybackSpeed', {
       'speed': speed.isFinite ? speed.clamp(0.5, 2.0) : 1.0,
     });
-    if (_disposed) return;
+    if (_disposed || generation != _generation) return;
   }
 
   void _setState(PlayerState state) {

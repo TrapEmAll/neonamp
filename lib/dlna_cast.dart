@@ -39,7 +39,7 @@ class DlnaCast {
     } finally {
       discoverer.stop();
       if (identical(_discoverer, discoverer)) _discoverer = null;
-      if (Platform.isAndroid) {
+      if (Platform.isAndroid && generation == _operationGeneration) {
         try {
           await _androidChannel.invokeMethod<void>('endDiscovery');
         } on Object {
@@ -89,9 +89,16 @@ class DlnaCast {
     try {
       await transport.setAVTransportURI(uri, metadata: track.toXml());
       await transport.play();
-      if (generation != _operationGeneration) return;
+      if (generation != _operationGeneration) {
+        if (!isUrl) await _closeServer();
+        return;
+      }
       if (segmentStart > Duration.zero) {
         await transport.seek(SeekMode.relTime, _formatDlnaTime(segmentStart));
+      }
+      if (generation != _operationGeneration) {
+        if (!isUrl) await _closeServer();
+        return;
       }
       _renderer = renderer;
       _segmentStart = segmentStart;
@@ -130,57 +137,60 @@ class DlnaCast {
     _server = server;
     final token = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
     unawaited(
-      server.forEach((request) async {
-        if (request.uri.path != '/$token' ||
-            (request.method != 'GET' && request.method != 'HEAD')) {
-          request.response.statusCode = HttpStatus.notFound;
-          await request.response.close();
-          return;
-        }
-        final range = parseDlnaByteRange(
-          request.headers.value(HttpHeaders.rangeHeader),
-          length,
-        );
-        if (range == null) {
-          request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
-          request.response.headers.set(
-            HttpHeaders.contentRangeHeader,
-            'bytes */$length',
-          );
-          await request.response.close();
-          return;
-        }
-        final (start, end, partial) = range;
-        request.response.statusCode = partial
-            ? HttpStatus.partialContent
-            : HttpStatus.ok;
-        request.response.headers
-          ..set(HttpHeaders.contentTypeHeader, _mimeType(path))
-          ..set(HttpHeaders.acceptRangesHeader, 'bytes')
-          ..set(HttpHeaders.contentLengthHeader, end - start + 1)
-          ..set('transferMode.dlna.org', 'Streaming');
-        if (partial)
-          request.response.headers.set(
-            HttpHeaders.contentRangeHeader,
-            'bytes $start-$end/$length',
-          );
-        if (request.method == 'HEAD') {
-          await request.response.close();
-          return;
-        }
-        try {
-          await request.response.addStream(file.openRead(start, end + 1));
-          await request.response.close();
-        } catch (_) {
-          try {
-            await request.response.close();
-          } on Object {
-            // The renderer may have disconnected before the response closed.
-          }
-        }
-      }).catchError((_) {
-        // A renderer disconnecting while the file server is active is normal.
-      }),
+      server
+          .forEach((request) async {
+            if (request.uri.path != '/$token' ||
+                (request.method != 'GET' && request.method != 'HEAD')) {
+              request.response.statusCode = HttpStatus.notFound;
+              await request.response.close();
+              return;
+            }
+            final range = parseDlnaByteRange(
+              request.headers.value(HttpHeaders.rangeHeader),
+              length,
+            );
+            if (range == null) {
+              request.response.statusCode =
+                  HttpStatus.requestedRangeNotSatisfiable;
+              request.response.headers.set(
+                HttpHeaders.contentRangeHeader,
+                'bytes */$length',
+              );
+              await request.response.close();
+              return;
+            }
+            final (start, end, partial) = range;
+            request.response.statusCode = partial
+                ? HttpStatus.partialContent
+                : HttpStatus.ok;
+            request.response.headers
+              ..set(HttpHeaders.contentTypeHeader, _mimeType(path))
+              ..set(HttpHeaders.acceptRangesHeader, 'bytes')
+              ..set(HttpHeaders.contentLengthHeader, end - start + 1)
+              ..set('transferMode.dlna.org', 'Streaming');
+            if (partial)
+              request.response.headers.set(
+                HttpHeaders.contentRangeHeader,
+                'bytes $start-$end/$length',
+              );
+            if (request.method == 'HEAD') {
+              await request.response.close();
+              return;
+            }
+            try {
+              await request.response.addStream(file.openRead(start, end + 1));
+              await request.response.close();
+            } catch (_) {
+              try {
+                await request.response.close();
+              } on Object {
+                // The renderer may have disconnected before the response closed.
+              }
+            }
+          })
+          .catchError((_) {
+            // A renderer disconnecting while the file server is active is normal.
+          }),
     );
 
     try {
@@ -369,14 +379,17 @@ class DlnaCast {
   static String _formatDlnaTime(Duration value) =>
       '${value.inHours.toString().padLeft(2, '0')}:${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
   Future<void> stop() async {
-    _operationGeneration++;
+    final generation = ++_operationGeneration;
+    final renderer = _renderer;
     try {
-      await _renderer?.avTransport?.stop();
+      await renderer?.avTransport?.stop();
     } finally {
-      _renderer = null;
-      _segmentStart = Duration.zero;
-      _segmentEnd = null;
-      await _closeServer();
+      if (generation == _operationGeneration) {
+        _renderer = null;
+        _segmentStart = Duration.zero;
+        _segmentEnd = null;
+        await _closeServer();
+      }
     }
   }
 

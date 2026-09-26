@@ -2230,8 +2230,10 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
   }
 
   Future<void> _setTheme(String themeName) async {
+    if (!mounted) return;
     setState(() => _themeName = themeName);
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     await prefs.setString('themeName', themeName);
   }
 
@@ -2244,6 +2246,7 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
       _themeName = skin.name;
     });
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     await prefs.setString(
       'customSkins',
       jsonEncode(_customSkins.values.map((value) => value.toJson()).toList()),
@@ -2773,6 +2776,7 @@ class _PlayerPageState extends State<PlayerPage>
                               onTap: () async {
                                 final track = _current;
                                 if (track == null) return;
+                                final identity = track.identityKey;
                                 if (isMidiFilePath(track.path)) {
                                   ScaffoldMessenger.of(this.context)
                                       .showSnackBar(
@@ -2796,6 +2800,11 @@ class _PlayerPageState extends State<PlayerPage>
                                     segmentStart: track.cueStart,
                                     segmentEnd: track.cueEnd,
                                   );
+                                  if (!mounted ||
+                                      identity != _current?.identityKey) {
+                                    await _dlnaCast.stop();
+                                    return;
+                                  }
                                   if (_dspActive) {
                                     await _dspPlayer.pause();
                                   } else if (_midiActive) {
@@ -2968,7 +2977,8 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await _audioHandler?.setPlaybackSpeed(value);
     }
-    if (identity == _current?.identityKey) await _saveQueue();
+    if (!mounted || identity != _current?.identityKey) return;
+    await _saveQueue();
   }
 
   Future<void> _setEqualizerEnabled(bool enabled) async {
@@ -2991,6 +3001,7 @@ class _PlayerPageState extends State<PlayerPage>
         if (!wasPlaying) await _pauseCurrent();
       }
     }
+    if (!mounted) return;
     await _saveQueue();
     unawaited(_syncWindowsMediaSession());
   }
@@ -3010,6 +3021,7 @@ class _PlayerPageState extends State<PlayerPage>
         if (!wasPlaying) await _pauseCurrent();
       }
     }
+    if (!mounted) return;
     await _saveQueue();
   }
 
@@ -3395,54 +3407,59 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _writeQueueSnapshot() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'queueTracks',
-      jsonEncode(_queue.map((track) => track.toJson()).toList()),
+    // Freeze the complete state before the first asynchronous write. Without
+    // this, a queue/library mutation between individual SharedPreferences
+    // writes can persist a mixture of old and new state across app restarts.
+    final queueTracks = _queue.map((track) => track.toJson()).toList();
+    final queuePaths = _queue.map((track) => track.path).toList();
+    final libraryTracks = _library
+        .map((track) => jsonEncode(track.toJson()))
+        .toList();
+    final bookmarks = _bookmarks.map((track) => track.toJson()).toList();
+    final playHistory = List<String>.of(_playHistory);
+    final resumePositions = Map<String, int>.of(_resumePositions);
+    final libraryFolders = List<String>.of(_libraryFolders);
+    final podcastFeeds = List<String>.of(_podcastFeeds);
+    final playlists = Map<String, List<String>>.fromEntries(
+      _playlists.entries.map(
+        (entry) => MapEntry(entry.key, List<String>.of(entry.value)),
+      ),
     );
-    await prefs.setStringList(
-      'queue',
-      _queue.map((track) => track.path).toList(),
-    );
-    await prefs.setStringList(
-      'library',
-      _library.map((track) => jsonEncode(track.toJson())).toList(),
-    );
-    await prefs.setString(
-      'bookmarks',
-      jsonEncode(_bookmarks.map((track) => track.toJson()).toList()),
-    );
-    await prefs.setStringList('playHistory', _playHistory);
-    await prefs.setString('resumePositions', jsonEncode(_resumePositions));
-    await prefs.setStringList('libraryFolders', _libraryFolders);
-    await prefs.setStringList('podcastFeeds', _podcastFeeds);
-    await prefs.setString('playlists', jsonEncode(_playlists));
-    await prefs.setString(
-      'smartPlaylists',
-      jsonEncode(_smartPlaylists.map((playlist) => playlist.toJson()).toList()),
-    );
-    await prefs.setString(
-      'plugins',
-      jsonEncode(_plugins.values.map((plugin) => plugin.toJson()).toList()),
-    );
-    await prefs.setString(
-      'settings',
-      jsonEncode({
-        'volume': _volume,
-        'balance': _balance,
-        'crossfade': _crossfade,
-        'crossfadeSeconds': _crossfadeSeconds,
-        'equalizerEnabled': _equalizerEnabled,
-        'eqPreset': _eqPreset,
-        'eqBands': _eqBands,
-        'playbackSpeed': _playbackSpeed,
-        'replayGainEnabled': _replayGainEnabled,
-        'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
-        'librarySort': _librarySort,
-        'librarySortDescending': _librarySortDescending,
-        'libraryRelativePaths': _libraryRelativePaths,
-        if (_playerLayoutCustomized) 'playerControls': _playerControls,
-      }),
-    );
+    final smartPlaylists = _smartPlaylists
+        .map((playlist) => playlist.toJson())
+        .toList();
+    final plugins = _plugins.values.map((plugin) => plugin.toJson()).toList();
+    final settings = <String, dynamic>{
+      'volume': _volume,
+      'balance': _balance,
+      'crossfade': _crossfade,
+      'crossfadeSeconds': _crossfadeSeconds,
+      'equalizerEnabled': _equalizerEnabled,
+      'eqPreset': _eqPreset,
+      'eqBands': List<double>.of(_eqBands),
+      'playbackSpeed': _playbackSpeed,
+      'replayGainEnabled': _replayGainEnabled,
+      'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
+      'librarySort': _librarySort,
+      'librarySortDescending': _librarySortDescending,
+      'libraryRelativePaths': Map<String, String>.of(_libraryRelativePaths),
+      if (_playerLayoutCustomized)
+        'playerControls': List<String>.of(_playerControls),
+    };
+    await prefs.setString('queueTracks', jsonEncode(queueTracks));
+    await Future.wait([
+      prefs.setStringList('queue', queuePaths),
+      prefs.setStringList('library', libraryTracks),
+      prefs.setString('bookmarks', jsonEncode(bookmarks)),
+      prefs.setStringList('playHistory', playHistory),
+      prefs.setString('resumePositions', jsonEncode(resumePositions)),
+      prefs.setStringList('libraryFolders', libraryFolders),
+      prefs.setStringList('podcastFeeds', podcastFeeds),
+      prefs.setString('playlists', jsonEncode(playlists)),
+      prefs.setString('smartPlaylists', jsonEncode(smartPlaylists)),
+      prefs.setString('plugins', jsonEncode(plugins)),
+      prefs.setString('settings', jsonEncode(settings)),
+    ]);
   }
 
   Future<void> _addFiles() async {
@@ -3526,8 +3543,9 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || operation != _libraryOperationGeneration) return;
       if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
       await _saveQueue();
+      if (!mounted || operation != _libraryOperationGeneration) return;
     } on Object catch (error) {
-      if (!mounted) return;
+      if (!mounted || operation != _libraryOperationGeneration) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not add music folder: $error')),
       );
@@ -3702,8 +3720,9 @@ class _PlayerPageState extends State<PlayerPage>
             final index = _libraryFolders.indexOf(oldFolder);
             if (index >= 0) _libraryFolders[index] = directory;
             await _saveQueue();
+            if (!mounted || operation != _libraryOperationGeneration) return;
           } on Object catch (error) {
-            if (mounted) {
+            if (mounted && operation == _libraryOperationGeneration) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text('Could not restore folder access: $error'),
@@ -3730,7 +3749,8 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (!mounted || operation != _libraryOperationGeneration) return;
     await _saveQueue();
-    if (mounted) {
+    if (!mounted || operation != _libraryOperationGeneration) return;
+    if (mounted && operation == _libraryOperationGeneration) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Rescanned ${_libraryFolders.length} folder(s)'),
@@ -4171,25 +4191,27 @@ class _PlayerPageState extends State<PlayerPage>
       }
       if (!mounted || operation != _queueOperationGeneration) return;
       await _saveQueue();
+      if (!mounted || operation != _queueOperationGeneration) return;
     } on Object catch (error) {
+      if (!mounted || operation != _queueOperationGeneration) return;
       _midiActive = false;
       _dspActive = false;
-      if (mounted) {
-        setState(() {
-          _playerState = PlayerState.stopped;
-          _position = Duration.zero;
-          _duration = Duration.zero;
-        });
-        _audioHandler?.syncExternalState(
-          position: Duration.zero,
-          state: PlayerState.stopped,
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not play this track: $error')),
-        );
-      }
+      setState(() {
+        _playerState = PlayerState.stopped;
+        _position = Duration.zero;
+        _duration = Duration.zero;
+      });
+      _audioHandler?.syncExternalState(
+        position: Duration.zero,
+        state: PlayerState.stopped,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not play this track: $error')),
+      );
     } finally {
-      _selectionInProgress = false;
+      if (operation == _queueOperationGeneration) {
+        _selectionInProgress = false;
+      }
     }
   }
 
@@ -4950,6 +4972,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (_podcastFeeds.contains(url)) return;
     try {
       final added = await _loadPodcastFeed(url);
+      if (!mounted) return;
       if (!_podcastFeeds.contains(url)) _podcastFeeds.add(url);
       await _saveQueue();
       if (mounted) {
@@ -5192,6 +5215,7 @@ class _PlayerPageState extends State<PlayerPage>
           }
         });
       }
+      if (!mounted) return;
       await _saveQueue();
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -5415,6 +5439,7 @@ class _PlayerPageState extends State<PlayerPage>
           _library.add(withMetadata);
         }
       });
+      if (!mounted) return;
       await _saveQueue();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -5500,7 +5525,7 @@ class _PlayerPageState extends State<PlayerPage>
         _selected = _queue.length - 1;
       });
       await _saveQueue();
-      await _select(_selected);
+      if (mounted) await _select(_selected);
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -6863,8 +6888,9 @@ class _PlayerPageState extends State<PlayerPage>
         ..addAll(tracks);
       _selected = 0;
     });
+    if (!mounted) return;
     await _saveQueue();
-    await _select(0);
+    if (mounted) await _select(0);
   }
 
   Future<void> _showEqualizer() async {
@@ -7077,6 +7103,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
+    if (!mounted) return;
     await _saveQueue();
   }
 

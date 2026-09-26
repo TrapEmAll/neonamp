@@ -7,8 +7,10 @@ import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 
 import 'tracker_modules.dart';
 
-double dspGainForDb(double decibels) =>
-    math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
+double dspGainForDb(double decibels) {
+  if (!decibels.isFinite) return 1.0;
+  return math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
+}
 
 /// Native local-file playback with a real parametric EQ filter.
 ///
@@ -35,11 +37,8 @@ class DspLocalPlayer {
   Stream<PlayerState> get onPlayerStateChanged => _stateController.stream;
   Stream<void> get onPlayerComplete => _completeController.stream;
   PlayerState get state {
-    final handle = _handle;
-    if (handle == null ||
-        !soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
-      return PlayerState.stopped;
-    }
+    final handle = _validHandle(_handle);
+    if (handle == null) return PlayerState.stopped;
     return soloud.SoLoud.instance.getPause(handle)
         ? PlayerState.paused
         : PlayerState.playing;
@@ -155,7 +154,7 @@ class DspLocalPlayer {
   void _startPolling() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (_disposed) return;
+      if (_disposed || !soloud.SoLoud.instance.isInitialized) return;
       final handle = _handle;
       if (handle == null) return;
       if (!soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
@@ -202,27 +201,24 @@ class DspLocalPlayer {
 
   Future<void> pause() async {
     if (_disposed) return;
-    final handle = _handle;
-    if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
-      return;
+    final handle = _validHandle(_handle);
+    if (handle == null) return;
     soloud.SoLoud.instance.setPause(handle, true);
     _stateController.add(PlayerState.paused);
   }
 
   Future<void> resume() async {
     if (_disposed) return;
-    final handle = _handle;
-    if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
-      return;
+    final handle = _validHandle(_handle);
+    if (handle == null) return;
     soloud.SoLoud.instance.setPause(handle, false);
     _stateController.add(PlayerState.playing);
   }
 
   Future<void> seek(Duration position) async {
     if (_disposed) return;
-    final handle = _handle;
-    if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
-      return;
+    final handle = _validHandle(_handle);
+    if (handle == null) return;
     final duration = _source == null
         ? Duration.zero
         : soloud.SoLoud.instance.getLength(_source!);
@@ -237,9 +233,8 @@ class DspLocalPlayer {
 
   Future<void> setVolume(double volume) async {
     if (_disposed) return;
-    final handle = _handle;
-    if (handle != null &&
-        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+    final handle = _validHandle(_handle);
+    if (handle != null) {
       final safeVolume = volume.isFinite ? volume.clamp(0.0, 1.0) : 0.0;
       soloud.SoLoud.instance.setVolume(handle, safeVolume);
     }
@@ -247,19 +242,16 @@ class DspLocalPlayer {
 
   void setBalance(double balance) {
     if (_disposed) return;
-    final handle = _handle;
-    if (handle != null &&
-        soloud.SoLoud.instance.isInitialized &&
-        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+    final handle = _validHandle(_handle);
+    if (handle != null) {
       soloud.SoLoud.instance.setPan(handle, balance.clamp(-1.0, 1.0));
     }
   }
 
   Future<void> setPlaybackSpeed(double speed) async {
     if (_disposed) return;
-    final handle = _handle;
-    if (handle != null &&
-        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+    final handle = _validHandle(_handle);
+    if (handle != null) {
       soloud.SoLoud.instance.setRelativePlaySpeed(
         handle,
         (speed.isFinite ? speed.clamp(0.5, 2.0) : 1.0).toDouble(),
@@ -268,7 +260,7 @@ class DspLocalPlayer {
   }
 
   void setVisualizationEnabled(bool enabled) {
-    if (!soloud.SoLoud.instance.isInitialized) return;
+    if (_disposed || !soloud.SoLoud.instance.isInitialized) return;
     soloud.SoLoud.instance.setVisualizationEnabled(
       enabled,
       windowSize: 512,
@@ -290,27 +282,32 @@ class DspLocalPlayer {
   }
 
   Future<void> stop({bool invalidate = true}) async {
-    if (invalidate) _generation++;
+    final generation = invalidate ? ++_generation : _generation;
     _pollTimer?.cancel();
     final handle = _handle;
     try {
-      if (handle != null && soloud.SoLoud.instance.isInitialized) {
-        await soloud.SoLoud.instance.stop(handle);
+      final validHandle = _validHandle(handle);
+      if (validHandle != null) {
+        await soloud.SoLoud.instance.stop(validHandle);
       }
     } finally {
-      _handle = null;
-      final source = _source;
-      _source = null;
-      if (source != null && soloud.SoLoud.instance.isInitialized) {
-        await _disposeSourceSafely(source);
-      }
-      final renderedModulePath = _renderedModulePath;
-      _renderedModulePath = null;
-      if (renderedModulePath != null) {
-        await _deleteRenderedModule(renderedModulePath);
+      if (generation == _generation) {
+        _handle = null;
+        final source = _source;
+        _source = null;
+        if (source != null && soloud.SoLoud.instance.isInitialized) {
+          await _disposeSourceSafely(source);
+        }
+        final renderedModulePath = _renderedModulePath;
+        _renderedModulePath = null;
+        if (renderedModulePath != null) {
+          await _deleteRenderedModule(renderedModulePath);
+        }
       }
     }
-    if (!_disposed) _stateController.add(PlayerState.stopped);
+    if (!_disposed && generation == _generation) {
+      _stateController.add(PlayerState.stopped);
+    }
   }
 
   Future<void> dispose() async {
@@ -322,5 +319,10 @@ class DspLocalPlayer {
     await _durationController.close();
     await _stateController.close();
     await _completeController.close();
+  }
+
+  soloud.SoundHandle? _validHandle(soloud.SoundHandle? handle) {
+    if (handle == null || !soloud.SoLoud.instance.isInitialized) return null;
+    return soloud.SoLoud.instance.getIsValidVoiceHandle(handle) ? handle : null;
   }
 }

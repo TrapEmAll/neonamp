@@ -1408,6 +1408,9 @@ FILE "disc image.flac" WAVE
     expect(dspGainForDb(6), closeTo(1.995, 0.001));
     expect(dspGainForDb(12), closeTo(3.981, 0.001));
     expect(dspGainForDb(-12), closeTo(0.251, 0.001));
+    expect(dspGainForDb(double.nan), 1.0);
+    expect(dspGainForDb(double.infinity), 1.0);
+    expect(dspGainForDb(double.negativeInfinity), 1.0);
   });
 
   testWidgets('renders the empty NeonAmp player', (tester) async {
