@@ -322,12 +322,15 @@ class MainActivity : AudioServiceActivity() {
                         0L
                     }
                     val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                    // Directory names are not required to be extensionless. Some
+                    // providers also report folders as application/octet-stream,
+                    // so honor the directory flag first and probe generic entries
+                    // rather than using the name as a directory heuristic.
                     val isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
                         mimeType == "application/vnd.google-apps.folder" ||
-                        (extension.isEmpty() &&
-                            ((flags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong()) != 0L ||
-                                (mimeType.isEmpty() || mimeType == "application/octet-stream") &&
-                                    hasChildDocuments(treeUri, documentId)))
+                        (flags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong()) != 0L ||
+                        (mimeType.isEmpty() || mimeType == "application/octet-stream") &&
+                            hasChildDocuments(treeUri, documentId)
                     if (isDirectory) {
                         pending.add(documentId)
                         continue
