@@ -1084,13 +1084,26 @@ Future<void> _replaceFileAtomically(File file, List<int> contents) async {
     movedOriginal = true;
     await temporary.rename(file.path);
     await backup.delete();
-  } catch (_) {
+  } catch (error) {
     if (movedOriginal && !await file.exists() && await backup.exists()) {
-      await backup.rename(file.path);
+      try {
+        await backup.rename(file.path);
+      } on Object catch (restoreError) {
+        throw StateError(
+          'Could not restore ${file.path} after metadata write failed: '
+          '$restoreError (original error: $error)',
+        );
+      }
     }
     rethrow;
   } finally {
-    if (await temporary.exists()) await temporary.delete();
+    if (await temporary.exists()) {
+      try {
+        await temporary.delete();
+      } on Object {
+        // A failed cleanup must not hide the metadata write result.
+      }
+    }
   }
 }
 
@@ -2608,7 +2621,16 @@ class _PlayerPageState extends State<PlayerPage>
       if (stop == true) {
         _castPositionTimer?.cancel();
         await _dlnaCast.stop();
-        if (mounted) setState(() => _playerState = PlayerState.paused);
+        if (mounted) {
+          setState(() {
+            _playerState = PlayerState.stopped;
+            _position = Duration.zero;
+          });
+        }
+        _audioHandler?.syncExternalState(
+          position: Duration.zero,
+          state: PlayerState.stopped,
+        );
       }
       return;
     }
@@ -2752,14 +2774,14 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _playCurrent() async {
     if (_current == null) return;
-    if (_playerState == PlayerState.stopped ||
-        _playerState == PlayerState.completed) {
-      await _select(_selected);
-      return;
-    }
     if (_casting) {
       await _dlnaCast.resume();
       if (mounted) setState(() => _playerState = PlayerState.playing);
+      return;
+    }
+    if (_playerState == PlayerState.stopped ||
+        _playerState == PlayerState.completed) {
+      await _select(_selected);
       return;
     }
     if (_midiActive) {
@@ -2790,7 +2812,16 @@ class _PlayerPageState extends State<PlayerPage>
     if (_casting) {
       _castPositionTimer?.cancel();
       await _dlnaCast.stop();
-      if (mounted) setState(() => _playerState = PlayerState.stopped);
+      if (mounted) {
+        setState(() {
+          _playerState = PlayerState.stopped;
+          _position = Duration.zero;
+        });
+      }
+      _audioHandler?.syncExternalState(
+        position: Duration.zero,
+        state: PlayerState.stopped,
+      );
       return;
     }
     if (_midiActive) {
@@ -2800,6 +2831,7 @@ class _PlayerPageState extends State<PlayerPage>
     } else {
       await _player.stop();
     }
+    if (mounted) setState(() => _position = Duration.zero);
   }
 
   Future<void> _seekCurrent(Duration position) async {
@@ -2923,9 +2955,14 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     _castPositionPollInProgress = true;
+    final identity = _current?.identityKey;
     try {
       final position = await _dlnaCast.getPosition();
-      if (position == null || !mounted || !_casting) return;
+      if (position == null ||
+          !mounted ||
+          !_casting ||
+          identity != _current?.identityKey)
+        return;
       if (_duration > Duration.zero && position >= _duration) {
         _castPositionTimer?.cancel();
         if (_current?.cueStartMs != null && !_cueTransitioning) {
@@ -3319,18 +3356,35 @@ class _PlayerPageState extends State<PlayerPage>
       ],
     );
     if (result.isEmpty) return;
+    var added = 0;
+    var skipped = 0;
     for (final file in result) {
       final path = file.path;
-      if (path == null || _queue.any((track) => track.path == path)) continue;
-      final track = await _readTrack(path, file.name);
+      if (path == null || _queue.any((track) => track.path == path)) {
+        skipped++;
+        continue;
+      }
+      late final Track track;
+      try {
+        track = await _readTrack(path, file.name);
+      } on Object {
+        skipped++;
+        continue;
+      }
       if (!mounted) return;
       setState(() {
         _queue.add(track);
         if (!_library.any((item) => item.path == path)) _library.add(track);
       });
+      added++;
     }
     await _saveQueue();
     if (queueWasEmpty && _queue.isNotEmpty) await _select(0);
+    if (mounted && skipped > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added $added file(s); skipped $skipped.')),
+      );
+    }
   }
 
   Future<void> _addFolder() async {
@@ -3362,7 +3416,11 @@ class _PlayerPageState extends State<PlayerPage>
     if (Platform.isAndroid) {
       final selection = await const MethodChannel('neonamp/library')
           .invokeMapMethod<String, dynamic>('pickFolder');
-      return selection?['uri'] as String?;
+      final uri = selection?['uri'] as String?;
+      if (uri == null || Uri.tryParse(uri)?.scheme.toLowerCase() != 'content') {
+        return null;
+      }
+      return uri;
     }
     return FilePicker.getDirectoryPath(dialogTitle: dialogTitle);
   }
@@ -3373,10 +3431,13 @@ class _PlayerPageState extends State<PlayerPage>
     String fileName,
   ) async {
     if (Platform.isAndroid) {
-      await const MethodChannel('neonamp/library').invokeMethod<bool>(
-        'copyFileToFolder',
-        {'uri': folder, 'sourcePath': sourcePath, 'fileName': fileName},
-      );
+      final copied = await const MethodChannel('neonamp/library')
+          .invokeMethod<bool>('copyFileToFolder', {
+            'uri': folder,
+            'sourcePath': sourcePath,
+            'fileName': fileName,
+          });
+      if (copied != true) throw StateError('Android could not copy the file.');
       return;
     }
     await File(sourcePath).copy('$folder${Platform.pathSeparator}$fileName');
@@ -3388,10 +3449,14 @@ class _PlayerPageState extends State<PlayerPage>
     String contents,
   ) async {
     if (Platform.isAndroid) {
-      await const MethodChannel('neonamp/library').invokeMethod<bool>(
-        'writeTextToFolder',
-        {'uri': folder, 'fileName': fileName, 'contents': contents},
-      );
+      final written = await const MethodChannel('neonamp/library')
+          .invokeMethod<bool>('writeTextToFolder', {
+            'uri': folder,
+            'fileName': fileName,
+            'contents': contents,
+          });
+      if (written != true)
+        throw StateError('Android could not write the playlist.');
       return;
     }
     await File('$folder${Platform.pathSeparator}$fileName')
@@ -3408,15 +3473,19 @@ class _PlayerPageState extends State<PlayerPage>
           .invokeListMethod<Map<Object?, Object?>>('scanFolder', {
             'uri': directory,
           });
-      files = (results ?? []).map((item) {
-        final path = item['path'] as String;
-        final name = item['name'] as String? ?? path;
-        return (
-          path: path,
-          name: name,
-          relativePath: item['relativePath'] as String? ?? name,
-        );
-      }).toList();
+      files = (results ?? [])
+          .map((item) {
+            final path = item['path'] as String?;
+            if (path == null || path.isEmpty) return null;
+            final name = item['name'] as String? ?? path;
+            return (
+              path: path,
+              name: name,
+              relativePath: item['relativePath'] as String? ?? name,
+            );
+          })
+          .whereType<({String path, String name, String relativePath})>()
+          .toList();
     } else {
       files = Directory(directory)
           .listSync(recursive: true)
@@ -4043,6 +4112,9 @@ class _PlayerPageState extends State<PlayerPage>
       final steps = math.max(1, _crossfadeSeconds * 10);
       for (var step = 1; step <= steps; step++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
+        if (!mounted || !_crossfadeInProgress) {
+          throw StateError('Crossfade was cancelled.');
+        }
         final progress = step / steps;
         await previousPlayer.setVolume(
           _volumeFor(previousTrack) * (1 - progress),
@@ -4101,13 +4173,16 @@ class _PlayerPageState extends State<PlayerPage>
         track.path,
         volume: 0,
         playbackSpeed: _playbackSpeed,
-        equalizerEnabled: true,
+        equalizerEnabled: _equalizerEnabled,
         bands: _eqBands,
         balance: _balance,
       );
       final steps = math.max(1, _crossfadeSeconds * 10);
       for (var step = 1; step <= steps; step++) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
+        if (!mounted || !_crossfadeInProgress) {
+          throw StateError('Crossfade was cancelled.');
+        }
         final progress = step / steps;
         await previousPlayer.setVolume(
           _volumeFor(previousTrack) * (1 - progress),
@@ -7056,6 +7131,15 @@ class _PlayerPageState extends State<PlayerPage>
 
   @override
   void dispose() {
+    final crossfadeAudioPlayer = _crossfadeAudioPlayer;
+    final crossfadeDspPlayer = _crossfadeDspPlayer;
+    _crossfadeInProgress = false;
+    if (crossfadeAudioPlayer != null) {
+      unawaited(crossfadeAudioPlayer.dispose());
+    }
+    if (crossfadeDspPlayer != null) {
+      unawaited(crossfadeDspPlayer.dispose());
+    }
     unawaited(_dlnaCast.dispose());
     _castPositionTimer?.cancel();
     _sleepTimer?.cancel();

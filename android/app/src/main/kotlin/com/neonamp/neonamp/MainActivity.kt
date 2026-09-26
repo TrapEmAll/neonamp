@@ -339,9 +339,14 @@ class MainActivity : AudioServiceActivity() {
                     ) {
                         val temporaryFile = File(cacheDirectory, "$cacheName.tmp")
                         try {
-                            contentResolver.openInputStream(documentUri)?.use { input ->
-                                FileOutputStream(temporaryFile).use { output -> input.copyTo(output) }
-                            } ?: continue
+                            val input = contentResolver.openInputStream(documentUri)
+                            if (input == null) {
+                                temporaryFile.delete()
+                                continue
+                            }
+                            input.use { stream ->
+                                FileOutputStream(temporaryFile).use { output -> stream.copyTo(output) }
+                            }
                             if (!temporaryFile.renameTo(cachedFile)) {
                                 temporaryFile.copyTo(cachedFile, overwrite = true)
                             }
@@ -380,6 +385,7 @@ class MainActivity : AudioServiceActivity() {
             .replace(Regex("[<>:\"|?*]"), "_")
             .trim()
             .ifEmpty { "neonamp-export.${source.extension}" }
+            .let { if (it == "." || it == "..") "neonamp-export.${source.extension}" else it }
         val mimeType = when (source.extension.lowercase(Locale.ROOT)) {
             "mp3" -> "audio/mpeg"
             "m4a", "aac" -> "audio/mp4"
@@ -399,6 +405,7 @@ class MainActivity : AudioServiceActivity() {
             .replace(Regex("[<>:\"|?*]"), "_")
             .trim()
             .ifEmpty { "neonamp-export.txt" }
+            .let { if (it == "." || it == "..") "neonamp-export.txt" else it }
         val destination = createSafFile(treeUri, safeFileName, "application/x-mpegURL")
         contentResolver.openOutputStream(destination, "w")?.bufferedWriter()?.use { writer ->
             writer.write(contents)
