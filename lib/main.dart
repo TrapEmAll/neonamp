@@ -6953,12 +6953,11 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _showEqualizer() async {
-    final builtInPresets = builtInEqualizerPresets.keys.toList();
     final pluginPresets = <String, List<double>>{};
     for (final plugin in _plugins.values.where((plugin) => plugin.enabled)) {
       pluginPresets.addAll(plugin.equalizerPresets);
     }
-    final presets = [...builtInPresets, ...pluginPresets.keys];
+    final presets = equalizerPresetNames(pluginPresets: pluginPresets);
     var dialogPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
     if (_eqPreset != dialogPreset) _eqPreset = dialogPreset;
     await showDialog<void>(

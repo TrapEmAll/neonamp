@@ -14,6 +14,27 @@ void main() {
     }
   });
 
+  test('plugin names do not duplicate built-in preset names', () {
+    expect(
+      equalizerPresetNames(
+        pluginPresets: const {
+          'Rock': [1, 2, 3],
+          'Podcast': [2, 1],
+        },
+      ),
+      containsAllInOrder([
+        ...builtInEqualizerPresets.keys,
+        'Podcast',
+      ]),
+    );
+    expect(
+      equalizerPresetNames(
+        pluginPresets: const {'Rock': [1, 2, 3]},
+      ).where((name) => name == 'Rock'),
+      hasLength(1),
+    );
+  });
+
   test('short plugin presets safely fill missing equalizer bands', () {
     expect(
       equalizerPresetBands(

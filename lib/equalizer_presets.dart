@@ -7,6 +7,15 @@ const Map<String, List<double>> builtInEqualizerPresets = {
   'Bass boost': [6, 5, 4, 2, 0, 0, 0, 0, 0, 0],
 };
 
+List<String> equalizerPresetNames({
+  Map<String, List<double>> pluginPresets = const {},
+}) {
+  return <String>{
+    ...builtInEqualizerPresets.keys,
+    ...pluginPresets.keys,
+  }.toList();
+}
+
 List<double> equalizerPresetBands(
   String preset, {
   Map<String, List<double>> pluginPresets = const {},
