@@ -2202,6 +2202,7 @@ class NeonAmpApp extends StatefulWidget {
 class _NeonAmpAppState extends State<NeonAmpApp> {
   String _themeName = 'Neon';
   final Map<String, ThemeSkin> _customSkins = {};
+  int _themeOperationGeneration = 0;
 
   @override
   void initState() {
@@ -2210,6 +2211,7 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
   }
 
   Future<void> _loadTheme() async {
+    final operation = ++_themeOperationGeneration;
     final prefs = await SharedPreferences.getInstance();
     final savedSkins = prefs.getString('customSkins');
     if (savedSkins != null) {
@@ -2225,19 +2227,22 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
         _customSkins.clear();
       }
     }
-    if (!mounted) return;
+    if (!mounted || operation != _themeOperationGeneration) return;
     setState(() => _themeName = prefs.getString('themeName') ?? 'Neon');
   }
 
   Future<void> _setTheme(String themeName) async {
+    final operation = ++_themeOperationGeneration;
     if (!mounted) return;
     setState(() => _themeName = themeName);
     final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
+    if (operation != _themeOperationGeneration) return;
     await prefs.setString('themeName', themeName);
   }
 
   Future<void> _addCustomSkin(ThemeSkin skin) async {
+    if (!mounted) return;
+    final operation = ++_themeOperationGeneration;
     if (builtInSkins().any((builtin) => builtin.name == skin.name)) {
       throw const FormatException('Built-in skin names cannot be replaced.');
     }
@@ -2245,12 +2250,12 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
       _customSkins[skin.name] = skin;
       _themeName = skin.name;
     });
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    await prefs.setString(
-      'customSkins',
-      jsonEncode(_customSkins.values.map((value) => value.toJson()).toList()),
+    final encodedSkins = jsonEncode(
+      _customSkins.values.map((value) => value.toJson()).toList(),
     );
+    final prefs = await SharedPreferences.getInstance();
+    if (operation != _themeOperationGeneration) return;
+    await prefs.setString('customSkins', encodedSkins);
     await prefs.setString('themeName', skin.name);
   }
 
@@ -4141,10 +4146,23 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     final operation = ++_queueOperationGeneration;
-    _castPositionTimer?.cancel();
-    if (_casting) await _dlnaCast.stop();
-    if (!mounted || operation != _queueOperationGeneration) return;
     _selectionInProgress = true;
+    try {
+      _castPositionTimer?.cancel();
+      if (_casting) await _dlnaCast.stop();
+    } on Object catch (error) {
+      if (mounted && operation == _queueOperationGeneration) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not stop the previous track: $error')),
+        );
+      }
+      _selectionInProgress = false;
+      return;
+    }
+    if (!mounted || operation != _queueOperationGeneration) {
+      _selectionInProgress = false;
+      return;
+    }
     try {
       setState(() {
         _selected = index;
@@ -4248,9 +4266,7 @@ class _PlayerPageState extends State<PlayerPage>
         SnackBar(content: Text('Could not play this track: $error')),
       );
     } finally {
-      if (operation == _queueOperationGeneration) {
-        _selectionInProgress = false;
-      }
+      _selectionInProgress = false;
     }
   }
 
@@ -4867,6 +4883,7 @@ class _PlayerPageState extends State<PlayerPage>
                               }
                               if (_stationStreamUrl(station) == null) return;
                               await _toggleRadioFavorite(station);
+                              if (!context.mounted) return;
                               setDialogState(() {});
                             },
                     ),
