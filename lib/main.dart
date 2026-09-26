@@ -2378,6 +2378,7 @@ class _PlayerPageState extends State<PlayerPage>
   int _playerStreamGeneration = 0;
   int _dspStreamGeneration = 0;
   int _midiStreamGeneration = 0;
+  int _libraryOperationGeneration = 0;
 
   bool get _casting => _dlnaCast.isConnected;
 
@@ -3444,6 +3445,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _addFiles() async {
+    final operation = ++_libraryOperationGeneration;
     final queueWasEmpty = _queue.isEmpty;
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -3469,7 +3471,7 @@ class _PlayerPageState extends State<PlayerPage>
         ...trackerModuleExtensions,
       ],
     );
-    if (result.isEmpty) return;
+    if (result.isEmpty || operation != _libraryOperationGeneration) return;
     var added = 0;
     var skipped = 0;
     for (final file in result) {
@@ -3485,16 +3487,16 @@ class _PlayerPageState extends State<PlayerPage>
         skipped++;
         continue;
       }
-      if (!mounted) return;
+      if (!mounted || operation != _libraryOperationGeneration) return;
       setState(() {
         _queue.add(track);
         if (!_library.any((item) => item.path == path)) _library.add(track);
       });
       added++;
     }
-    if (!mounted) return;
+    if (!mounted || operation != _libraryOperationGeneration) return;
     await _saveQueue();
-    if (!mounted) return;
+    if (!mounted || operation != _libraryOperationGeneration) return;
     if (queueWasEmpty && _queue.isNotEmpty) await _select(0);
     if (mounted && skipped > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3504,10 +3506,12 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _addFolder() async {
+    final operation = ++_libraryOperationGeneration;
     try {
       final directory = await _pickFolderLocation('Choose a music folder');
-      if (directory == null) return;
-      final scanned = await _scanFolder(directory);
+      if (directory == null || operation != _libraryOperationGeneration) return;
+      final scanned = await _scanFolder(directory, operation: operation);
+      if (operation != _libraryOperationGeneration) return;
       if (scanned == 0) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -3518,7 +3522,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
         return;
       }
-      if (!mounted) return;
+      if (!mounted || operation != _libraryOperationGeneration) return;
       if (!_libraryFolders.contains(directory)) _libraryFolders.add(directory);
       await _saveQueue();
     } on Object catch (error) {
@@ -3580,7 +3584,7 @@ class _PlayerPageState extends State<PlayerPage>
         .writeAsString(contents);
   }
 
-  Future<int> _scanFolder(String directory) async {
+  Future<int> _scanFolder(String directory, {int? operation}) async {
     final List<({String path, String name, String relativePath})> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
@@ -3639,7 +3643,10 @@ class _PlayerPageState extends State<PlayerPage>
         playCount: existingLibrary?.playCount ?? existingQueue?.playCount,
         favorite: existingLibrary?.favorite ?? existingQueue?.favorite,
       );
-      if (!mounted) return 0;
+      if (!mounted ||
+          (operation != null && operation != _libraryOperationGeneration)) {
+        return 0;
+      }
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
         final libraryIndex = _library.indexWhere(
@@ -3663,6 +3670,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _rescanFolders() async {
+    final operation = ++_libraryOperationGeneration;
     if (_libraryFolders.isEmpty) {
       await _addFolder();
       return;
@@ -3688,8 +3696,8 @@ class _PlayerPageState extends State<PlayerPage>
               'Choose a saved music folder again',
             );
             if (directory == null) return;
-            await _scanFolder(directory);
-            if (!mounted) return;
+            await _scanFolder(directory, operation: operation);
+            if (!mounted || operation != _libraryOperationGeneration) return;
             final index = _libraryFolders.indexOf(oldFolder);
             if (index >= 0) _libraryFolders[index] = directory;
             await _saveQueue();
@@ -3709,8 +3717,8 @@ class _PlayerPageState extends State<PlayerPage>
     for (final folder in List<String>.from(_libraryFolders)) {
       try {
         if (Platform.isAndroid || Directory(folder).existsSync()) {
-          await _scanFolder(folder);
-          if (!mounted) return;
+          await _scanFolder(folder, operation: operation);
+          if (!mounted || operation != _libraryOperationGeneration) return;
         }
       } on Object catch (error) {
         if (!mounted) return;
@@ -3719,7 +3727,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     }
-    if (!mounted) return;
+    if (!mounted || operation != _libraryOperationGeneration) return;
     await _saveQueue();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3731,11 +3739,16 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _importPlaylist() async {
+    final operation = ++_libraryOperationGeneration;
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
     );
-    if (result.isEmpty || result.first.path == null) return;
+    if (result.isEmpty ||
+        result.first.path == null ||
+        operation != _libraryOperationGeneration) {
+      return;
+    }
     final playlistPath = result.first.path!;
     try {
       final extension = playlistPath.split('.').last.toLowerCase();
@@ -3745,7 +3758,7 @@ class _PlayerPageState extends State<PlayerPage>
       );
       var added = 0;
       var skipped = 0;
-      if (!mounted) return;
+      if (!mounted || operation != _libraryOperationGeneration) return;
       setState(() {
         for (final entry in document.entries) {
           var path = resolvePlaylistPath(entry.path, playlistPath);
@@ -3791,7 +3804,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
       });
       await _saveQueue();
-      if (mounted) {
+      if (mounted && operation == _libraryOperationGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -3802,7 +3815,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     } on Object catch (error) {
-      if (mounted) {
+      if (mounted && operation == _libraryOperationGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not import playlist: $error')),
         );
@@ -3811,18 +3824,19 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _importItunesLibrary() async {
+    final operation = ++_libraryOperationGeneration;
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['xml'],
       dialogTitle: 'Import an iTunes XML library',
     );
     final path = picked.firstOrNull?.path;
-    if (path == null) return;
+    if (path == null || operation != _libraryOperationGeneration) return;
     try {
       final imported = parseItunesLibrary(await File(path).readAsString());
       var addedTracks = 0;
       var addedPlaylists = 0;
-      if (!mounted) return;
+      if (!mounted || operation != _libraryOperationGeneration) return;
       setState(() {
         for (final json in imported.tracks) {
           try {
@@ -3846,7 +3860,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
       });
       await _saveQueue();
-      if (mounted) {
+      if (mounted && operation == _libraryOperationGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -3856,7 +3870,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     } on Object catch (error) {
-      if (mounted) {
+      if (mounted && operation == _libraryOperationGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not import iTunes library: $error')),
         );
@@ -3879,6 +3893,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _importCueSheet() async {
+    final operation = ++_libraryOperationGeneration;
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
       dialogTitle: 'Select a CUE sheet and its audio file(s)',
@@ -3906,7 +3921,9 @@ class _PlayerPageState extends State<PlayerPage>
     final cueInfo = picked
         .where((file) => file.extension?.toLowerCase() == 'cue')
         .firstOrNull;
-    if (cueInfo?.path == null) return;
+    if (cueInfo?.path == null || operation != _libraryOperationGeneration) {
+      return;
+    }
     try {
       final cueFile = File(cueInfo!.path!);
       final text = utf8.decode(
@@ -3963,7 +3980,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
       var added = 0;
-      if (!mounted) return;
+      if (!mounted || operation != _libraryOperationGeneration) return;
       setState(() {
         for (final track in tracks) {
           if (_queue.any((item) => item.identityKey == track.identityKey)) {
@@ -3979,13 +3996,13 @@ class _PlayerPageState extends State<PlayerPage>
         }
       });
       await _saveQueue();
-      if (mounted) {
+      if (mounted && operation == _libraryOperationGeneration) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Imported $added CUE track(s)')));
       }
     } on Object catch (error) {
-      if (mounted) {
+      if (mounted && operation == _libraryOperationGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not import CUE sheet: $error')),
         );
