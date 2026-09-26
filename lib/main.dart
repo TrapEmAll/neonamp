@@ -8991,7 +8991,82 @@ class _PlayerPageState extends State<PlayerPage>
     ),
   );
 
-  Widget _bottomPlayer() => Container(
+  Widget _bottomPlayer() {
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    if (compact) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(4, 0, 4, 2),
+        decoration: const BoxDecoration(
+          color: Color(0xff0c0d14),
+          border: Border(top: BorderSide(color: Colors.white10)),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              tooltip: 'Previous track',
+              visualDensity: VisualDensity.compact,
+              onPressed: _previous,
+              icon: const Icon(Icons.skip_previous_rounded, size: 20),
+              color: Colors.white70,
+            ),
+            Container(
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(0xffef4bff),
+              ),
+              child: IconButton(
+                tooltip: _isPlaying ? 'Pause' : 'Play',
+                visualDensity: VisualDensity.compact,
+                onPressed: _togglePlay,
+                icon: Icon(
+                  _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  size: 22,
+                ),
+                color: Colors.white,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Next track',
+              visualDensity: VisualDensity.compact,
+              onPressed: _next,
+              icon: const Icon(Icons.skip_next_rounded, size: 20),
+              color: Colors.white70,
+            ),
+            Expanded(
+              child: Slider(
+                value: _duration.inMilliseconds == 0
+                    ? 0
+                    : (_position.inMilliseconds / _duration.inMilliseconds)
+                          .clamp(0.0, 1.0),
+                onChanged: _duration.inMilliseconds == 0
+                    ? null
+                    : (value) => _seekCurrent(
+                        Duration(
+                          milliseconds: (_duration.inMilliseconds * value)
+                              .round(),
+                        ),
+                      ),
+                activeColor: const Color(0xffef4bff),
+                inactiveColor: Colors.white12,
+              ),
+            ),
+            IconButton(
+              tooltip: _casting
+                  ? 'Casting to ${_dlnaCast.rendererName ?? 'device'}'
+                  : 'Cast to a network player',
+              visualDensity: VisualDensity.compact,
+              onPressed: _showCastDevices,
+              icon: Icon(
+                _casting ? Icons.cast_connected_rounded : Icons.cast_rounded,
+                size: 18,
+              ),
+              color: _casting ? const Color(0xffef4bff) : Colors.white54,
+            ),
+          ],
+        ),
+      );
+    }
+    return Container(
     padding: MediaQuery.sizeOf(context).width < 600
         ? const EdgeInsets.fromLTRB(8, 2, 8, 4)
         : const EdgeInsets.fromLTRB(24, 10, 24, 18),
@@ -9203,7 +9278,8 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ],
     ),
-  );
+    );
+  }
 }
 
 class SpectrumPainter extends CustomPainter {
