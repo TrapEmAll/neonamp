@@ -5952,7 +5952,9 @@ class _PlayerPageState extends State<PlayerPage>
                       .contains(query)),
         )
         .toList();
-    if (_librarySort == 'Added') return tracks;
+    if (_librarySort == 'Added') {
+      return _librarySortDescending ? tracks.reversed.toList() : tracks;
+    }
     tracks.sort((a, b) {
       final comparison = switch (_librarySort) {
         'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
@@ -5996,19 +5998,20 @@ class _PlayerPageState extends State<PlayerPage>
           ? results.every((result) => result)
           : results.any((result) => result);
     }).toList();
-    if (playlist.sortBy != 'Added') {
-      tracks.sort((a, b) {
-        final comparison = switch (playlist.sortBy) {
-          'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-          'Artist' => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
-          'Album' => a.album.toLowerCase().compareTo(b.album.toLowerCase()),
-          'Rating' => a.rating.compareTo(b.rating),
-          'Play count' => a.playCount.compareTo(b.playCount),
-          _ => 0,
-        };
-        return playlist.descending ? -comparison : comparison;
-      });
+    if (playlist.sortBy == 'Added') {
+      return playlist.descending ? tracks.reversed.toList() : tracks;
     }
+    tracks.sort((a, b) {
+      final comparison = switch (playlist.sortBy) {
+        'Title' => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        'Artist' => a.artist.toLowerCase().compareTo(b.artist.toLowerCase()),
+        'Album' => a.album.toLowerCase().compareTo(b.album.toLowerCase()),
+        'Rating' => a.rating.compareTo(b.rating),
+        'Play count' => a.playCount.compareTo(b.playCount),
+        _ => 0,
+      };
+      return playlist.descending ? -comparison : comparison;
+    });
     if (playlist.limit > 0 && tracks.length > playlist.limit) {
       return tracks.sublist(0, playlist.limit);
     }
