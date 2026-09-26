@@ -6360,6 +6360,7 @@ class _PlayerPageState extends State<PlayerPage>
       final skin = ThemeSkin.fromJson(
         jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
       );
+      if (!mounted) return;
       await widget.onSkinImported?.call(skin);
       if (mounted) {
         ScaffoldMessenger.of(
@@ -6497,7 +6498,8 @@ class _PlayerPageState extends State<PlayerPage>
         ],
       ),
     );
-    if (selected != null) widget.onThemeChanged?.call(selected);
+    if (!mounted || selected == null) return;
+    widget.onThemeChanged?.call(selected);
   }
 
   Future<void> _showLyrics(Track track) async {
@@ -7103,7 +7105,7 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       ),
     );
-    if (saved != true) return;
+    if (!mounted || saved != true) return;
     setState(() {
       _playerControls = normalizePlayerControls(draft);
       _playerLayoutCustomized = !resetToDefault;
