@@ -4296,7 +4296,12 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _togglePlay() async {
     // Importing media is an explicit library action. The transport control
     // must never open Android's file picker just because the queue is empty.
-    if (_current == null) return;
+    // A restored queue can briefly exist before _current is initialized; in
+    // that state the transport button should still start the selected track.
+    if (_current == null) {
+      if (_queue.isNotEmpty) await _select(_selected);
+      return;
+    }
     if (_isPlaying) {
       await _pauseCurrent();
     } else if (_playerState == PlayerState.paused) {
