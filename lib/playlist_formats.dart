@@ -217,6 +217,10 @@ String resolvePlaylistPath(String entry, String playlistPath) {
       value.startsWith(r'\\')) {
     return value;
   }
+  // Preserve provider-backed media references such as Android SAF
+  // content:// URIs. They are not filesystem-relative paths and must remain
+  // intact so the library resolver can match them or report them accurately.
+  if (scheme != null && scheme.isNotEmpty) return value;
   final normalized = value.replaceAll(RegExp(r'[\\/]'), Platform.pathSeparator);
   return '${File(playlistPath).parent.path}${Platform.pathSeparator}$normalized';
 }

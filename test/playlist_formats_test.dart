@@ -94,6 +94,13 @@ void main() {
         resolvePlaylistPath('HTTPS://example.com/radio', playlistPath),
         'HTTPS://example.com/radio',
       );
+      expect(
+        resolvePlaylistPath(
+          'content://com.example.provider/document/42',
+          playlistPath,
+        ),
+        'content://com.example.provider/document/42',
+      );
       const absolute = r'C:\Music\song.mp3';
       expect(resolvePlaylistPath(absolute, playlistPath), absolute);
     });
