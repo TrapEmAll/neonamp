@@ -3659,7 +3659,6 @@ class _PlayerPageState extends State<PlayerPage>
           var path = resolvePlaylistPath(entry.path, playlistPath);
           if (path.isEmpty || path.startsWith('#')) continue;
           final uri = Uri.tryParse(path);
-          final scheme = uri?.scheme.toLowerCase();
           final isStream = isHttpUri(uri);
           if (!isStream) {
             path =
@@ -4845,7 +4844,9 @@ class _PlayerPageState extends State<PlayerPage>
       } catch (_) {
         // Keep other subscriptions refreshing if one feed is unavailable.
       }
+      if (!mounted) return;
     }
+    if (!mounted) return;
     await _saveQueue();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4867,15 +4868,18 @@ class _PlayerPageState extends State<PlayerPage>
     var addedFeeds = 0;
     var addedEpisodes = 0;
     for (final feed in feeds) {
+      if (!mounted) return;
       if (_podcastFeeds.contains(feed)) continue;
       try {
         addedEpisodes += await _loadPodcastFeed(feed);
+        if (!mounted) return;
         _podcastFeeds.add(feed);
         addedFeeds++;
       } on Exception {
         // A bad or temporarily unavailable feed must not block other imports.
       }
     }
+    if (!mounted) return;
     await _saveQueue();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4931,6 +4935,7 @@ class _PlayerPageState extends State<PlayerPage>
                           tooltip: 'Unsubscribe',
                           icon: const Icon(Icons.delete_outline),
                           onPressed: () async {
+                            if (!dialogContext.mounted) return;
                             setDialogState(() => _podcastFeeds.remove(feed));
                             await _saveQueue();
                           },
@@ -5017,7 +5022,7 @@ class _PlayerPageState extends State<PlayerPage>
     final directory = await _pickFolderLocation(
       'Choose a podcast download folder',
     );
-    if (directory == null) return;
+    if (!mounted || directory == null) return;
     final client = HttpClient();
     try {
       final request = await client.getUrl(episodeUri);
@@ -5216,7 +5221,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _convertTrackToM4a(Track track) async {
     if (isRemoteMediaPath(track.path)) return;
     final destination = await _pickFolderLocation('Choose a conversion folder');
-    if (destination == null) return;
+    if (!mounted || destination == null) return;
     final usedNames = <String>{};
     final requested = convertedM4aFileName(track.path);
     final outputName = nextSyncFileName(requested, usedNames);
@@ -5338,11 +5343,11 @@ class _PlayerPageState extends State<PlayerPage>
               .toList(),
         ),
       );
-      if (selection == null) return;
+      if (!mounted || selection == null) return;
       final destination = await FilePicker.getDirectoryPath(
         dialogTitle: 'Choose a CD rip folder',
       );
-      if (destination == null) return;
+      if (!mounted || destination == null) return;
       final drive = selection['drive'] as String;
       final trackNumber = selection['track'] as int;
       final outputName = nextSyncFileName(
@@ -5791,7 +5796,7 @@ class _PlayerPageState extends State<PlayerPage>
         ],
       ),
     );
-    if (values == null) return;
+    if (!mounted || values == null) return;
 
     var updatedCount = 0;
     var failedCount = 0;
@@ -5862,7 +5867,7 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     final result = await FilePicker.pickFiles(type: FileType.image);
-    if (result.isEmpty || result.first.path == null) return;
+    if (!mounted || result.isEmpty || result.first.path == null) return;
     try {
       final imageFile = File(result.first.path!);
       final bytes = await imageFile.readAsBytes();
@@ -6118,6 +6123,7 @@ class _PlayerPageState extends State<PlayerPage>
                             tooltip: 'Remove from playlist',
                             icon: const Icon(Icons.remove_circle_outline),
                             onPressed: () {
+                              if (!mounted || !context.mounted) return;
                               setState(() => tracks.removeAt(index));
                               setDialogState(() {});
                             },
@@ -6602,6 +6608,7 @@ class _PlayerPageState extends State<PlayerPage>
                 title: const Text('Crossfade tracks'),
                 value: _crossfade,
                 onChanged: (value) {
+                  if (!mounted) return;
                   setState(() => _crossfade = value);
                   unawaited(_saveQueue());
                   setDialogState(() {});
@@ -6619,6 +6626,7 @@ class _PlayerPageState extends State<PlayerPage>
                         divisions: 11,
                         label: '${_crossfadeSeconds}s',
                         onChanged: (value) {
+                          if (!mounted) return;
                           setState(() => _crossfadeSeconds = value.round());
                           unawaited(_saveQueue());
                           setDialogState(() {});
