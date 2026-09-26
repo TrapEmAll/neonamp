@@ -5491,7 +5491,7 @@ class _PlayerPageState extends State<PlayerPage>
     final tracks = <Track>[];
     final seen = <String>{};
     for (final track in selected) {
-      if (isUriMediaPath(track.path)) continue;
+      if (isRemoteMediaPath(track.path)) continue;
       if (seen.add(track.path)) tracks.add(track);
     }
     if (tracks.isEmpty) {
@@ -5507,12 +5507,19 @@ class _PlayerPageState extends State<PlayerPage>
     var copied = 0;
     var skipped = 0;
     for (final track in tracks) {
-      final source = File(track.path);
+      late final String sourcePath;
+      try {
+        sourcePath = await _playbackSourcePath(track);
+      } on Object {
+        skipped++;
+        continue;
+      }
+      final source = File(sourcePath);
       if (!await source.exists()) {
         skipped++;
         continue;
       }
-      final name = nextSyncFileName(syncFileName(track.path), usedNames);
+      final name = nextSyncFileName(syncFileName(sourcePath), usedNames);
       final samePath =
           !Platform.isAndroid &&
           source.absolute.path.toLowerCase() ==
@@ -5524,7 +5531,7 @@ class _PlayerPageState extends State<PlayerPage>
         continue;
       }
       try {
-        await _copyFileToFolder(destination, track.path, name);
+        await _copyFileToFolder(destination, sourcePath, name);
         manifest
           ..add('#EXTINF:-1,${track.name}')
           ..add(name);
@@ -5554,14 +5561,15 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _convertTrackToM4a(Track track) async {
-    if (isUriMediaPath(track.path)) return;
+    if (isRemoteMediaPath(track.path)) return;
     final destination = await _pickFolderLocation('Choose a conversion folder');
     if (!mounted || destination == null) return;
-    final usedNames = <String>{};
-    final requested = convertedM4aFileName(track.path);
-    final outputName = nextSyncFileName(requested, usedNames);
-    var output = '$destination${Platform.pathSeparator}$outputName';
     try {
+      final sourcePath = await _playbackSourcePath(track);
+      final usedNames = <String>{};
+      final requested = convertedM4aFileName(sourcePath);
+      final outputName = nextSyncFileName(requested, usedNames);
+      var output = '$destination${Platform.pathSeparator}$outputName';
       if (Platform.isAndroid) {
         final supportDirectory = await getApplicationSupportDirectory();
         final convertedDirectory = Directory(
@@ -5573,7 +5581,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       final converted = await const MethodChannel('neonamp/converter')
           .invokeMethod<bool>('convertToM4a', {
-            'inputPath': track.path,
+            'inputPath': sourcePath,
             'outputPath': output,
           });
       if (converted != true) {
