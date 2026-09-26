@@ -537,6 +537,8 @@ FILE "disc image.flac" WAVE
     expect(normalizePlaybackSpeed(0.1), 0.5);
     expect(normalizePlaybackSpeed(1.25), 1.25);
     expect(normalizePlaybackSpeed(4), 2.0);
+    expect(normalizePlaybackSpeed(double.nan), 1.0);
+    expect(normalizePlaybackSpeed(double.infinity), 1.0);
   });
 
   test('remote media detection accepts mixed-case HTTP URLs only', () {

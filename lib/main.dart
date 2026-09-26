@@ -133,7 +133,9 @@ int nextQueueIndex({
 
 double normalizeStereoBalance(double balance) => balance.clamp(-1.0, 1.0);
 
-double normalizePlaybackSpeed(double speed) => speed.clamp(0.5, 2.0).toDouble();
+double normalizePlaybackSpeed(double speed) => speed.isFinite
+    ? speed.clamp(0.5, 2.0).toDouble()
+    : 1.0;
 
 String stereoBalanceLabel(double balance) {
   final normalized = normalizeStereoBalance(balance);
