@@ -115,6 +115,11 @@ class DlnaCast {
       if (!isUrl) {
         await _closeServer();
       }
+      if (generation == _operationGeneration) {
+        _renderer = null;
+        _segmentStart = Duration.zero;
+        _segmentEnd = null;
+      }
       rethrow;
     }
   }
