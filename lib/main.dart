@@ -3086,7 +3086,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted) return;
     setState(() => _equalizerEnabled = enabled);
     if (current != null && (wasPlaying || _dspActive || needsLocalDsp)) {
-      await _select(_selected);
+      await _select(_selected, recordPlay: false);
       if (mounted && identity == _current?.identityKey) {
         if (previousPosition > Duration.zero) {
           await _seekCurrent(previousPosition);
@@ -4434,7 +4434,7 @@ class _PlayerPageState extends State<PlayerPage>
     return path;
   }
 
-  Future<void> _select(int index) async {
+  Future<void> _select(int index, {bool recordPlay = true}) async {
     if (index < 0 ||
         index >= _queue.length ||
         _selectionInProgress ||
@@ -4531,26 +4531,29 @@ class _PlayerPageState extends State<PlayerPage>
         await _seekCurrent(Duration.zero);
       }
       if (!mounted || operation != _queueOperationGeneration) return;
-      // Count and record a track only after its source has opened successfully.
-      // Provider permission failures and decoder errors must not create fake
-      // history entries or discard the position that should be retried later.
-      setState(() {
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
-        final libraryIndex = _library.indexWhere(
-          (item) => item.identityKey == track.identityKey,
-        );
-        if (libraryIndex >= 0) {
-          _library[libraryIndex] = _library[libraryIndex].copyWith(
-            playCount: _library[libraryIndex].playCount + 1,
+      if (recordPlay) {
+        // Count and record a track only after its source has opened
+        // successfully. Provider permission failures and decoder errors must
+        // not create fake history entries or discard the position that should
+        // be retried later.
+        setState(() {
+          _playHistory
+            ..clear()
+            ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+          final libraryIndex = _library.indexWhere(
+            (item) => item.identityKey == track.identityKey,
           );
-        }
-        _queue[index] = _queue[index].copyWith(
-          playCount: _queue[index].playCount + 1,
-        );
-      });
-      _resumePositions.remove(track.identityKey);
+          if (libraryIndex >= 0) {
+            _library[libraryIndex] = _library[libraryIndex].copyWith(
+              playCount: _library[libraryIndex].playCount + 1,
+            );
+          }
+          _queue[index] = _queue[index].copyWith(
+            playCount: _queue[index].playCount + 1,
+          );
+        });
+        _resumePositions.remove(track.identityKey);
+      }
       await _saveQueue();
       if (!mounted || operation != _queueOperationGeneration) return;
     } on Object catch (error) {
