@@ -3585,6 +3585,23 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<String> _localPickedFilePath(PlatformFile file) async {
+    final path = file.path;
+    if (path == null || path.isEmpty) {
+      throw StateError('The selected file is not available on this device.');
+    }
+    if (!Platform.isAndroid || !isContentMediaPath(path)) return path;
+    final localPath = await const MethodChannel('neonamp/library')
+        .invokeMethod<String>('materializeUri', {
+          'uri': path,
+          'name': file.name,
+        });
+    if (localPath == null || localPath.isEmpty) {
+      throw StateError('Android could not prepare the selected file.');
+    }
+    return localPath;
+  }
+
   Future<void> _addFolder() async {
     final operation = ++_libraryOperationGeneration;
     try {
@@ -3827,14 +3844,14 @@ class _PlayerPageState extends State<PlayerPage>
       type: FileType.custom,
       allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
     );
-    if (result.isEmpty ||
-        result.first.path == null ||
-        operation != _libraryOperationGeneration) {
+    if (result.isEmpty || operation != _libraryOperationGeneration) {
       return;
     }
-    final playlistPath = result.first.path!;
     try {
-      final extension = playlistPath.split('.').last.toLowerCase();
+      final pickedFile = result.first;
+      final playlistPath = await _localPickedFilePath(pickedFile);
+      final extension = (pickedFile.extension ?? playlistPath.split('.').last)
+          .toLowerCase();
       final document = parsePlaylistDocument(
         await File(playlistPath).readAsString(),
         extension,
@@ -3916,7 +3933,11 @@ class _PlayerPageState extends State<PlayerPage>
     final path = picked.firstOrNull?.path;
     if (path == null || operation != _libraryOperationGeneration) return;
     try {
-      final imported = parseItunesLibrary(await File(path).readAsString());
+      final imported = parseItunesLibrary(
+        await File(
+          await _localPickedFilePath(picked.first),
+        ).readAsString(),
+      );
       var addedTracks = 0;
       var addedPlaylists = 0;
       if (!mounted || operation != _libraryOperationGeneration) return;
@@ -5143,7 +5164,9 @@ class _PlayerPageState extends State<PlayerPage>
       allowedExtensions: ['opml', 'xml'],
     );
     if (picked.isEmpty) return;
-    final bytes = await picked.first.readAsBytes();
+    final bytes = await File(
+      await _localPickedFilePath(picked.first),
+    ).readAsBytes();
     final feeds = podcastFeedsFromOpml(
       utf8.decode(bytes, allowMalformed: true),
     );
@@ -6660,11 +6683,13 @@ class _PlayerPageState extends State<PlayerPage>
       type: FileType.custom,
       allowedExtensions: ['json'],
     );
-    final path = result.isEmpty ? null : result.first.path;
-    if (path == null) return;
+    if (result.isEmpty) return;
     try {
       final skin = ThemeSkin.fromJson(
-        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+        jsonDecode(
+              await File(await _localPickedFilePath(result.first)).readAsString(),
+            )
+            as Map<String, dynamic>,
       );
       if (!mounted) return;
       await widget.onSkinImported?.call(skin);
@@ -6686,11 +6711,15 @@ class _PlayerPageState extends State<PlayerPage>
       type: FileType.custom,
       allowedExtensions: ['json', 'neonamp-plugin'],
     );
-    final path = result.isEmpty ? null : result.first.path;
-    if (path == null) return;
+    if (result.isEmpty) return;
     try {
       final plugin = NeonAmpPlugin.fromJson(
-        jsonDecode(await File(path).readAsString()) as Map<String, dynamic>,
+        jsonDecode(
+              await File(
+                await _localPickedFilePath(result.first),
+              ).readAsString(),
+            )
+            as Map<String, dynamic>,
       );
       if (!mounted) return;
       setState(() => _plugins[plugin.id] = plugin);
