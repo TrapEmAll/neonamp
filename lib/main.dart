@@ -4148,6 +4148,22 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _playStandardTrack(Track track) async {
+    await _player.setBalance(_balance);
+    await _player.setVolume(_volumeFor(track));
+    if (_audioHandler != null) {
+      await _audioHandler!.playTrack(track, playbackSpeed: _playbackSpeed);
+    } else {
+      await _player.stop();
+      await _player.play(
+        isUriMediaPath(track.path)
+            ? UrlSource(track.path)
+            : DeviceFileSource(track.path),
+      );
+      await _player.setPlaybackRate(_playbackSpeed);
+    }
+  }
+
   Future<void> _select(int index) async {
     if (index < 0 ||
         index >= _queue.length ||
@@ -4219,15 +4235,22 @@ class _PlayerPageState extends State<PlayerPage>
           await _player.stop();
           _dspActive = true;
         }
-        await _dspPlayer.play(
-          track.path,
-          volume: trackVolume,
-          playbackSpeed: _playbackSpeed,
-          equalizerEnabled: _equalizerEnabled,
-          bands: _eqBands,
-          balance: _balance,
-        );
-        _audioHandler?.publishTrack(track);
+        try {
+          await _dspPlayer.play(
+            track.path,
+            volume: trackVolume,
+            playbackSpeed: _playbackSpeed,
+            equalizerEnabled: _equalizerEnabled,
+            bands: _eqBands,
+            balance: _balance,
+          );
+          _audioHandler?.publishTrack(track);
+        } on Object catch (error) {
+          debugPrint('DSP playback unavailable; falling back to standard player: $error');
+          await _dspPlayer.stop();
+          _dspActive = false;
+          await _playStandardTrack(track);
+        }
       } else {
         if (_midiActive) {
           await _midiPlayer.stop();
@@ -4237,19 +4260,7 @@ class _PlayerPageState extends State<PlayerPage>
           await _dspPlayer.stop();
           _dspActive = false;
         }
-        await _player.setBalance(_balance);
-        await _player.setVolume(trackVolume);
-        if (_audioHandler != null) {
-          await _audioHandler!.playTrack(track, playbackSpeed: _playbackSpeed);
-        } else {
-          await _player.stop();
-          await _player.play(
-            isUriMediaPath(track.path)
-                ? UrlSource(track.path)
-                : DeviceFileSource(track.path),
-          );
-          await _player.setPlaybackRate(_playbackSpeed);
-        }
+        await _playStandardTrack(track);
       }
       // Cue tracks still need their source cue offset applied. Ordinary tracks
       // already start at zero after playTrack()/AudioPlayer.play().
