@@ -4026,11 +4026,12 @@ class _PlayerPageState extends State<PlayerPage>
     final cueInfo = picked
         .where((file) => file.extension?.toLowerCase() == 'cue')
         .firstOrNull;
-    if (cueInfo?.path == null || operation != _libraryOperationGeneration) {
+    if (cueInfo == null || operation != _libraryOperationGeneration) {
       return;
     }
     try {
-      final cueFile = File(cueInfo!.path!);
+      final cuePath = await _localPickedFilePath(cueInfo);
+      final cueFile = File(cuePath);
       final text = utf8.decode(
         await cueFile.readAsBytes(),
         allowMalformed: true,
@@ -4046,14 +4047,16 @@ class _PlayerPageState extends State<PlayerPage>
       final sourceTracks = <String, Track>{};
       for (final entry in entries) {
         var audioPath = entry.filePath;
+        PlatformFile? selectedAudioFile;
         if (!await File(audioPath).exists()) {
           final expectedName = entry.sourceFileName.toLowerCase();
-          audioPath =
-              selectedAudio
-                  .where((file) => file.name.toLowerCase() == expectedName)
-                  .firstOrNull
-                  ?.path ??
-              audioPath;
+          selectedAudioFile = selectedAudio
+              .where((file) => file.name.toLowerCase() == expectedName)
+              .firstOrNull;
+          audioPath = selectedAudioFile?.path ?? audioPath;
+        }
+        if (selectedAudioFile != null) {
+          audioPath = await _localPickedFilePath(selectedAudioFile);
         }
         final audioFile = File(audioPath);
         if (!await audioFile.exists() ||
