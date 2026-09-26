@@ -2472,8 +2472,17 @@ class _PlayerPageState extends State<PlayerPage>
     _bindDspStreams();
     _bindMidiStreams();
     _initializeWindowsMediaKeys();
-    _initializeAudioService();
-    _loadQueue();
+    _initializeAppState();
+  }
+
+  Future<void> _initializeAppState() async {
+    await _initializeAudioService();
+    if (!mounted) return;
+    try {
+      await _loadQueue();
+    } on Object catch (error, stackTrace) {
+      debugPrint('Could not restore NeonAmp state: $error\n$stackTrace');
+    }
   }
 
   Future<void> _initializeWindowsMediaKeys() async {
