@@ -28,6 +28,7 @@ class DspLocalPlayer {
   Future<void>? _initialization;
   bool _completionSent = false;
   bool _disposed = false;
+  int _generation = 0;
 
   Stream<Duration> get onPositionChanged => _positionController.stream;
   Stream<Duration> get onDurationChanged => _durationController.stream;
@@ -63,8 +64,12 @@ class DspLocalPlayer {
     required List<double> bands,
     double balance = 0,
   }) async {
+    if (_disposed) throw StateError('The DSP player has been disposed.');
+    final generation = ++_generation;
     await _ensureInitialized();
-    await stop();
+    if (_disposed || generation != _generation) return;
+    await stop(invalidate: false);
+    if (_disposed || generation != _generation) return;
     final isTrackerModule = isTrackerModulePath(path);
     var sourcePath = path;
     if (isTrackerModule) {
@@ -77,6 +82,11 @@ class DspLocalPlayer {
         final output = File(sourcePath);
         if (await output.exists()) await output.delete();
         rethrow;
+      }
+      if (_disposed || generation != _generation) {
+        final output = File(sourcePath);
+        if (await output.exists()) await output.delete();
+        return;
       }
     }
     late final soloud.AudioSource source;
@@ -91,6 +101,11 @@ class DspLocalPlayer {
         if (await output.exists()) await output.delete();
       }
       rethrow;
+    }
+    if (_disposed || generation != _generation) {
+      await _disposeSourceSafely(source);
+      if (isTrackerModule) await _deleteRenderedModule(sourcePath);
+      return;
     }
     soloud.SoundHandle? handle;
     try {
@@ -186,6 +201,7 @@ class DspLocalPlayer {
   }
 
   Future<void> pause() async {
+    if (_disposed) return;
     final handle = _handle;
     if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
       return;
@@ -194,6 +210,7 @@ class DspLocalPlayer {
   }
 
   Future<void> resume() async {
+    if (_disposed) return;
     final handle = _handle;
     if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
       return;
@@ -202,6 +219,7 @@ class DspLocalPlayer {
   }
 
   Future<void> seek(Duration position) async {
+    if (_disposed) return;
     final handle = _handle;
     if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
       return;
@@ -218,6 +236,7 @@ class DspLocalPlayer {
   }
 
   Future<void> setVolume(double volume) async {
+    if (_disposed) return;
     final handle = _handle;
     if (handle != null &&
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
@@ -227,6 +246,7 @@ class DspLocalPlayer {
   }
 
   void setBalance(double balance) {
+    if (_disposed) return;
     final handle = _handle;
     if (handle != null &&
         soloud.SoLoud.instance.isInitialized &&
@@ -236,6 +256,7 @@ class DspLocalPlayer {
   }
 
   Future<void> setPlaybackSpeed(double speed) async {
+    if (_disposed) return;
     final handle = _handle;
     if (handle != null &&
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
@@ -256,6 +277,7 @@ class DspLocalPlayer {
   }
 
   void applyEqualizer({required bool enabled, required List<double> bands}) {
+    if (_disposed) return;
     final source = _source;
     if (source == null) return;
     final equalizer = source.filters.parametricEqFilter;
@@ -267,7 +289,8 @@ class DspLocalPlayer {
     }
   }
 
-  Future<void> stop() async {
+  Future<void> stop({bool invalidate = true}) async {
+    if (invalidate) _generation++;
     _pollTimer?.cancel();
     final handle = _handle;
     try {
@@ -293,6 +316,7 @@ class DspLocalPlayer {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _generation++;
     await stop();
     await _positionController.close();
     await _durationController.close();

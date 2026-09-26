@@ -127,6 +127,7 @@ class WindowsMidiPlayer {
     await _channel.invokeMethod<void>('seek', {
       'positionMs': clamped.inMilliseconds,
     });
+    if (_disposed) return;
     _positionController.add(clamped);
   }
 
@@ -135,6 +136,7 @@ class WindowsMidiPlayer {
     await _channel.invokeMethod<void>('setPlaybackSpeed', {
       'speed': speed.isFinite ? speed.clamp(0.5, 2.0) : 1.0,
     });
+    if (_disposed) return;
   }
 
   void _setState(PlayerState state) {
