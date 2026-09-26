@@ -747,6 +747,7 @@ class MainActivity : AudioServiceActivity() {
                 while (!encoderDone) {
                     val encoderIndex = encoder.dequeueOutputBuffer(encoderInfo, 0)
                     when {
+                        encoderIndex == MediaCodec.INFO_TRY_AGAIN_LATER -> break
                         encoderIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                             if (muxerStarted) return false
                             outputTrack = muxer.addTrack(encoder.outputFormat)
