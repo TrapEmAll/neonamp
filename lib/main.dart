@@ -2342,6 +2342,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _replayGainEnabled = false;
   Timer? _sleepTimer;
   Timer? _resumeSaveTimer;
+  bool _saveInProgress = false;
+  bool _savePending = false;
   Timer? _castPositionTimer;
   bool _castPositionPollInProgress = false;
   DateTime? _sleepDeadline;
@@ -2775,16 +2777,21 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _seekCurrent(Duration position) async {
+    final clampedPosition = seekByOffset(
+      position: Duration.zero,
+      duration: _duration,
+      offset: position,
+    );
     if (_casting) {
-      await _dlnaCast.seek(position);
-      if (mounted) setState(() => _position = position);
+      await _dlnaCast.seek(clampedPosition);
+      if (mounted) setState(() => _position = clampedPosition);
       return;
     }
     final sourcePosition = _current == null
-        ? position
-        : position + _current!.cueStart;
+        ? clampedPosition
+        : clampedPosition + _current!.cueStart;
     if (_midiActive) {
-      await _midiPlayer.seek(position);
+      await _midiPlayer.seek(clampedPosition);
     } else if (_dspActive) {
       await _dspPlayer.seek(sourcePosition);
     } else {
@@ -2996,24 +3003,53 @@ class _PlayerPageState extends State<PlayerPage>
     final savedSettings = prefs.getString('settings');
     if (!mounted) return;
     setState(() {
-      _library.addAll(
-        savedLibrary.map(
-          (value) => Track.fromJson(jsonDecode(value) as Map<String, dynamic>),
-        ),
-      );
+      for (final value in savedLibrary) {
+        try {
+          final decoded = jsonDecode(value);
+          if (decoded is Map) {
+            _library.add(Track.fromJson(Map<String, dynamic>.from(decoded)));
+          }
+        } on Object catch (error) {
+          debugPrint('Skipping invalid saved library track: $error');
+        }
+      }
       if (savedBookmarks != null) {
-        final decoded = jsonDecode(savedBookmarks) as List;
-        _bookmarks.addAll(
-          decoded.map((value) => Track.fromJson(value as Map<String, dynamic>)),
-        );
+        try {
+          final decoded = jsonDecode(savedBookmarks);
+          if (decoded is List) {
+            for (final value in decoded) {
+              try {
+                if (value is Map) {
+                  _bookmarks.add(
+                    Track.fromJson(Map<String, dynamic>.from(value)),
+                  );
+                }
+              } on Object catch (error) {
+                debugPrint('Skipping invalid saved bookmark: $error');
+              }
+            }
+          }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid saved bookmarks: $error');
+        }
       }
       if (savedQueueTracks != null) {
-        final decodedQueue = jsonDecode(savedQueueTracks) as List;
-        _queue.addAll(
-          decodedQueue.map(
-            (value) => Track.fromJson(value as Map<String, dynamic>),
-          ),
-        );
+        try {
+          final decodedQueue = jsonDecode(savedQueueTracks);
+          if (decodedQueue is List) {
+            for (final value in decodedQueue) {
+              try {
+                if (value is Map) {
+                  _queue.add(Track.fromJson(Map<String, dynamic>.from(value)));
+                }
+              } on Object catch (error) {
+                debugPrint('Skipping invalid saved queue track: $error');
+              }
+            }
+          }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid saved queue: $error');
+        }
       } else {
         _queue.addAll(
           saved.map((path) {
@@ -3027,41 +3063,77 @@ class _PlayerPageState extends State<PlayerPage>
       }
       _playHistory.addAll(savedPlayHistory);
       if (savedResumePositions != null) {
-        final decoded =
-            jsonDecode(savedResumePositions) as Map<String, dynamic>;
-        for (final entry in decoded.entries) {
-          final position = (entry.value as num?)?.toInt();
-          if (position != null && position > 0) {
-            _resumePositions[entry.key] = position;
+        try {
+          final decoded = jsonDecode(savedResumePositions);
+          if (decoded is Map) {
+            for (final entry in decoded.entries) {
+              final position = (entry.value as num?)?.toInt();
+              if (position != null && position > 0) {
+                _resumePositions[entry.key.toString()] = position;
+              }
+            }
           }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid saved resume positions: $error');
         }
       }
       _libraryFolders.addAll(savedFolders);
       _podcastFeeds.addAll(savedPodcastFeeds);
       if (savedPlaylists != null) {
-        final decoded = jsonDecode(savedPlaylists) as Map<String, dynamic>;
-        for (final entry in decoded.entries)
-          _playlists[entry.key] = (entry.value as List).cast<String>();
+        try {
+          final decoded = jsonDecode(savedPlaylists);
+          if (decoded is Map) {
+            for (final entry in decoded.entries) {
+              if (entry.value is List) {
+                _playlists[entry.key.toString()] = (entry.value as List)
+                    .whereType<String>()
+                    .toList();
+              }
+            }
+          }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid saved playlists: $error');
+        }
       }
       if (savedSmartPlaylists != null) {
-        final decoded = jsonDecode(savedSmartPlaylists) as List;
-        _smartPlaylists.addAll(
-          decoded.map(
-            (entry) => SmartPlaylist.fromJson(entry as Map<String, dynamic>),
-          ),
-        );
+        try {
+          final decoded = jsonDecode(savedSmartPlaylists);
+          if (decoded is List) {
+            for (final entry in decoded) {
+              try {
+                if (entry is Map) {
+                  _smartPlaylists.add(
+                    SmartPlaylist.fromJson(Map<String, dynamic>.from(entry)),
+                  );
+                }
+              } on Object catch (error) {
+                debugPrint('Skipping invalid saved smart playlist: $error');
+              }
+            }
+          }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid saved smart playlists: $error');
+        }
       }
       if (savedPlugins != null) {
-        final decoded = jsonDecode(savedPlugins) as List;
-        for (final entry in decoded) {
-          try {
-            final plugin = NeonAmpPlugin.fromJson(
-              entry as Map<String, dynamic>,
-            );
-            _plugins[plugin.id] = plugin;
-          } on Object catch (error) {
-            debugPrint('Skipping invalid saved plugin: $error');
+        try {
+          final decoded = jsonDecode(savedPlugins);
+          if (decoded is List) {
+            for (final entry in decoded) {
+              try {
+                if (entry is Map) {
+                  final plugin = NeonAmpPlugin.fromJson(
+                    Map<String, dynamic>.from(entry),
+                  );
+                  _plugins[plugin.id] = plugin;
+                }
+              } on Object catch (error) {
+                debugPrint('Skipping invalid saved plugin: $error');
+              }
+            }
           }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid saved plugins: $error');
         }
       }
       if (savedSettings != null) {
@@ -3119,6 +3191,22 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _saveQueue() async {
+    if (_saveInProgress) {
+      _savePending = true;
+      return;
+    }
+    _saveInProgress = true;
+    try {
+      do {
+        _savePending = false;
+        await _writeQueueSnapshot();
+      } while (_savePending);
+    } finally {
+      _saveInProgress = false;
+    }
+  }
+
+  Future<void> _writeQueueSnapshot() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       'queueTracks',
@@ -3312,15 +3400,35 @@ class _PlayerPageState extends State<PlayerPage>
           .toList();
     }
     for (final file in files) {
-      final alreadyQueued = _queue.any((track) => track.path == file.path);
-      final alreadyInLibrary = _library.any((track) => track.path == file.path);
-      if (alreadyQueued && alreadyInLibrary) continue;
-      final track = await _readTrack(file.path, file.name);
+      final existingLibrary = _library
+          .where((track) => track.path == file.path)
+          .firstOrNull;
+      final existingQueue = _queue
+          .where((track) => track.path == file.path)
+          .firstOrNull;
+      final scannedTrack = await _readTrack(file.path, file.name);
+      final track = scannedTrack.copyWith(
+        rating: existingLibrary?.rating ?? existingQueue?.rating,
+        playCount: existingLibrary?.playCount ?? existingQueue?.playCount,
+        favorite: existingLibrary?.favorite ?? existingQueue?.favorite,
+      );
       if (!mounted) return 0;
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
-        if (!alreadyQueued) _queue.add(track);
-        if (!alreadyInLibrary) _library.add(track);
+        final libraryIndex = _library.indexWhere(
+          (item) => item.path == file.path,
+        );
+        if (libraryIndex >= 0) {
+          _library[libraryIndex] = track;
+        } else {
+          _library.add(track);
+        }
+        final queueIndex = _queue.indexWhere((item) => item.path == file.path);
+        if (queueIndex >= 0) {
+          _queue[queueIndex] = track;
+        } else {
+          _queue.add(track);
+        }
       });
     }
     return files.length;
@@ -3364,7 +3472,6 @@ class _PlayerPageState extends State<PlayerPage>
             return;
           }
         }
-        return;
       }
     }
     for (final folder in List<String>.from(_libraryFolders)) {
@@ -3709,7 +3816,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _select(int index) async {
-    if (index < 0 || index >= _queue.length) return;
+    if (index < 0 || index >= _queue.length || _selectionInProgress) return;
     _castPositionTimer?.cancel();
     if (_casting) await _dlnaCast.stop();
     _selectionInProgress = true;
@@ -3870,6 +3977,10 @@ class _PlayerPageState extends State<PlayerPage>
     _crossfadeAudioPlayer = incomingPlayer;
     try {
       await incomingPlayer.setBalance(_balance);
+      if (!mounted) {
+        await incomingPlayer.dispose();
+        return;
+      }
       setState(() {
         _selected = next;
         _position = Duration.zero;
@@ -3906,6 +4017,7 @@ class _PlayerPageState extends State<PlayerPage>
       _activePlayer = incomingPlayer;
       _bindPlayerStreams();
       await _audioHandler?.switchPlayer(incomingPlayer);
+      _audioHandler?.publishTrack(track);
       await _saveQueue();
     } catch (_) {
       await incomingPlayer.dispose();
@@ -3995,11 +4107,25 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _remove(int index) async {
+    if (index < 0 || index >= _queue.length) return;
+    final removedIdentity = _queue[index].identityKey;
+    final removingCurrent = index == _selected;
+    if (removingCurrent) await _stopCurrent();
     setState(() {
       _queue.removeAt(index);
-      if (_queue.isEmpty) _selected = 0;
-      if (_selected >= _queue.length) _selected = _queue.length - 1;
+      if (_queue.isEmpty) {
+        _selected = 0;
+      } else {
+        if (index < _selected) _selected--;
+        if (_selected >= _queue.length) _selected = _queue.length - 1;
+      }
+      if (removingCurrent) {
+        _position = Duration.zero;
+        _duration = _queue.isEmpty ? Duration.zero : _duration;
+        _playerState = PlayerState.stopped;
+      }
     });
+    _resumePositions.remove(removedIdentity);
     await _saveQueue();
   }
 
@@ -4031,13 +4157,13 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _reorderQueue(int oldIndex, int newIndex) async {
     if (oldIndex == newIndex || oldIndex < 0 || newIndex < 0) return;
-    final selectedPath = _current?.path;
+    final selectedIdentity = _current?.identityKey;
     setState(() {
       final track = _queue.removeAt(oldIndex);
       _queue.insert(newIndex.clamp(0, _queue.length), track);
-      final selectedIndex = selectedPath == null
+      final selectedIndex = selectedIdentity == null
           ? -1
-          : _queue.indexWhere((item) => item.path == selectedPath);
+          : _queue.indexWhere((item) => item.identityKey == selectedIdentity);
       if (selectedIndex >= 0) _selected = selectedIndex;
     });
     await _saveQueue();
@@ -4054,6 +4180,7 @@ class _PlayerPageState extends State<PlayerPage>
       _position = Duration.zero;
       _duration = Duration.zero;
       _playerState = PlayerState.stopped;
+      _resumePositions.clear();
     });
     await _saveQueue();
   }
@@ -4085,6 +4212,17 @@ class _PlayerPageState extends State<PlayerPage>
       ),
     );
     if (url == null || url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Enter a valid HTTP or HTTPS stream URL.'),
+          ),
+        );
+      }
+      return;
+    }
     setState(
       () => _queue.add(
         Track(
