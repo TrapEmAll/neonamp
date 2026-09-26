@@ -3507,6 +3507,75 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  void _handleCompactMenuAction(String value) {
+    late final Future<void> operation;
+    switch (value) {
+      case 'folder':
+        operation = _addFolder();
+      case 'visuals':
+        operation = _showVisualizer();
+      case 'settings':
+        operation = _showSettings();
+      case 'rescan':
+        operation = _rescanFolders();
+      case 'import':
+        operation = _importPlaylist();
+      case 'importItunes':
+        operation = _importItunesLibrary();
+      case 'exportItunes':
+        operation = _exportItunesLibrary();
+      case 'importCue':
+        operation = _importCueSheet();
+      case 'stream':
+        operation = _addStream();
+      case 'radio':
+        operation = _searchRadioDirectory();
+      case 'podcast':
+        operation = _addPodcastFeed();
+      case 'refreshPodcasts':
+        operation = _refreshPodcasts();
+      case 'importPodcasts':
+        operation = _importPodcastSubscriptions();
+      case 'exportPodcasts':
+        operation = _exportPodcastSubscriptions();
+      case 'managePodcasts':
+        operation = _managePodcastSubscriptions();
+      case 'eq':
+        operation = _showEqualizer();
+      case 'speed':
+        operation = _showPlaybackSpeed();
+      case 'layout':
+        operation = _showPlayerLayout();
+      case 'theme':
+        operation = _showThemePicker();
+      case 'importSkin':
+        operation = _importSkin();
+      case 'plugins':
+        operation = _showPluginManager();
+      case 'export':
+        operation = _exportPlaylist();
+      case 'sync':
+        operation = _syncToDeviceFolder();
+      case 'cd':
+        operation = _importAudioCd();
+      case 'sleep':
+        operation = _showSleepTimer();
+      case 'exportPls':
+        operation = _exportPlsPlaylist();
+      case 'exportB4s':
+        operation = _exportB4sPlaylist();
+      case 'exportWpl':
+        operation = _exportWplPlaylist();
+      case 'exportAsx':
+        operation = _exportAsxPlaylist();
+      case 'video':
+        operation = _openVideoPicker();
+      default:
+        return;
+    }
+    _runAsyncSafely(operation, 'Hamburger menu action');
+  }
+
   Future<void> _writeQueueSnapshot() async {
     final prefs = await SharedPreferences.getInstance();
     // Freeze the complete state before the first asynchronous write. Without
@@ -7999,38 +8068,7 @@ class _PlayerPageState extends State<PlayerPage>
         ] else
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.white60),
-            onSelected: (value) {
-              if (value == 'folder') _addFolder();
-              if (value == 'visuals') _showVisualizer();
-              if (value == 'settings') _showSettings();
-              if (value == 'rescan') _rescanFolders();
-              if (value == 'import') _importPlaylist();
-              if (value == 'importItunes') _importItunesLibrary();
-              if (value == 'exportItunes') _exportItunesLibrary();
-              if (value == 'importCue') _importCueSheet();
-              if (value == 'stream') _addStream();
-              if (value == 'radio') _searchRadioDirectory();
-              if (value == 'podcast') _addPodcastFeed();
-              if (value == 'refreshPodcasts') _refreshPodcasts();
-              if (value == 'importPodcasts') _importPodcastSubscriptions();
-              if (value == 'exportPodcasts') _exportPodcastSubscriptions();
-              if (value == 'managePodcasts') _managePodcastSubscriptions();
-              if (value == 'eq') _showEqualizer();
-              if (value == 'speed') _showPlaybackSpeed();
-              if (value == 'layout') _showPlayerLayout();
-              if (value == 'theme') _showThemePicker();
-              if (value == 'importSkin') _importSkin();
-              if (value == 'plugins') _showPluginManager();
-              if (value == 'export') _exportPlaylist();
-              if (value == 'sync') _syncToDeviceFolder();
-              if (value == 'cd') _importAudioCd();
-              if (value == 'sleep') _showSleepTimer();
-              if (value == 'exportPls') _exportPlsPlaylist();
-              if (value == 'exportB4s') _exportB4sPlaylist();
-              if (value == 'exportWpl') _exportWplPlaylist();
-              if (value == 'exportAsx') _exportAsxPlaylist();
-              if (value == 'video') _openVideoPicker();
-            },
+            onSelected: _handleCompactMenuAction,
             itemBuilder: (_) => [
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
