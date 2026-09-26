@@ -6711,8 +6711,8 @@ class _PlayerPageState extends State<PlayerPage>
       pluginPresets.addAll(plugin.equalizerPresets);
     }
     final presets = [...builtInPresets, ...pluginPresets.keys];
-    final selectedPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
-    if (_eqPreset != selectedPreset) _eqPreset = selectedPreset;
+    var dialogPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
+    if (_eqPreset != dialogPreset) _eqPreset = dialogPreset;
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -6739,7 +6739,7 @@ class _PlayerPageState extends State<PlayerPage>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<String>(
-                    initialValue: selectedPreset,
+                    initialValue: dialogPreset,
                     decoration: const InputDecoration(labelText: 'Preset'),
                     items: presets
                         .map(
@@ -6753,6 +6753,7 @@ class _PlayerPageState extends State<PlayerPage>
                         ? null
                         : (value) {
                             if (value == null) return;
+                            dialogPreset = value;
                             setState(() {
                               _eqPreset = value;
                               _eqBands.setAll(
@@ -6770,6 +6771,7 @@ class _PlayerPageState extends State<PlayerPage>
                                 bands: _eqBands,
                               );
                             }
+                            unawaited(_saveQueue());
                             setDialogState(() {});
                           },
                   ),
@@ -6808,6 +6810,7 @@ class _PlayerPageState extends State<PlayerPage>
                     value: _crossfade,
                     onChanged: (value) {
                       setState(() => _crossfade = value);
+                      unawaited(_saveQueue());
                       setDialogState(() {});
                     },
                   ),
@@ -6839,6 +6842,7 @@ class _PlayerPageState extends State<PlayerPage>
                             label: '${_crossfadeSeconds}s',
                             onChanged: (value) {
                               setState(() => _crossfadeSeconds = value.round());
+                              unawaited(_saveQueue());
                               setDialogState(() {});
                             },
                           ),
@@ -6880,6 +6884,7 @@ class _PlayerPageState extends State<PlayerPage>
                                             setDialogState(() {});
                                           }
                                         : null,
+                                    onChangeEnd: (_) => unawaited(_saveQueue()),
                                   ),
                                 ),
                               ),
