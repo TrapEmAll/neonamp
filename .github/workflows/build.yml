@@ -3,8 +3,12 @@ name: NeonAmp build
 on:
   push:
     branches: [main, 'feat/**', 'fix/**']
+    tags: ['v*']
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   analyze-and-test:
@@ -46,6 +50,16 @@ jobs:
         run: cmake --build build/windows/x64 --config Release --target tracker_decoder_test
       - name: Test native tracker decoding
         run: ctest --test-dir build/windows/x64/runner/tracker -C Release --output-on-failure
+      - name: Package Windows release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "NeonAmp-Windows-${{ github.ref_name }}.zip"
+      - name: Upload Windows release artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: NeonAmp-Windows-${{ github.ref_name }}.zip
 
   build-android:
     runs-on: ubuntu-24.04
@@ -69,10 +83,40 @@ jobs:
       - name: Build Android release
         run: |
           for attempt in 1 2 3; do
-            flutter build apk --release && exit 0
+            flutter build apk --release --target-platform android-arm,android-arm64 && exit 0
             if [ "$attempt" -lt 3 ]; then
               echo "Android build attempt $attempt failed; retrying dependency resolution..."
               sleep 15
             fi
           done
           exit 1
+      - name: Upload Android release artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [analyze-and-test, build-windows, build-android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+      - name: Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-release
+          path: android
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            NeonAmp-Windows-${{ github.ref_name }}.zip
+            android/app-release.apk
