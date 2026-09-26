@@ -2352,6 +2352,9 @@ class _PlayerPageState extends State<PlayerPage>
   Timer? _castPositionTimer;
   bool _castPositionPollInProgress = false;
   DateTime? _sleepDeadline;
+  int _playerStreamGeneration = 0;
+  int _dspStreamGeneration = 0;
+  int _midiStreamGeneration = 0;
 
   bool get _casting => _dlnaCast.isConnected;
 
@@ -2445,6 +2448,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   void _bindPlayerStreams() {
+    final generation = ++_playerStreamGeneration;
     _positionSub?.cancel();
     _durationSub?.cancel();
     _stateSub?.cancel();
@@ -2454,7 +2458,11 @@ class _PlayerPageState extends State<PlayerPage>
     _dspStateSub?.cancel();
     _dspCompleteSub?.cancel();
     _positionSub = _player.onPositionChanged.listen((value) {
-      if (!mounted || _selectionInProgress) return;
+      if (!mounted ||
+          generation != _playerStreamGeneration ||
+          _selectionInProgress) {
+        return;
+      }
       final track = _current;
       final cueEnd = track?.cueEnd;
       if (cueEnd != null && value >= cueEnd && !_cueTransitioning) {
@@ -2477,28 +2485,36 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _durationSub = _player.onDurationChanged.listen((value) {
-      if (!mounted) return;
+      if (!mounted || generation != _playerStreamGeneration) return;
       final duration = _cueRelativeDuration(_current, value);
       setState(() => _duration = duration);
       _audioHandler?.syncExternalState(duration: duration, state: _playerState);
     });
     _stateSub = _player.onPlayerStateChanged.listen((value) {
-      if (!mounted) return;
+      if (!mounted || generation != _playerStreamGeneration) return;
       setState(() => _playerState = value);
       unawaited(_syncWindowsMediaSession());
     });
-    _completeSub = _player.onPlayerComplete.listen(
-      (_) => unawaited(_handleCompletionSafely()),
-    );
+    _completeSub = _player.onPlayerComplete.listen((_) {
+      if (generation == _playerStreamGeneration && mounted) {
+        unawaited(_handleCompletionSafely());
+      }
+    });
   }
 
   void _bindDspStreams() {
+    final generation = ++_dspStreamGeneration;
     _dspPositionSub?.cancel();
     _dspDurationSub?.cancel();
     _dspStateSub?.cancel();
     _dspCompleteSub?.cancel();
     _dspPositionSub = _dspPlayer.onPositionChanged.listen((value) {
-      if (!mounted || !_dspActive || _selectionInProgress) return;
+      if (!mounted ||
+          generation != _dspStreamGeneration ||
+          !_dspActive ||
+          _selectionInProgress) {
+        return;
+      }
       final track = _current;
       final cueEnd = track?.cueEnd;
       if (cueEnd != null && value >= cueEnd && !_cueTransitioning) {
@@ -2525,46 +2541,64 @@ class _PlayerPageState extends State<PlayerPage>
       );
     });
     _dspDurationSub = _dspPlayer.onDurationChanged.listen((value) {
-      if (!mounted || !_dspActive) return;
+      if (!mounted || generation != _dspStreamGeneration || !_dspActive) {
+        return;
+      }
       final duration = _cueRelativeDuration(_current, value);
       setState(() => _duration = duration);
       _audioHandler?.syncExternalState(duration: duration, state: _playerState);
     });
     _dspStateSub = _dspPlayer.onPlayerStateChanged.listen((value) {
-      if (!mounted || !_dspActive) return;
+      if (!mounted || generation != _dspStreamGeneration || !_dspActive) {
+        return;
+      }
       setState(() => _playerState = value);
       _audioHandler?.syncExternalState(position: _position, state: value);
       unawaited(_syncWindowsMediaSession());
     });
     _dspCompleteSub = _dspPlayer.onPlayerComplete.listen((_) {
-      if (_dspActive) unawaited(_handleCompletionSafely());
+      if (mounted && generation == _dspStreamGeneration && _dspActive) {
+        unawaited(_handleCompletionSafely());
+      }
     });
   }
 
   void _bindMidiStreams() {
+    final generation = ++_midiStreamGeneration;
     _midiPositionSub?.cancel();
     _midiDurationSub?.cancel();
     _midiStateSub?.cancel();
     _midiCompleteSub?.cancel();
     _midiPositionSub = _midiPlayer.onPositionChanged.listen((value) {
-      if (!mounted || !_midiActive || _selectionInProgress) return;
+      if (!mounted ||
+          generation != _midiStreamGeneration ||
+          !_midiActive ||
+          _selectionInProgress) {
+        return;
+      }
       setState(() => _position = value);
       _rememberResumePosition(value);
       _audioHandler?.syncExternalState(position: value, state: _playerState);
     });
     _midiDurationSub = _midiPlayer.onDurationChanged.listen((value) {
-      if (!mounted || !_midiActive) return;
+      if (!mounted || generation != _midiStreamGeneration || !_midiActive) {
+        return;
+      }
       setState(() => _duration = value);
       unawaited(_syncWindowsMediaSession());
     });
     _midiStateSub = _midiPlayer.onPlayerStateChanged.listen((value) {
-      if (!mounted || !_midiActive) return;
+      if (!mounted || generation != _midiStreamGeneration || !_midiActive) {
+        return;
+      }
       setState(() => _playerState = value);
       _audioHandler?.syncExternalState(position: _position, state: value);
       unawaited(_syncWindowsMediaSession());
     });
     _midiCompleteSub = _midiPlayer.onPlayerComplete.listen((_) {
-      if (_midiActive) unawaited(_handleCompletionSafely());
+      if (mounted && generation == _midiStreamGeneration && _midiActive) {
+        unawaited(_handleCompletionSafely());
+      }
     });
   }
 
@@ -3965,7 +3999,12 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _select(int index) async {
-    if (index < 0 || index >= _queue.length || _selectionInProgress) return;
+    if (index < 0 ||
+        index >= _queue.length ||
+        _selectionInProgress ||
+        _crossfadeInProgress) {
+      return;
+    }
     _castPositionTimer?.cancel();
     if (_casting) await _dlnaCast.stop();
     if (!mounted) return;
@@ -4301,6 +4340,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _remove(int index) async {
     if (!mounted ||
         _selectionInProgress ||
+        _crossfadeInProgress ||
         index < 0 ||
         index >= _queue.length) {
       return;
@@ -4344,7 +4384,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playBookmark(Track track) async {
-    if (!mounted) return;
+    if (!mounted || _crossfadeInProgress) return;
     var index = _queue.indexWhere(
       (item) => item.identityKey == track.identityKey,
     );
@@ -4362,6 +4402,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _reorderQueue(int oldIndex, int newIndex) async {
     if (!mounted ||
         _selectionInProgress ||
+        _crossfadeInProgress ||
         oldIndex == newIndex ||
         oldIndex < 0 ||
         oldIndex >= _queue.length ||
@@ -4381,7 +4422,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _clearQueue() async {
-    if (_selectionInProgress) return;
+    if (_selectionInProgress || _crossfadeInProgress) return;
     _castPositionTimer?.cancel();
     _resumeSaveTimer?.cancel();
     await _stopCurrent();
@@ -6666,6 +6707,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playSmartPlaylist(SmartPlaylist playlist) async {
+    if (_crossfadeInProgress) return;
     final tracks = _tracksForSmartPlaylist(playlist);
     if (tracks.isEmpty) {
       if (!mounted) return;
@@ -6713,6 +6755,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playPlaylist(String name) async {
+    if (_crossfadeInProgress) return;
     final paths = _playlists[name];
     if (paths == null || paths.isEmpty) return;
     final tracks = paths
