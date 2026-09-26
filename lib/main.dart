@@ -3629,6 +3629,7 @@ class _PlayerPageState extends State<PlayerPage>
       );
       var added = 0;
       var skipped = 0;
+      if (!mounted) return;
       setState(() {
         for (final entry in document.entries) {
           var path = resolvePlaylistPath(entry.path, playlistPath);
@@ -3706,6 +3707,7 @@ class _PlayerPageState extends State<PlayerPage>
       final imported = parseItunesLibrary(await File(path).readAsString());
       var addedTracks = 0;
       var addedPlaylists = 0;
+      if (!mounted) return;
       setState(() {
         for (final json in imported.tracks) {
           try {
@@ -3846,6 +3848,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
       var added = 0;
+      if (!mounted) return;
       setState(() {
         for (final track in tracks) {
           if (_queue.any((item) => item.identityKey == track.identityKey)) {
@@ -4037,6 +4040,10 @@ class _PlayerPageState extends State<PlayerPage>
           _position = Duration.zero;
           _duration = Duration.zero;
         });
+        _audioHandler?.syncExternalState(
+          position: Duration.zero,
+          state: PlayerState.stopped,
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not play this track: $error')),
         );
@@ -4298,6 +4305,7 @@ class _PlayerPageState extends State<PlayerPage>
       _bookmarks.any((item) => item.identityKey == track.identityKey);
 
   Future<void> _toggleBookmark(Track track) async {
+    if (!mounted) return;
     setState(() {
       final updated = toggleTrackBookmark(_bookmarks, track);
       _bookmarks
@@ -4308,6 +4316,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playBookmark(Track track) async {
+    if (!mounted) return;
     var index = _queue.indexWhere(
       (item) => item.identityKey == track.identityKey,
     );
@@ -4318,6 +4327,7 @@ class _PlayerPageState extends State<PlayerPage>
       });
       await _saveQueue();
     }
+    if (!mounted) return;
     await _select(index);
   }
 

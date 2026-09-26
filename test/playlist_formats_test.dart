@@ -15,6 +15,14 @@ void main() {
       expect(playlist.entries.single.title, 'Artist - Song');
     });
 
+    test('parses UTF-8 BOM-prefixed M3U paths', () {
+      final playlist = parsePlaylistDocument(
+        '\ufeff#EXTM3U\n/song.mp3\n',
+        'm3u',
+      );
+      expect(playlist.entries.single.path, '/song.mp3');
+    });
+
     test('parses PLS entries in numeric order', () {
       final playlist = parsePlaylistDocument(
         '[playlist]\nFile2=second.mp3\nTitle2=Second\nFile1=first.mp3\nTitle1=First\n',
@@ -25,6 +33,14 @@ void main() {
         'second.mp3',
       ]);
       expect(playlist.entries.map((entry) => entry.title), ['First', 'Second']);
+    });
+
+    test('skips malformed PLS indexes without rejecting valid entries', () {
+      final playlist = parsePlaylistDocument(
+        '[playlist]\nFilex=/bad.mp3\nFile2=/good.mp3\n',
+        'pls',
+      );
+      expect(playlist.entries.map((entry) => entry.path), ['/good.mp3']);
     });
 
     test('parses Winamp B4S including escaped paths and titles', () {
@@ -73,6 +89,10 @@ void main() {
       expect(
         resolvePlaylistPath('https://example.com/radio', playlistPath),
         'https://example.com/radio',
+      );
+      expect(
+        resolvePlaylistPath('HTTPS://example.com/radio', playlistPath),
+        'HTTPS://example.com/radio',
       );
       const absolute = r'C:\Music\song.mp3';
       expect(resolvePlaylistPath(absolute, playlistPath), absolute);

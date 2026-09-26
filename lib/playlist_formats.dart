@@ -39,7 +39,7 @@ PlaylistDocument _parseM3u(String source) {
   String? pendingTitle;
   String? name;
   for (final raw in source.split(RegExp(r'\r?\n'))) {
-    final line = raw.trim();
+    final line = raw.replaceFirst('\ufeff', '').trim();
     if (line.toUpperCase().startsWith('#PLAYLIST:')) {
       name = line.substring(line.indexOf(':') + 1).trim();
       continue;
@@ -66,7 +66,10 @@ PlaylistDocument _parsePls(String source) {
       caseSensitive: false,
     ).firstMatch(line);
     if (path != null) {
-      paths[int.parse(path.group(1)!)] = path.group(2)!.trim();
+      final index = int.tryParse(path.group(1)!);
+      if (index != null && index > 0) {
+        paths[index] = path.group(2)!.trim();
+      }
       continue;
     }
     final title = RegExp(
@@ -74,7 +77,10 @@ PlaylistDocument _parsePls(String source) {
       caseSensitive: false,
     ).firstMatch(line);
     if (title != null) {
-      titles[int.parse(title.group(1)!)] = title.group(2)!.trim();
+      final index = int.tryParse(title.group(1)!);
+      if (index != null && index > 0) {
+        titles[index] = title.group(2)!.trim();
+      }
     }
   }
   final entries = paths.keys.toList()..sort();
@@ -201,10 +207,11 @@ String resolvePlaylistPath(String entry, String playlistPath) {
   final value = entry.trim();
   if (value.isEmpty || value.startsWith('#')) return value;
   final uri = Uri.tryParse(value);
-  if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+  final scheme = uri?.scheme.toLowerCase();
+  if (uri != null && (scheme == 'http' || scheme == 'https')) {
     return value;
   }
-  if (uri?.scheme == 'file') return uri!.toFilePath();
+  if (scheme == 'file') return uri!.toFilePath();
   if (File(value).isAbsolute ||
       RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(value) ||
       value.startsWith(r'\\')) {
