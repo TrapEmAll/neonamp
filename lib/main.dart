@@ -3798,7 +3798,12 @@ class _PlayerPageState extends State<PlayerPage>
         .writeAsString(contents);
   }
 
-  Future<int> _scanFolder(String directory, {int? operation}) async {
+  Future<int> _scanFolder(
+    String directory, {
+    int? operation,
+    Set<String>? scannedFilesystemRoots,
+    Set<String>? discoveredFilesystemPaths,
+  }) async {
     final List<({String path, String name, String relativePath})> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
@@ -3837,9 +3842,17 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           )
           .toList();
+      final rootPath = Directory(directory).absolute.path;
+      scannedFilesystemRoots?.add(
+        Platform.isWindows ? rootPath.toLowerCase() : rootPath,
+      );
     }
     var added = 0;
     for (final file in files) {
+      final discoveredPath = File(file.path).absolute.path;
+      discoveredFilesystemPaths?.add(
+        Platform.isWindows ? discoveredPath.toLowerCase() : discoveredPath,
+      );
       final existingLibrary = _library
           .where((track) => track.path == file.path)
           .firstOrNull;
@@ -3881,6 +3894,37 @@ class _PlayerPageState extends State<PlayerPage>
       added++;
     }
     return added;
+  }
+
+  int _pruneMissingFilesystemTracks(
+    Set<String> scannedRoots,
+    Set<String> discoveredPaths,
+  ) {
+    if (scannedRoots.isEmpty) return 0;
+    final missingPaths = _library
+        .where((track) {
+          final absolutePath = File(track.path).absolute.path;
+          final path = Platform.isWindows
+              ? absolutePath.toLowerCase()
+              : absolutePath;
+          final belongsToScannedRoot = scannedRoots.any(
+            (root) =>
+                path == root ||
+                path.startsWith('$root${Platform.pathSeparator}'),
+          );
+          return belongsToScannedRoot && !discoveredPaths.contains(path);
+        })
+        .map((track) => track.path)
+        .toSet();
+    if (missingPaths.isEmpty) return 0;
+    setState(() {
+      _library.removeWhere((track) => missingPaths.contains(track.path));
+      _libraryRelativePaths.removeWhere(
+        (path, _) => missingPaths.contains(path),
+      );
+      _selectedLibraryPaths.removeWhere(missingPaths.contains);
+    });
+    return missingPaths.length;
   }
 
   Future<void> _rescanFolders() async {
@@ -3929,10 +3973,21 @@ class _PlayerPageState extends State<PlayerPage>
         }
       }
     }
+    final scannedFilesystemRoots = <String>{};
+    final discoveredFilesystemPaths = <String>{};
     for (final folder in List<String>.from(_libraryFolders)) {
       try {
         if (Platform.isAndroid || Directory(folder).existsSync()) {
-          await _scanFolder(folder, operation: operation);
+          await _scanFolder(
+            folder,
+            operation: operation,
+            scannedFilesystemRoots: Platform.isAndroid
+                ? null
+                : scannedFilesystemRoots,
+            discoveredFilesystemPaths: Platform.isAndroid
+                ? null
+                : discoveredFilesystemPaths,
+          );
           if (!mounted || operation != _libraryOperationGeneration) return;
         }
       } on Object catch (error) {
@@ -3943,12 +3998,21 @@ class _PlayerPageState extends State<PlayerPage>
       }
     }
     if (!mounted || operation != _libraryOperationGeneration) return;
+    final removedMissing = Platform.isAndroid
+        ? 0
+        : _pruneMissingFilesystemTracks(
+            scannedFilesystemRoots,
+            discoveredFilesystemPaths,
+          );
     await _saveQueue();
     if (!mounted || operation != _libraryOperationGeneration) return;
     if (mounted && operation == _libraryOperationGeneration) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Rescanned ${_libraryFolders.length} folder(s)'),
+          content: Text(
+            'Rescanned ${_libraryFolders.length} folder(s)'
+            '${removedMissing == 0 ? '' : ' · Removed $removedMissing missing track(s)'}',
+          ),
         ),
       );
     }
