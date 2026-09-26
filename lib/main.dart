@@ -2405,9 +2405,14 @@ class _PlayerPageState extends State<PlayerPage>
       _dspPlayer.setBalance(balance);
       _crossfadeDspPlayer?.setBalance(balance);
     } else {
-      unawaited(_player.setBalance(balance));
+      _runAsyncSafely(_player.setBalance(balance), 'Setting balance');
       final incoming = _crossfadeAudioPlayer;
-      if (incoming != null) unawaited(incoming.setBalance(balance));
+      if (incoming != null) {
+        _runAsyncSafely(
+          incoming.setBalance(balance),
+          'Setting crossfade balance',
+        );
+      }
     }
   }
 
@@ -2495,7 +2500,7 @@ class _PlayerPageState extends State<PlayerPage>
       final cueEnd = track?.cueEnd;
       if (cueEnd != null && value >= cueEnd && !_cueTransitioning) {
         _cueTransitioning = true;
-        unawaited(_advanceCueBoundary());
+        _runAsyncSafely(_advanceCueBoundary(), 'Advancing CUE boundary');
         return;
       }
       final relative = _cueRelativePosition(track, value);
@@ -2508,7 +2513,7 @@ class _PlayerPageState extends State<PlayerPage>
         final remaining = _duration - relative;
         if (remaining <= Duration(seconds: _crossfadeSeconds) &&
             remaining > Duration.zero) {
-          unawaited(_crossfadeToNext());
+          _runAsyncSafely(_crossfadeToNext(), 'Starting crossfade');
         }
       }
     });
@@ -2521,14 +2526,17 @@ class _PlayerPageState extends State<PlayerPage>
     _stateSub = _player.onPlayerStateChanged.listen((value) {
       if (!mounted || generation != _playerStreamGeneration) return;
       setState(() => _playerState = value);
-      unawaited(_syncWindowsMediaSession());
+      _runAsyncSafely(
+        _syncWindowsMediaSession(),
+        'Updating Windows media session',
+      );
     });
     _completeSub = _player.onPlayerComplete.listen((_) {
       if (generation == _playerStreamGeneration &&
           mounted &&
           !_selectionInProgress &&
           !_crossfadeInProgress) {
-        unawaited(_handleCompletionSafely());
+        _runAsyncSafely(_handleCompletionSafely(), 'Handling track completion');
       }
     });
   }
@@ -2550,7 +2558,7 @@ class _PlayerPageState extends State<PlayerPage>
       final cueEnd = track?.cueEnd;
       if (cueEnd != null && value >= cueEnd && !_cueTransitioning) {
         _cueTransitioning = true;
-        unawaited(_advanceCueBoundary());
+        _runAsyncSafely(_advanceCueBoundary(), 'Advancing DSP CUE boundary');
         return;
       }
       final relative = _cueRelativePosition(track, value);
@@ -2563,7 +2571,7 @@ class _PlayerPageState extends State<PlayerPage>
         final remaining = _duration - relative;
         if (remaining <= Duration(seconds: _crossfadeSeconds) &&
             remaining > Duration.zero) {
-          unawaited(_crossfadeToNext());
+          _runAsyncSafely(_crossfadeToNext(), 'Starting DSP crossfade');
         }
       }
       _audioHandler?.syncExternalState(
@@ -2585,7 +2593,10 @@ class _PlayerPageState extends State<PlayerPage>
       }
       setState(() => _playerState = value);
       _audioHandler?.syncExternalState(position: _position, state: value);
-      unawaited(_syncWindowsMediaSession());
+      _runAsyncSafely(
+        _syncWindowsMediaSession(),
+        'Updating Windows media session',
+      );
     });
     _dspCompleteSub = _dspPlayer.onPlayerComplete.listen((_) {
       if (mounted &&
@@ -2593,7 +2604,7 @@ class _PlayerPageState extends State<PlayerPage>
           _dspActive &&
           !_selectionInProgress &&
           !_crossfadeInProgress) {
-        unawaited(_handleCompletionSafely());
+        _runAsyncSafely(_handleCompletionSafely(), 'Handling DSP completion');
       }
     });
   }
@@ -2620,7 +2631,10 @@ class _PlayerPageState extends State<PlayerPage>
         return;
       }
       setState(() => _duration = value);
-      unawaited(_syncWindowsMediaSession());
+      _runAsyncSafely(
+        _syncWindowsMediaSession(),
+        'Updating Windows media session',
+      );
     });
     _midiStateSub = _midiPlayer.onPlayerStateChanged.listen((value) {
       if (!mounted || generation != _midiStreamGeneration || !_midiActive) {
@@ -2628,7 +2642,10 @@ class _PlayerPageState extends State<PlayerPage>
       }
       setState(() => _playerState = value);
       _audioHandler?.syncExternalState(position: _position, state: value);
-      unawaited(_syncWindowsMediaSession());
+      _runAsyncSafely(
+        _syncWindowsMediaSession(),
+        'Updating Windows media session',
+      );
     });
     _midiCompleteSub = _midiPlayer.onPlayerComplete.listen((_) {
       if (mounted &&
@@ -2636,7 +2653,7 @@ class _PlayerPageState extends State<PlayerPage>
           _midiActive &&
           !_selectionInProgress &&
           !_crossfadeInProgress) {
-        unawaited(_handleCompletionSafely());
+        _runAsyncSafely(_handleCompletionSafely(), 'Handling MIDI completion');
       }
     });
   }
@@ -3003,7 +3020,10 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (!mounted) return;
     await _saveQueue();
-    unawaited(_syncWindowsMediaSession());
+    _runAsyncSafely(
+      _syncWindowsMediaSession(),
+      'Updating Windows media session',
+    );
   }
 
   Future<void> _setReplayGainEnabled(bool enabled) async {
@@ -3030,7 +3050,7 @@ class _PlayerPageState extends State<PlayerPage>
     final identity = _current?.identityKey;
     if (identity != null) {
       _resumePositions.remove(identity);
-      unawaited(_saveQueue());
+      _saveQueueSafely();
     }
     if (_repeatOne) {
       await _seekCurrent(Duration.zero);
@@ -3047,7 +3067,7 @@ class _PlayerPageState extends State<PlayerPage>
     _castPositionTimer?.cancel();
     _castPositionTimer = Timer.periodic(
       const Duration(seconds: 1),
-      (_) => unawaited(_syncCastPosition()),
+      (_) => _runAsyncSafely(_syncCastPosition(), 'Polling cast position'),
     );
   }
 
@@ -3077,7 +3097,10 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() => _position = position);
       _rememberResumePosition(position);
       _audioHandler?.syncExternalState(position: position, state: _playerState);
-      unawaited(_syncWindowsMediaSession());
+      _runAsyncSafely(
+        _syncWindowsMediaSession(),
+        'Updating Windows media session',
+      );
     } catch (error) {
       _castPositionTimer?.cancel();
       if (mounted &&
@@ -3114,15 +3137,15 @@ class _PlayerPageState extends State<PlayerPage>
     final remaining = sleepTimerRemaining(deadline, DateTime.now())!;
     if (remaining == Duration.zero) {
       _sleepDeadline = null;
-      unawaited(_stopCurrent());
-      unawaited(_saveQueue());
+      _runAsyncSafely(_stopCurrent(), 'Stopping after sleep timer');
+      _saveQueueSafely();
       return;
     }
     _sleepTimer = Timer(remaining, () {
       if (!mounted) return;
       _sleepDeadline = null;
-      unawaited(_stopCurrent());
-      unawaited(_saveQueue());
+      _runAsyncSafely(_stopCurrent(), 'Stopping after sleep timer');
+      _saveQueueSafely();
     });
   }
 
@@ -3403,6 +3426,22 @@ class _PlayerPageState extends State<PlayerPage>
     } finally {
       _saveInProgress = false;
     }
+  }
+
+  void _saveQueueSafely() {
+    unawaited(
+      _saveQueue().catchError((error, stackTrace) {
+        debugPrint('Could not persist NeonAmp state: $error\n$stackTrace');
+      }),
+    );
+  }
+
+  void _runAsyncSafely(Future<void> operation, String description) {
+    unawaited(
+      operation.catchError((error, stackTrace) {
+        debugPrint('$description failed: $error\n$stackTrace');
+      }),
+    );
   }
 
   Future<void> _writeQueueSnapshot() async {
@@ -4226,7 +4265,7 @@ class _PlayerPageState extends State<PlayerPage>
     _resumeSaveTimer?.cancel();
     _resumeSaveTimer = Timer(const Duration(seconds: 2), () {
       if (!mounted) return;
-      unawaited(_saveQueue());
+      _saveQueueSafely();
     });
   }
 
@@ -5646,7 +5685,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
       }
     });
-    unawaited(_saveQueue());
+    _saveQueueSafely();
   }
 
   Future<void> _editTrack(Track track) async {
@@ -6613,7 +6652,7 @@ class _PlayerPageState extends State<PlayerPage>
                                       () => _plugins[plugin.id] = plugin
                                           .copyWith(enabled: value),
                                     );
-                                    unawaited(_saveQueue());
+                                    _saveQueueSafely();
                                     setDialogState(() {});
                                   },
                                 ),
@@ -6623,7 +6662,7 @@ class _PlayerPageState extends State<PlayerPage>
                                   onPressed: () {
                                     if (!mounted) return;
                                     setState(() => _plugins.remove(plugin.id));
-                                    unawaited(_saveQueue());
+                                    _saveQueueSafely();
                                     setDialogState(() {});
                                   },
                                 ),
@@ -6765,7 +6804,7 @@ class _PlayerPageState extends State<PlayerPage>
                 onChanged: (value) {
                   if (!mounted) return;
                   setState(() => _crossfade = value);
-                  unawaited(_saveQueue());
+                  _saveQueueSafely();
                   setDialogState(() {});
                 },
               ),
@@ -6783,7 +6822,7 @@ class _PlayerPageState extends State<PlayerPage>
                         onChanged: (value) {
                           if (!mounted) return;
                           setState(() => _crossfadeSeconds = value.round());
-                          unawaited(_saveQueue());
+                          _saveQueueSafely();
                           setDialogState(() {});
                         },
                       ),
@@ -6796,7 +6835,10 @@ class _PlayerPageState extends State<PlayerPage>
                 title: const Text('ReplayGain normalization'),
                 value: _replayGainEnabled,
                 onChanged: (value) {
-                  unawaited(_setReplayGainEnabled(value));
+                  _runAsyncSafely(
+                    _setReplayGainEnabled(value),
+                    'Applying ReplayGain setting',
+                  );
                   setDialogState(() {});
                 },
               ),
@@ -6915,7 +6957,10 @@ class _PlayerPageState extends State<PlayerPage>
                 onChanged: _midiActive
                     ? null
                     : (value) {
-                        unawaited(_setEqualizerEnabled(value));
+                        _runAsyncSafely(
+                          _setEqualizerEnabled(value),
+                          'Applying equalizer setting',
+                        );
                         setDialogState(() {});
                       },
               ),
@@ -6960,7 +7005,7 @@ class _PlayerPageState extends State<PlayerPage>
                                 bands: _eqBands,
                               );
                             }
-                            unawaited(_saveQueue());
+                            _saveQueueSafely();
                             setDialogState(() {});
                           },
                   ),
@@ -6981,7 +7026,7 @@ class _PlayerPageState extends State<PlayerPage>
                                   _applyBalance(value);
                                   setDialogState(() {});
                                 },
-                          onChangeEnd: (_) => unawaited(_saveQueue()),
+                          onChangeEnd: (_) => _saveQueueSafely(),
                         ),
                       ),
                       const Text('R', style: TextStyle(color: Colors.white54)),
@@ -6999,7 +7044,7 @@ class _PlayerPageState extends State<PlayerPage>
                     value: _crossfade,
                     onChanged: (value) {
                       setState(() => _crossfade = value);
-                      unawaited(_saveQueue());
+                      _saveQueueSafely();
                       setDialogState(() {});
                     },
                   ),
@@ -7011,7 +7056,10 @@ class _PlayerPageState extends State<PlayerPage>
                     ),
                     value: _replayGainEnabled,
                     onChanged: (value) {
-                      unawaited(_setReplayGainEnabled(value));
+                      _runAsyncSafely(
+                        _setReplayGainEnabled(value),
+                        'Applying ReplayGain setting',
+                      );
                       setDialogState(() {});
                     },
                   ),
@@ -7031,7 +7079,7 @@ class _PlayerPageState extends State<PlayerPage>
                             label: '${_crossfadeSeconds}s',
                             onChanged: (value) {
                               setState(() => _crossfadeSeconds = value.round());
-                              unawaited(_saveQueue());
+                              _saveQueueSafely();
                               setDialogState(() {});
                             },
                           ),
@@ -7073,7 +7121,7 @@ class _PlayerPageState extends State<PlayerPage>
                                             setDialogState(() {});
                                           }
                                         : null,
-                                    onChangeEnd: (_) => unawaited(_saveQueue()),
+                                    onChangeEnd: (_) => _saveQueueSafely(),
                                   ),
                                 ),
                               ),
@@ -7137,7 +7185,10 @@ class _PlayerPageState extends State<PlayerPage>
                       },
                 onChangeEnd: _casting
                     ? null
-                    : (value) => unawaited(_setPlaybackSpeed(value)),
+                    : (value) => _runAsyncSafely(
+                        _setPlaybackSpeed(value),
+                        'Applying playback speed',
+                      ),
               ),
               Wrap(
                 spacing: 8,
@@ -7149,7 +7200,10 @@ class _PlayerPageState extends State<PlayerPage>
                           : () {
                               selected = speed;
                               setDialogState(() {});
-                              unawaited(_setPlaybackSpeed(speed));
+                              _runAsyncSafely(
+                                _setPlaybackSpeed(speed),
+                                'Applying playback speed',
+                              );
                             },
                       child: Text('${speed}×'),
                     ),
@@ -7410,12 +7464,18 @@ class _PlayerPageState extends State<PlayerPage>
     final crossfadeDspPlayer = _crossfadeDspPlayer;
     _crossfadeInProgress = false;
     if (crossfadeAudioPlayer != null) {
-      unawaited(crossfadeAudioPlayer.dispose());
+      _runAsyncSafely(
+        crossfadeAudioPlayer.dispose(),
+        'Disposing crossfade player',
+      );
     }
     if (crossfadeDspPlayer != null) {
-      unawaited(crossfadeDspPlayer.dispose());
+      _runAsyncSafely(
+        crossfadeDspPlayer.dispose(),
+        'Disposing DSP crossfade player',
+      );
     }
-    unawaited(_dlnaCast.dispose());
+    _runAsyncSafely(_dlnaCast.dispose(), 'Disposing DLNA cast');
     _castPositionTimer?.cancel();
     _sleepTimer?.cancel();
     _resumeSaveTimer?.cancel();
@@ -7431,15 +7491,18 @@ class _PlayerPageState extends State<PlayerPage>
     _midiDurationSub?.cancel();
     _midiStateSub?.cancel();
     _midiCompleteSub?.cancel();
-    unawaited(_audioHandler?.close());
+    final audioHandler = _audioHandler;
+    if (audioHandler != null) {
+      _runAsyncSafely(audioHandler.close(), 'Closing audio service');
+    }
     if (Platform.isWindows) {
       const MethodChannel('neonamp/system_controls').setMethodCallHandler(null);
     }
     _searchController.dispose();
     _pulse.dispose();
     _player.dispose();
-    unawaited(_midiPlayer.dispose());
-    unawaited(_dspPlayer.dispose());
+    _runAsyncSafely(_midiPlayer.dispose(), 'Disposing MIDI player');
+    _runAsyncSafely(_dspPlayer.dispose(), 'Disposing DSP player');
     super.dispose();
   }
 
@@ -7498,13 +7561,22 @@ class _PlayerPageState extends State<PlayerPage>
             final nextVolume = muted ? 0.0 : 0.82;
             setState(() => _volume = nextVolume);
             if (_casting) {
-              unawaited(_dlnaCast.setVolume(_volumeFor(_current)));
+              _runAsyncSafely(
+                _dlnaCast.setVolume(_volumeFor(_current)),
+                'Setting cast volume',
+              );
             } else if (_dspActive) {
-              _dspPlayer.setVolume(_volumeFor(_current));
+              _runAsyncSafely(
+                _dspPlayer.setVolume(_volumeFor(_current)),
+                'Setting DSP volume',
+              );
             } else {
-              _player.setVolume(_volumeFor(_current));
+              _runAsyncSafely(
+                _player.setVolume(_volumeFor(_current)),
+                'Setting volume',
+              );
             }
-            _saveQueue();
+            _saveQueueSafely();
             return null;
           },
         ),
@@ -8005,7 +8077,7 @@ class _PlayerPageState extends State<PlayerPage>
                   icon: const Icon(Icons.sort, size: 19),
                   onSelected: (value) {
                     setState(() => _librarySort = value);
-                    _saveQueue();
+                    _saveQueueSafely();
                   },
                   itemBuilder: (context) => const [
                     PopupMenuItem(
@@ -8036,7 +8108,7 @@ class _PlayerPageState extends State<PlayerPage>
                     setState(
                       () => _librarySortDescending = !_librarySortDescending,
                     );
-                    _saveQueue();
+                    _saveQueueSafely();
                   },
                 ),
               ],
@@ -8835,13 +8907,20 @@ class _PlayerPageState extends State<PlayerPage>
                         : (value) {
                             setState(() => _volume = value);
                             if (_casting) {
-                              unawaited(
+                              _runAsyncSafely(
                                 _dlnaCast.setVolume(_volumeFor(_current)),
+                                'Setting cast volume',
                               );
                             } else if (_dspActive) {
-                              _dspPlayer.setVolume(_volumeFor(_current));
+                              _runAsyncSafely(
+                                _dspPlayer.setVolume(_volumeFor(_current)),
+                                'Setting DSP volume',
+                              );
                             } else {
-                              _player.setVolume(_volumeFor(_current));
+                              _runAsyncSafely(
+                                _player.setVolume(_volumeFor(_current)),
+                                'Setting volume',
+                              );
                             }
                           },
                     activeColor: Colors.white70,
@@ -8930,13 +9009,20 @@ class _PlayerPageState extends State<PlayerPage>
                         : (value) {
                             setState(() => _volume = value);
                             if (_casting) {
-                              unawaited(
+                              _runAsyncSafely(
                                 _dlnaCast.setVolume(_volumeFor(_current)),
+                                'Setting cast volume',
                               );
                             } else if (_dspActive) {
-                              _dspPlayer.setVolume(_volumeFor(_current));
+                              _runAsyncSafely(
+                                _dspPlayer.setVolume(_volumeFor(_current)),
+                                'Setting DSP volume',
+                              );
                             } else {
-                              _player.setVolume(_volumeFor(_current));
+                              _runAsyncSafely(
+                                _player.setVolume(_volumeFor(_current)),
+                                'Setting volume',
+                              );
                             }
                           },
                     activeColor: Colors.white70,
