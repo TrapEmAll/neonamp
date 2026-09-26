@@ -2496,7 +2496,10 @@ class _PlayerPageState extends State<PlayerPage>
       unawaited(_syncWindowsMediaSession());
     });
     _completeSub = _player.onPlayerComplete.listen((_) {
-      if (generation == _playerStreamGeneration && mounted) {
+      if (generation == _playerStreamGeneration &&
+          mounted &&
+          !_selectionInProgress &&
+          !_crossfadeInProgress) {
         unawaited(_handleCompletionSafely());
       }
     });
@@ -2557,7 +2560,11 @@ class _PlayerPageState extends State<PlayerPage>
       unawaited(_syncWindowsMediaSession());
     });
     _dspCompleteSub = _dspPlayer.onPlayerComplete.listen((_) {
-      if (mounted && generation == _dspStreamGeneration && _dspActive) {
+      if (mounted &&
+          generation == _dspStreamGeneration &&
+          _dspActive &&
+          !_selectionInProgress &&
+          !_crossfadeInProgress) {
         unawaited(_handleCompletionSafely());
       }
     });
@@ -2596,7 +2603,11 @@ class _PlayerPageState extends State<PlayerPage>
       unawaited(_syncWindowsMediaSession());
     });
     _midiCompleteSub = _midiPlayer.onPlayerComplete.listen((_) {
-      if (mounted && generation == _midiStreamGeneration && _midiActive) {
+      if (mounted &&
+          generation == _midiStreamGeneration &&
+          _midiActive &&
+          !_selectionInProgress &&
+          !_crossfadeInProgress) {
         unawaited(_handleCompletionSafely());
       }
     });
@@ -3011,7 +3022,10 @@ class _PlayerPageState extends State<PlayerPage>
       unawaited(_syncWindowsMediaSession());
     } catch (error) {
       _castPositionTimer?.cancel();
-      if (mounted) {
+      if (mounted &&
+          _casting &&
+          identity == _current?.identityKey &&
+          !_selectionInProgress) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not read cast position: $error')),
         );
