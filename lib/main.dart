@@ -142,9 +142,8 @@ int nextQueueIndex({
 
 double normalizeStereoBalance(double balance) => balance.clamp(-1.0, 1.0);
 
-double normalizePlaybackSpeed(double speed) => speed.isFinite
-    ? speed.clamp(0.5, 2.0).toDouble()
-    : 1.0;
+double normalizePlaybackSpeed(double speed) =>
+    speed.isFinite ? speed.clamp(0.5, 2.0).toDouble() : 1.0;
 
 String stereoBalanceLabel(double balance) {
   final normalized = normalizeStereoBalance(balance);
@@ -4276,7 +4275,9 @@ class _PlayerPageState extends State<PlayerPage>
           );
           _audioHandler?.publishTrack(track);
         } on Object catch (error) {
-          debugPrint('DSP playback unavailable; falling back to standard player: $error');
+          debugPrint(
+            'DSP playback unavailable; falling back to standard player: $error',
+          );
           await _dspPlayer.stop();
           _dspActive = false;
           await _playStandardTrack(track);
@@ -7063,6 +7064,7 @@ class _PlayerPageState extends State<PlayerPage>
                             dialogPreset = value;
                             setState(() {
                               _eqPreset = value;
+                              if (value != 'Flat') _equalizerEnabled = true;
                               _eqBands.setAll(
                                 0,
                                 equalizerPresetBands(
