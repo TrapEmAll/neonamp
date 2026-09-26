@@ -112,6 +112,18 @@ bool isContentMediaPath(String path) {
   return Uri.tryParse(path)?.scheme.toLowerCase() == 'content';
 }
 
+String normalizeLocalMediaPath(String path) {
+  final uri = Uri.tryParse(path);
+  if (uri?.scheme.toLowerCase() == 'file') {
+    try {
+      return uri!.toFilePath();
+    } on Object {
+      // Keep the original value so callers can report the provider error.
+    }
+  }
+  return path;
+}
+
 bool isUriMediaPath(String path) {
   return isRemoteMediaPath(path) || isContentMediaPath(path);
 }
@@ -3586,7 +3598,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<String> _localPickedFilePath(PlatformFile file) async {
-    final path = file.path;
+    final path = file.path == null ? null : normalizeLocalMediaPath(file.path!);
     if (path == null || path.isEmpty) {
       throw StateError('The selected file is not available on this device.');
     }
@@ -4207,7 +4219,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<String> _playbackSourcePath(Track track) async {
     if (!Platform.isAndroid || !isContentMediaPath(track.path)) {
-      return track.path;
+      return normalizeLocalMediaPath(track.path);
     }
     final path = await const MethodChannel('neonamp/library')
         .invokeMethod<String>('materializeUri', {

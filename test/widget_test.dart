@@ -551,6 +551,14 @@ FILE "disc image.flac" WAVE
     expect(isRemoteMediaPath(r'C:\Music\song.mp3'), isFalse);
   });
 
+  test('normalizes file URIs before local playback', () {
+    expect(
+      normalizeLocalMediaPath('file:///tmp/song.mp3'),
+      '/tmp/song.mp3',
+    );
+    expect(normalizeLocalMediaPath('/tmp/song.mp3'), '/tmp/song.mp3');
+  });
+
   test('HTTP URI validation is case-insensitive and rejects local paths', () {
     expect(isHttpUri(Uri.parse('HtTpS://example.test/feed.xml')), isTrue);
     expect(isHttpUri(Uri.parse('file:///song.mp3')), isFalse);
