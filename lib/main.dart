@@ -4882,7 +4882,8 @@ class _PlayerPageState extends State<PlayerPage>
     final selectedIdentity = _current?.identityKey;
     setState(() {
       final track = _queue.removeAt(oldIndex);
-      _queue.insert(newIndex.clamp(0, _queue.length), track);
+      final adjustedIndex = oldIndex < newIndex ? newIndex - 1 : newIndex;
+      _queue.insert(adjustedIndex.clamp(0, _queue.length), track);
       final selectedIndex = selectedIdentity == null
           ? -1
           : _queue.indexWhere((item) => item.identityKey == selectedIdentity);
