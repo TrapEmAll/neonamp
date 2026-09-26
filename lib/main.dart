@@ -3216,17 +3216,23 @@ class _PlayerPageState extends State<PlayerPage>
     if (deadline == null) return;
     final remaining = sleepTimerRemaining(deadline, DateTime.now())!;
     if (remaining == Duration.zero) {
-      _sleepDeadline = null;
-      _runAsyncSafely(_stopCurrent(), 'Stopping after sleep timer');
-      _saveQueueSafely();
+      _expireSleepTimer();
       return;
     }
     _sleepTimer = Timer(remaining, () {
-      if (!mounted) return;
-      _sleepDeadline = null;
-      _runAsyncSafely(_stopCurrent(), 'Stopping after sleep timer');
-      _saveQueueSafely();
+      _expireSleepTimer();
     });
+  }
+
+  void _expireSleepTimer() {
+    _sleepTimer = null;
+    if (mounted) {
+      setState(() => _sleepDeadline = null);
+    } else {
+      _sleepDeadline = null;
+    }
+    _runAsyncSafely(_stopCurrent(), 'Stopping after sleep timer');
+    _saveQueueSafely();
   }
 
   Future<void> _setSleepTimer(Duration? duration) async {
