@@ -11,6 +11,7 @@ class DlnaCast {
   HttpServer? _server;
   MediaRenderer? _renderer;
   DeviceDiscoverer? _discoverer;
+  int _operationGeneration = 0;
   Duration _segmentStart = Duration.zero;
   Duration? _segmentEnd;
 
@@ -25,6 +26,7 @@ class DlnaCast {
       throw StateError('Nearby devices permission was not granted.');
     }
     final discoverer = DeviceDiscoverer();
+    final generation = ++_operationGeneration;
     _discoverer = discoverer;
     try {
       await discoverer.start(addressTypes: [InternetAddressType.IPv4]);
@@ -32,6 +34,7 @@ class DlnaCast {
         searchTarget: UpnpDeviceType.mediaRenderer.urn(),
         timeout: timeout,
       );
+      if (generation != _operationGeneration) return const <MediaRenderer>[];
       return devices.whereType<MediaRenderer>().toList();
     } finally {
       discoverer.stop();
@@ -56,6 +59,7 @@ class DlnaCast {
     Duration segmentStart = Duration.zero,
     Duration? segmentEnd,
   }) async {
+    final generation = ++_operationGeneration;
     final transport = renderer.avTransport;
     if (transport == null) throw StateError('This device cannot play media.');
     if (segmentStart.isNegative ||
@@ -66,7 +70,11 @@ class DlnaCast {
     final isUrl =
         parsedPath?.scheme.toLowerCase() == 'http' ||
         parsedPath?.scheme.toLowerCase() == 'https';
-    final uri = isUrl ? path : await _serveFile(path, renderer);
+    final uri = isUrl ? path : await _serveFile(path, renderer, generation);
+    if (uri.isEmpty || generation != _operationGeneration) {
+      if (!isUrl) await _closeServer();
+      return;
+    }
     final mime = _mimeType(path);
     final track = MusicTrack(
       id: '0',
@@ -81,6 +89,7 @@ class DlnaCast {
     try {
       await transport.setAVTransportURI(uri, metadata: track.toXml());
       await transport.play();
+      if (generation != _operationGeneration) return;
       if (segmentStart > Duration.zero) {
         await transport.seek(SeekMode.relTime, _formatDlnaTime(segmentStart));
       }
@@ -95,15 +104,18 @@ class DlnaCast {
         // while they are still preparing the new media resource.
       }
       if (!isUrl) {
-        await _server?.close(force: true);
-        _server = null;
+        await _closeServer();
       }
       rethrow;
     }
   }
 
-  Future<String> _serveFile(String path, MediaRenderer renderer) async {
-    await _server?.close(force: true);
+  Future<String> _serveFile(
+    String path,
+    MediaRenderer renderer,
+    int generation,
+  ) async {
+    await _closeServer();
     final file = File(path);
     if (!await file.exists()) {
       throw StateError('The local media file is no longer available.');
@@ -111,6 +123,10 @@ class DlnaCast {
     final length = await file.length();
     if (length <= 0) throw StateError('The local media file is empty.');
     final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+    if (generation != _operationGeneration) {
+      await server.close(force: true);
+      return '';
+    }
     _server = server;
     final token = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
     unawaited(
@@ -162,6 +178,8 @@ class DlnaCast {
             // The renderer may have disconnected before the response closed.
           }
         }
+      }).catchError((_) {
+        // A renderer disconnecting while the file server is active is normal.
       }),
     );
 
@@ -193,7 +211,7 @@ class DlnaCast {
       return 'http://${route.address}:${server.port}/$token';
     } on Object {
       await server.close(force: true);
-      _server = null;
+      if (identical(_server, server)) _server = null;
       rethrow;
     }
   }
@@ -351,18 +369,14 @@ class DlnaCast {
   static String _formatDlnaTime(Duration value) =>
       '${value.inHours.toString().padLeft(2, '0')}:${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
   Future<void> stop() async {
+    _operationGeneration++;
     try {
       await _renderer?.avTransport?.stop();
     } finally {
       _renderer = null;
       _segmentStart = Duration.zero;
       _segmentEnd = null;
-      try {
-        await _server?.close(force: true);
-      } on Object {
-        // The local server may already be closed by a failed request.
-      }
-      _server = null;
+      await _closeServer();
     }
   }
 
@@ -370,5 +384,16 @@ class DlnaCast {
     await stop();
     _discoverer?.dispose();
     _discoverer = null;
+  }
+
+  Future<void> _closeServer() async {
+    final server = _server;
+    _server = null;
+    if (server == null) return;
+    try {
+      await server.close(force: true);
+    } on Object {
+      // The local server may already be closed by a failed request.
+    }
   }
 }
