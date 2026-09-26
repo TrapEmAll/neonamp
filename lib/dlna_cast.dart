@@ -58,7 +58,10 @@ class DlnaCast {
         (segmentEnd != null && segmentEnd <= segmentStart)) {
       throw ArgumentError('The media segment boundaries are invalid.');
     }
-    final isUrl = path.startsWith('http://') || path.startsWith('https://');
+    final parsedPath = Uri.tryParse(path);
+    final isUrl =
+        parsedPath?.scheme.toLowerCase() == 'http' ||
+        parsedPath?.scheme.toLowerCase() == 'https';
     final uri = isUrl ? path : await _serveFile(path, renderer);
     final mime = _mimeType(path);
     final track = MusicTrack(
@@ -98,7 +101,11 @@ class DlnaCast {
   Future<String> _serveFile(String path, MediaRenderer renderer) async {
     await _server?.close(force: true);
     final file = File(path);
+    if (!await file.exists()) {
+      throw StateError('The local media file is no longer available.');
+    }
     final length = await file.length();
+    if (length <= 0) throw StateError('The local media file is empty.');
     final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
     _server = server;
     final token = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
@@ -145,32 +152,46 @@ class DlnaCast {
           await request.response.addStream(file.openRead(start, end + 1));
           await request.response.close();
         } catch (_) {
-          await request.response.close();
+          try {
+            await request.response.close();
+          } on Object {
+            // The renderer may have disconnected before the response closed.
+          }
         }
       }),
     );
 
-    final remoteAddress = Uri.tryParse(renderer.url ?? '')?.host;
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLoopback: false,
-    );
-    final routes = interfaces
-        .expand((i) => i.addresses)
-        .where((address) => !address.address.startsWith('127.'))
-        .where(
-          (address) =>
-              remoteAddress != null &&
-              _sameSubnet(address.address, address.prefixLength, remoteAddress),
-        )
-        .toList();
-    final route = routes.isEmpty ? null : routes.first;
-    if (route == null) {
+    try {
+      final remoteAddress = Uri.tryParse(renderer.url ?? '')?.host;
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+      );
+      final routes = interfaces
+          .expand((i) => i.addresses)
+          .where((address) => !address.address.startsWith('127.'))
+          .where(
+            (address) =>
+                remoteAddress != null &&
+                _sameSubnet(
+                  address.address,
+                  address.prefixLength,
+                  remoteAddress,
+                ),
+          )
+          .toList();
+      final route = routes.isEmpty ? null : routes.first;
+      if (route == null) {
+        throw StateError(
+          'Could not find a local network route to this player.',
+        );
+      }
+      return 'http://${route.address}:${server.port}/$token';
+    } on Object {
       await server.close(force: true);
       _server = null;
-      throw StateError('Could not find a local network route to this player.');
+      rethrow;
     }
-    return 'http://${route.address}:${server.port}/$token';
   }
 
   static (int, int, bool)? parseDlnaByteRange(String? header, int length) {
@@ -256,7 +277,9 @@ class DlnaCast {
   }
 
   Future<Duration?> getPosition() async {
-    final value = await _renderer?.avTransport?.getPositionInfo();
+    final renderer = _renderer;
+    final value = await renderer?.avTransport?.getPositionInfo();
+    if (!identical(renderer, _renderer)) return null;
     final sourcePosition = parseDlnaPosition(value?.relTime);
     if (sourcePosition == null) return null;
     return sourceToSegmentPosition(sourcePosition, _segmentStart, _segmentEnd);

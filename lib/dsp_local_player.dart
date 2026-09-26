@@ -25,6 +25,7 @@ class DspLocalPlayer {
   soloud.SoundHandle? _handle;
   String? _renderedModulePath;
   Timer? _pollTimer;
+  Future<void>? _initialization;
   bool _completionSent = false;
   bool _disposed = false;
 
@@ -45,8 +46,12 @@ class DspLocalPlayer {
 
   Future<void> _ensureInitialized() async {
     if (_disposed) throw StateError('The DSP player has been disposed.');
-    if (!soloud.SoLoud.instance.isInitialized) {
-      await soloud.SoLoud.instance.init();
+    if (soloud.SoLoud.instance.isInitialized) return;
+    _initialization ??= soloud.SoLoud.instance.init();
+    try {
+      await _initialization;
+    } finally {
+      _initialization = null;
     }
   }
 
@@ -87,36 +92,70 @@ class DspLocalPlayer {
       }
       rethrow;
     }
-    final equalizer = source.filters.parametricEqFilter;
-    equalizer.activate();
-    equalizer.numBands().value = bands.length.toDouble();
-    for (var index = 0; index < bands.length; index++) {
-      final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
-      equalizer.bandGain(index).value = gain;
+    soloud.SoundHandle? handle;
+    try {
+      final equalizer = source.filters.parametricEqFilter;
+      equalizer.activate();
+      equalizer.numBands().value = bands.length.toDouble();
+      for (var index = 0; index < bands.length; index++) {
+        final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
+        equalizer.bandGain(index).value = gain;
+      }
+      handle = soloud.SoLoud.instance.play(
+        source,
+        volume: volume.clamp(0.0, 1.0).toDouble(),
+        pan: balance.clamp(-1.0, 1.0),
+      );
+      soloud.SoLoud.instance.setRelativePlaySpeed(
+        handle,
+        playbackSpeed.isFinite ? playbackSpeed.clamp(0.5, 2.0).toDouble() : 1,
+      );
+      _source = source;
+      _renderedModulePath = isTrackerModule ? sourcePath : null;
+      _handle = handle;
+      _completionSent = false;
+      _durationController.add(soloud.SoLoud.instance.getLength(source));
+      _stateController.add(PlayerState.playing);
+      _startPolling();
+    } on Object {
+      // If playback started before a later setup step failed, stop that voice
+      // before releasing its source.
+      if (handle != null &&
+          soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+        try {
+          await soloud.SoLoud.instance.stop(handle);
+        } on Object {
+          // Continue releasing the source and temporary file.
+        }
+      }
+      await soloud.SoLoud.instance.disposeSource(source);
+      if (isTrackerModule) {
+        final output = File(sourcePath);
+        if (await output.exists()) await output.delete();
+      }
+      rethrow;
     }
-    final handle = soloud.SoLoud.instance.play(
-      source,
-      volume: volume,
-      pan: balance.clamp(-1.0, 1.0),
-    );
-    soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
-    _source = source;
-    _renderedModulePath = isTrackerModule ? sourcePath : null;
-    _handle = handle;
-    _completionSent = false;
-    _durationController.add(soloud.SoLoud.instance.getLength(source));
-    _stateController.add(PlayerState.playing);
-    _startPolling();
   }
 
   void _startPolling() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (_disposed) return;
       final handle = _handle;
       if (handle == null) return;
       if (!soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
         _pollTimer?.cancel();
         _handle = null;
+        final source = _source;
+        _source = null;
+        final renderedModulePath = _renderedModulePath;
+        _renderedModulePath = null;
+        if (source != null) {
+          unawaited(soloud.SoLoud.instance.disposeSource(source));
+        }
+        if (renderedModulePath != null) {
+          unawaited(_deleteRenderedModule(renderedModulePath));
+        }
         _stateController.add(PlayerState.completed);
         if (!_completionSent) {
           _completionSent = true;
@@ -129,16 +168,27 @@ class DspLocalPlayer {
     });
   }
 
+  Future<void> _deleteRenderedModule(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } on Object {
+      // Temporary tracker output is best-effort cleanup.
+    }
+  }
+
   Future<void> pause() async {
     final handle = _handle;
-    if (handle == null) return;
+    if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
+      return;
     soloud.SoLoud.instance.setPause(handle, true);
     _stateController.add(PlayerState.paused);
   }
 
   Future<void> resume() async {
     final handle = _handle;
-    if (handle == null) return;
+    if (handle == null || !soloud.SoLoud.instance.getIsValidVoiceHandle(handle))
+      return;
     soloud.SoLoud.instance.setPause(handle, false);
     _stateController.add(PlayerState.playing);
   }
@@ -162,7 +212,7 @@ class DspLocalPlayer {
     final handle = _handle;
     if (handle != null &&
         soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
-      soloud.SoLoud.instance.setVolume(handle, volume);
+      soloud.SoLoud.instance.setVolume(handle, volume.clamp(0.0, 1.0));
     }
   }
 
@@ -210,25 +260,28 @@ class DspLocalPlayer {
   Future<void> stop() async {
     _pollTimer?.cancel();
     final handle = _handle;
-    if (handle != null && soloud.SoLoud.instance.isInitialized) {
-      await soloud.SoLoud.instance.stop(handle);
-    }
-    _handle = null;
-    final source = _source;
-    _source = null;
-    if (source != null && soloud.SoLoud.instance.isInitialized) {
-      await soloud.SoLoud.instance.disposeSource(source);
-    }
-    final renderedModulePath = _renderedModulePath;
-    _renderedModulePath = null;
-    if (renderedModulePath != null) {
-      final renderedModule = File(renderedModulePath);
-      if (await renderedModule.exists()) await renderedModule.delete();
+    try {
+      if (handle != null && soloud.SoLoud.instance.isInitialized) {
+        await soloud.SoLoud.instance.stop(handle);
+      }
+    } finally {
+      _handle = null;
+      final source = _source;
+      _source = null;
+      if (source != null && soloud.SoLoud.instance.isInitialized) {
+        await soloud.SoLoud.instance.disposeSource(source);
+      }
+      final renderedModulePath = _renderedModulePath;
+      _renderedModulePath = null;
+      if (renderedModulePath != null) {
+        await _deleteRenderedModule(renderedModulePath);
+      }
     }
     if (!_disposed) _stateController.add(PlayerState.stopped);
   }
 
   Future<void> dispose() async {
+    if (_disposed) return;
     _disposed = true;
     await stop();
     await _positionController.close();

@@ -2107,6 +2107,11 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   void _broadcast({Duration? position, PlayerState? state}) {
     final currentState = state ?? player.state;
+    final duration = mediaItem.value?.duration;
+    var updatePosition = position ?? Duration.zero;
+    if (updatePosition.isNegative) updatePosition = Duration.zero;
+    if (duration != null && updatePosition > duration)
+      updatePosition = duration;
     playbackState.add(
       PlaybackState(
         controls: [
@@ -2127,7 +2132,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             ? AudioProcessingState.completed
             : AudioProcessingState.ready,
         playing: currentState == PlayerState.playing,
-        updatePosition: position ?? Duration.zero,
+        updatePosition: updatePosition,
         speed: _playbackSpeed,
       ),
     );
@@ -2961,10 +2966,13 @@ class _PlayerPageState extends State<PlayerPage>
     if (deadline == null) return;
     final remaining = sleepTimerRemaining(deadline, DateTime.now())!;
     if (remaining == Duration.zero) {
+      _sleepDeadline = null;
       unawaited(_stopCurrent());
+      unawaited(_saveQueue());
       return;
     }
     _sleepTimer = Timer(remaining, () {
+      if (!mounted) return;
       _sleepDeadline = null;
       unawaited(_stopCurrent());
       unawaited(_saveQueue());
@@ -3026,7 +3034,10 @@ class _PlayerPageState extends State<PlayerPage>
         try {
           final decoded = jsonDecode(value);
           if (decoded is Map) {
-            _library.add(Track.fromJson(Map<String, dynamic>.from(decoded)));
+            final track = Track.fromJson(Map<String, dynamic>.from(decoded));
+            if (_library.every((item) => item.path != track.path)) {
+              _library.add(track);
+            }
           }
         } on Object catch (error) {
           debugPrint('Skipping invalid saved library track: $error');
@@ -3039,9 +3050,14 @@ class _PlayerPageState extends State<PlayerPage>
             for (final value in decoded) {
               try {
                 if (value is Map) {
-                  _bookmarks.add(
-                    Track.fromJson(Map<String, dynamic>.from(value)),
+                  final track = Track.fromJson(
+                    Map<String, dynamic>.from(value),
                   );
+                  if (_bookmarks.every(
+                    (item) => item.identityKey != track.identityKey,
+                  )) {
+                    _bookmarks.add(track);
+                  }
                 }
               } on Object catch (error) {
                 debugPrint('Skipping invalid saved bookmark: $error');
@@ -3059,7 +3075,14 @@ class _PlayerPageState extends State<PlayerPage>
             for (final value in decodedQueue) {
               try {
                 if (value is Map) {
-                  _queue.add(Track.fromJson(Map<String, dynamic>.from(value)));
+                  final track = Track.fromJson(
+                    Map<String, dynamic>.from(value),
+                  );
+                  if (_queue.every(
+                    (item) => item.identityKey != track.identityKey,
+                  )) {
+                    _queue.add(track);
+                  }
                 }
               } on Object catch (error) {
                 debugPrint('Skipping invalid saved queue track: $error');
@@ -3071,7 +3094,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
       } else {
         _queue.addAll(
-          saved.map((path) {
+          saved.where((path) => path.trim().isNotEmpty).toSet().map((path) {
             return _library.firstWhere(
               (track) => track.path == path,
               orElse: () =>
@@ -3080,7 +3103,9 @@ class _PlayerPageState extends State<PlayerPage>
           }),
         );
       }
-      _playHistory.addAll(savedPlayHistory);
+      _playHistory.addAll(
+        savedPlayHistory.where((path) => path.trim().isNotEmpty).toSet(),
+      );
       if (savedResumePositions != null) {
         try {
           final decoded = jsonDecode(savedResumePositions);
@@ -3096,8 +3121,12 @@ class _PlayerPageState extends State<PlayerPage>
           debugPrint('Ignoring invalid saved resume positions: $error');
         }
       }
-      _libraryFolders.addAll(savedFolders);
-      _podcastFeeds.addAll(savedPodcastFeeds);
+      _libraryFolders.addAll(
+        savedFolders.where((folder) => folder.trim().isNotEmpty).toSet(),
+      );
+      _podcastFeeds.addAll(
+        savedPodcastFeeds.where((feed) => feed.trim().isNotEmpty).toSet(),
+      );
       if (savedPlaylists != null) {
         try {
           final decoded = jsonDecode(savedPlaylists);
