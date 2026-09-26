@@ -325,7 +325,9 @@ class MainActivity : AudioServiceActivity() {
                     val isDirectory = mimeType == DocumentsContract.Document.MIME_TYPE_DIR ||
                         mimeType == "application/vnd.google-apps.folder" ||
                         (extension.isEmpty() &&
-                            (flags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong()) != 0L)
+                            ((flags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong()) != 0L ||
+                                (mimeType.isEmpty() || mimeType == "application/octet-stream") &&
+                                    hasChildDocuments(treeUri, documentId)))
                     if (isDirectory) {
                         pending.add(documentId)
                         continue
@@ -404,6 +406,17 @@ class MainActivity : AudioServiceActivity() {
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
+
+    private fun hasChildDocuments(treeUri: Uri, documentId: String): Boolean {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, documentId)
+        return contentResolver.query(
+            childrenUri,
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+            null,
+            null,
+            null,
+        )?.use { cursor -> cursor.moveToFirst() } == true
+    }
 
     private fun writeFileToSafFolder(treeUri: Uri, source: File, fileName: String) {
         if (!source.isFile) throw IllegalArgumentException("The source audio file is unavailable.")
