@@ -2085,10 +2085,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   Future<void> setPlaybackSpeed(double speed) async {
     if (_closed) return;
-    final generation = ++_commandGeneration;
     _playbackSpeed = normalizePlaybackSpeed(speed);
     await player.setPlaybackRate(_playbackSpeed);
-    if (_closed || generation != _commandGeneration) return;
+    if (_closed) return;
     _broadcast();
   }
 
