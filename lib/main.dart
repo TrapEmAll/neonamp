@@ -2840,9 +2840,12 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _playCurrent() async {
     if (_current == null) return;
+    final identity = _current!.identityKey;
     if (_casting) {
       await _dlnaCast.resume();
-      if (mounted) setState(() => _playerState = PlayerState.playing);
+      if (mounted && identity == _current?.identityKey) {
+        setState(() => _playerState = PlayerState.playing);
+      }
       return;
     }
     if (_playerState == PlayerState.stopped ||
@@ -2860,9 +2863,12 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _pauseCurrent() async {
+    final identity = _current?.identityKey;
     if (_casting) {
       await _dlnaCast.pause();
-      if (mounted) setState(() => _playerState = PlayerState.paused);
+      if (mounted && identity == _current?.identityKey) {
+        setState(() => _playerState = PlayerState.paused);
+      }
       return;
     }
     if (_midiActive) {
@@ -2875,19 +2881,22 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _stopCurrent() async {
+    final identity = _current?.identityKey;
     if (_casting) {
       _castPositionTimer?.cancel();
       await _dlnaCast.stop();
-      if (mounted) {
+      if (mounted && identity == _current?.identityKey) {
         setState(() {
           _playerState = PlayerState.stopped;
           _position = Duration.zero;
         });
       }
-      _audioHandler?.syncExternalState(
-        position: Duration.zero,
-        state: PlayerState.stopped,
-      );
+      if (identity == _current?.identityKey) {
+        _audioHandler?.syncExternalState(
+          position: Duration.zero,
+          state: PlayerState.stopped,
+        );
+      }
       return;
     }
     if (_midiActive) {
@@ -2897,10 +2906,13 @@ class _PlayerPageState extends State<PlayerPage>
     } else {
       await _player.stop();
     }
-    if (mounted) setState(() => _position = Duration.zero);
+    if (mounted && identity == _current?.identityKey) {
+      setState(() => _position = Duration.zero);
+    }
   }
 
   Future<void> _seekCurrent(Duration position) async {
+    final identity = _current?.identityKey;
     final clampedPosition = seekByOffset(
       position: Duration.zero,
       duration: _duration,
@@ -2908,7 +2920,9 @@ class _PlayerPageState extends State<PlayerPage>
     );
     if (_casting) {
       await _dlnaCast.seek(clampedPosition);
-      if (mounted) setState(() => _position = clampedPosition);
+      if (mounted && identity == _current?.identityKey) {
+        setState(() => _position = clampedPosition);
+      }
       return;
     }
     final sourcePosition = _current == null
@@ -2939,9 +2953,10 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     final value = normalizePlaybackSpeed(speed);
+    final identity = _current?.identityKey;
     if (!mounted) return;
     setState(() => _playbackSpeed = value);
-    if (_current != null) {
+    if (identity != null && identity == _current?.identityKey) {
       if (_dspActive) {
         await _dspPlayer.setPlaybackSpeed(value);
       } else if (_midiActive) {
@@ -2951,13 +2966,14 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await _audioHandler?.setPlaybackSpeed(value);
     }
-    await _saveQueue();
+    if (identity == _current?.identityKey) await _saveQueue();
   }
 
   Future<void> _setEqualizerEnabled(bool enabled) async {
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
     final current = _current;
+    final identity = current?.identityKey;
     final needsLocalDsp =
         current != null &&
         !isRemoteMediaPath(current.path) &&
@@ -2966,10 +2982,12 @@ class _PlayerPageState extends State<PlayerPage>
     setState(() => _equalizerEnabled = enabled);
     if (current != null && (wasPlaying || _dspActive || needsLocalDsp)) {
       await _select(_selected);
-      if (previousPosition > Duration.zero) {
-        await _seekCurrent(previousPosition);
+      if (mounted && identity == _current?.identityKey) {
+        if (previousPosition > Duration.zero) {
+          await _seekCurrent(previousPosition);
+        }
+        if (!wasPlaying) await _pauseCurrent();
       }
-      if (!wasPlaying) await _pauseCurrent();
     }
     await _saveQueue();
     unawaited(_syncWindowsMediaSession());
@@ -2978,14 +2996,17 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _setReplayGainEnabled(bool enabled) async {
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
+    final identity = _current?.identityKey;
     if (!mounted) return;
     setState(() => _replayGainEnabled = enabled);
     if (_current != null && (wasPlaying || _dspActive)) {
       await _select(_selected);
-      if (previousPosition > Duration.zero) {
-        await _seekCurrent(previousPosition);
+      if (mounted && identity == _current?.identityKey) {
+        if (previousPosition > Duration.zero) {
+          await _seekCurrent(previousPosition);
+        }
+        if (!wasPlaying) await _pauseCurrent();
       }
-      if (!wasPlaying) await _pauseCurrent();
     }
     await _saveQueue();
   }
