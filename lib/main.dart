@@ -3619,6 +3619,9 @@ class _PlayerPageState extends State<PlayerPage>
               ((settings['crossfadeSeconds'] as num?)?.toInt() ?? 3)
                   .clamp(1, 12)
                   .toInt();
+          _shuffle = settings['shuffle'] as bool? ?? false;
+          _repeat = settings['repeat'] as bool? ?? false;
+          _repeatOne = settings['repeatOne'] as bool? ?? false;
           _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
           _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
           _playbackSpeed = normalizePlaybackSpeed(
@@ -3779,6 +3782,9 @@ class _PlayerPageState extends State<PlayerPage>
     final settings = <String, dynamic>{
       'volume': _volume,
       'balance': _balance,
+      'shuffle': _shuffle,
+      'repeat': _repeat,
+      'repeatOne': _repeatOne,
       'crossfade': _crossfade,
       'crossfadeSeconds': _crossfadeSeconds,
       'equalizerEnabled': _equalizerEnabled,
@@ -8069,23 +8075,29 @@ class _PlayerPageState extends State<PlayerPage>
       case 'shuffle':
         return IconButton(
           tooltip: playerControlLabels[control],
-          onPressed: () => setState(() => _shuffle = !_shuffle),
+          onPressed: () {
+            setState(() => _shuffle = !_shuffle);
+            _saveQueueSafely();
+          },
           icon: const Icon(Icons.shuffle_rounded),
           color: _shuffle ? selectedColor : Colors.white38,
         );
       case 'repeat':
         return IconButton(
           tooltip: playerControlLabels[control],
-          onPressed: () => setState(() {
-            if (!_repeat && !_repeatOne) {
-              _repeat = true;
-            } else if (_repeat) {
-              _repeat = false;
-              _repeatOne = true;
-            } else {
-              _repeatOne = false;
-            }
-          }),
+          onPressed: () {
+            setState(() {
+              if (!_repeat && !_repeatOne) {
+                _repeat = true;
+              } else if (_repeat) {
+                _repeat = false;
+                _repeatOne = true;
+              } else {
+                _repeatOne = false;
+              }
+            });
+            _saveQueueSafely();
+          },
           icon: Icon(
             _repeatOne ? Icons.repeat_one_rounded : Icons.repeat_rounded,
           ),
@@ -9633,6 +9645,7 @@ class _PlayerPageState extends State<PlayerPage>
                               );
                             }
                           },
+                    onChangeEnd: (_) => _saveQueueSafely(),
                     activeColor: Colors.white70,
                     inactiveColor: Colors.white12,
                   ),
@@ -9652,7 +9665,10 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               if (MediaQuery.sizeOf(context).width >= 600)
                 IconButton(
-                  onPressed: () => setState(() => _shuffle = !_shuffle),
+                  onPressed: () {
+                    setState(() => _shuffle = !_shuffle);
+                    _saveQueueSafely();
+                  },
                   icon: const Icon(Icons.shuffle_rounded),
                   color: _shuffle ? const Color(0xffef4bff) : Colors.white38,
                 ),
@@ -9685,16 +9701,19 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               if (MediaQuery.sizeOf(context).width >= 600) ...[
                 IconButton(
-                  onPressed: () => setState(() {
-                    if (!_repeat && !_repeatOne) {
-                      _repeat = true;
-                    } else if (_repeat) {
-                      _repeat = false;
-                      _repeatOne = true;
-                    } else {
-                      _repeatOne = false;
-                    }
-                  }),
+                  onPressed: () {
+                    setState(() {
+                      if (!_repeat && !_repeatOne) {
+                        _repeat = true;
+                      } else if (_repeat) {
+                        _repeat = false;
+                        _repeatOne = true;
+                      } else {
+                        _repeatOne = false;
+                      }
+                    });
+                    _saveQueueSafely();
+                  },
                   icon: Icon(
                     _repeatOne
                         ? Icons.repeat_one_rounded
@@ -9735,6 +9754,7 @@ class _PlayerPageState extends State<PlayerPage>
                               );
                             }
                           },
+                    onChangeEnd: (_) => _saveQueueSafely(),
                     activeColor: Colors.white70,
                     inactiveColor: Colors.white12,
                   ),
