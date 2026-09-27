@@ -4173,7 +4173,8 @@ class _PlayerPageState extends State<PlayerPage>
         .where((track) => missingPathKeys.contains(trackPathKey(track.path)))
         .map((track) => track.identityKey)
         .toSet();
-    if (missingIdentities.contains(_current?.identityKey)) {
+    final removingCurrent = missingIdentities.contains(_current?.identityKey);
+    if (removingCurrent) {
       await _stopCurrent();
       if (!mounted) return missingPathKeys.length;
     }
@@ -4208,6 +4209,7 @@ class _PlayerPageState extends State<PlayerPage>
             !_library.any((track) => track.identityKey == identity),
       );
     });
+    if (removingCurrent) _audioHandler?.clearTrack();
     return missingPathKeys.length;
   }
 

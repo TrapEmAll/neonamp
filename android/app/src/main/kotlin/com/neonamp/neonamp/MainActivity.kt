@@ -447,16 +447,13 @@ class MainActivity : AudioServiceActivity() {
     @Synchronized
     private fun materializeContentUri(sourceUri: Uri, displayName: String): String {
         val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
-        val extension = displayName.substringAfterLast('.', "")
-            .lowercase(Locale.ROOT)
-            .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
-            ?: "bin"
-        val cachedFile = File(cacheDirectory, "${sha256(sourceUri.toString())}.$extension")
         var sourceSize = -1L
         var sourceModified = -1L
+        var sourceDisplayName = displayName
         contentResolver.query(
             sourceUri,
             arrayOf(
+                OpenableColumns.DISPLAY_NAME,
                 OpenableColumns.SIZE,
                 DocumentsContract.Document.COLUMN_LAST_MODIFIED,
             ),
@@ -464,8 +461,14 @@ class MainActivity : AudioServiceActivity() {
             null,
             null,
         )?.use { cursor ->
+            val displayNameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
             if (!cursor.moveToFirst()) return@use
+            if (displayNameColumn >= 0 && !cursor.isNull(displayNameColumn)) {
+                cursor.getString(displayNameColumn)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                    sourceDisplayName = it
+                }
+            }
             if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) {
                 sourceSize = cursor.getLong(sizeColumn)
             }
@@ -476,6 +479,11 @@ class MainActivity : AudioServiceActivity() {
                 sourceModified = cursor.getLong(modifiedColumn)
             }
         }
+        val extension = sourceDisplayName.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
+            ?: "bin"
+        val cachedFile = File(cacheDirectory, "${sha256(sourceUri.toString())}.$extension")
         val hasFreshnessMetadata = sourceSize >= 0 || sourceModified > 0
         val cacheMatchesSource = hasFreshnessMetadata &&
             (sourceSize < 0 || cachedFile.length() == sourceSize) &&
