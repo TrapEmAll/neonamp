@@ -441,6 +441,13 @@ class DlnaCast {
     await stop();
     _discoverer?.dispose();
     _discoverer = null;
+    if (Platform.isAndroid) {
+      try {
+        await _androidChannel.invokeMethod<void>('endDiscovery');
+      } on Object {
+        // The Android activity may already be shutting down.
+      }
+    }
   }
 
   Future<void> _closeServer() async {
