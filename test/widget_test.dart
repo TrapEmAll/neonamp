@@ -651,6 +651,25 @@ FILE "disc image.flac" WAVE
     expect(trackForStoredKey([segment], legacyKey), same(segment));
   });
 
+  test('stored track keys expose their source path for cleanup', () {
+    final physicalPath = File('music${Platform.pathSeparator}disc.flac')
+        .absolute
+        .path;
+    final cueKey = jsonEncode([
+      Uri.file(physicalPath).toString(),
+      0,
+      180000,
+      1,
+    ]);
+
+    expect(storedTrackKeyMatchesPath(cueKey, physicalPath), isTrue);
+    expect(storedTrackKeyMatchesPath(physicalPath, physicalPath), isTrue);
+    expect(
+      storedTrackKeyMatchesPath(cueKey, '${physicalPath}.missing'),
+      isFalse,
+    );
+  });
+
   test('playlist keys resolve the requested CUE segment', () {
     final opening = Track(
       path: '/music/disc.flac',

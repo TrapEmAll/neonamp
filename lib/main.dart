@@ -1793,13 +1793,31 @@ String _cueTrackIdentityKey(
   int? trackNumber,
 ) => jsonEncode([path, cueStartMs, cueEndMs, trackNumber]);
 
+bool storedTrackKeyMatchesPath(String key, String path) {
+  if (sameTrackPath(key, path)) return true;
+  try {
+    final decoded = jsonDecode(key);
+    return decoded is List &&
+        decoded.isNotEmpty &&
+        decoded.first is String &&
+        sameTrackPath(decoded.first as String, path);
+  } on Object {
+    return false;
+  }
+}
+
 bool sameStoredTrackIdentity(Track track, String key) {
-  if (track.identityKey == key || sameTrackPath(track.path, key)) return true;
+  if (track.identityKey == key ||
+      (track.cueStartMs == null && sameTrackPath(track.path, key))) {
+    return true;
+  }
   try {
     final decoded = jsonDecode(key);
     if (decoded is! List || decoded.length < 4) return false;
     final path = decoded[0];
-    if (path is! String || !sameTrackPath(track.path, path)) return false;
+    if (path is! String || !sameTrackPath(track.path, path)) {
+      return false;
+    }
     final cueStartMs = (decoded[1] as num?)?.toInt();
     final cueEndMs = (decoded[2] as num?)?.toInt();
     final trackNumber = (decoded[3] as num?)?.toInt();
@@ -4265,7 +4283,9 @@ class _PlayerPageState extends State<PlayerPage>
       );
       _playHistory.removeWhere(missingIdentities.contains);
       _resumePositions.removeWhere(
-        (identity, _) => missingIdentities.contains(identity),
+        (identity, _) => missingPathKeys.any(
+          (path) => storedTrackKeyMatchesPath(identity, path),
+        ),
       );
       for (final entry in _playlists.entries) {
         entry.value.removeWhere(missingIdentities.contains);
