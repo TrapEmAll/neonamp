@@ -582,6 +582,7 @@ FILE "disc image.flac" WAVE
 
     expect(sameTrackIdentity(local, uri), isTrue);
     expect(mergeTracksByIdentity([local], [uri]), hasLength(1));
+    expect(mergeTracksByIdentity([local, uri], const []), hasLength(1));
   });
 
   test('same non-CUE path remains one identity after metadata changes', () {

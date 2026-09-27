@@ -1732,9 +1732,9 @@ List<Track> mergeTracksByIdentity(
   List<Track> existing,
   Iterable<Track> additions,
 ) {
-  final merged = List<Track>.of(existing);
-  final identities = merged.map(trackIdentityKey).toSet();
-  for (final track in additions) {
+  final merged = <Track>[];
+  final identities = <String>{};
+  for (final track in [...existing, ...additions]) {
     if (identities.add(trackIdentityKey(track))) {
       merged.add(track);
     }
