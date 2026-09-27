@@ -3725,6 +3725,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
       }
     });
+    _audioHandler?.syncQueue(_queue);
     _armSleepTimer();
   }
 
