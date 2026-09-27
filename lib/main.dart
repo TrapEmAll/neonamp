@@ -3207,7 +3207,9 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await _audioHandler?.setPlaybackSpeed(value);
     }
-    if (!mounted || identity != _current?.identityKey) return;
+    if (!mounted) return;
+    // Persist the setting even when no track is loaded or the selected track
+    // changed while the player was applying the new rate.
     await _saveQueue();
   }
 
