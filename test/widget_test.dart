@@ -1395,6 +1395,8 @@ FILE "disc image.flac" WAVE
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
     expect(isSupportedLibraryAudioPath('track.wma'), isTrue);
+    expect(isSupportedLibraryAudioPath('track.wave'), isTrue);
+    expect(isSupportedLibraryAudioPath('track.oga'), isTrue);
     expect(isAsfAudioPath('track.WMA'), isTrue);
     expect(isSupportedLibraryAudioPath('cover.jpg'), isFalse);
   });
