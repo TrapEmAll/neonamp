@@ -5496,6 +5496,7 @@ class _PlayerPageState extends State<PlayerPage>
         // Provider-backed selections that cannot be materialized are skipped.
       }
     }
+    if (!mounted) return;
     if (files.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No playable video files were selected.')),
