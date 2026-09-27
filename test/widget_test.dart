@@ -756,6 +756,10 @@ FILE "disc image.flac" WAVE
       storedDoubles({'eqBands': [1, -2.5]}, 'eqBands', 2),
       [1.0, -2.5],
     );
+    expect(
+      storedDoubles({'eqBands': [20, -20]}, 'eqBands', 2),
+      [12.0, -12.0],
+    );
   });
 
   test('remote media detection accepts mixed-case HTTP URLs only', () {

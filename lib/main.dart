@@ -182,7 +182,7 @@ List<double>? storedDoubles(
   final numbers = <double>[];
   for (final item in value) {
     if (item is! num || !item.isFinite) return null;
-    numbers.add(item.toDouble());
+    numbers.add(item.toDouble().clamp(-12.0, 12.0).toDouble());
   }
   return numbers;
 }
