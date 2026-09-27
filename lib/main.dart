@@ -50,7 +50,7 @@ int wrappedVideoIndex(int index, int length) {
 
 bool isVorbisAudioPath(String path) {
   final extension = path.split('.').last.toLowerCase();
-  return extension == 'ogg' || extension == 'opus';
+  return extension == 'ogg' || extension == 'oga' || extension == 'opus';
 }
 
 bool isAiffAudioPath(String path) {
@@ -58,7 +58,10 @@ bool isAiffAudioPath(String path) {
   return extension == 'aif' || extension == 'aiff' || extension == 'aifc';
 }
 
-bool isWavAudioPath(String path) => path.split('.').last.toLowerCase() == 'wav';
+bool isWavAudioPath(String path) {
+  final extension = path.split('.').last.toLowerCase();
+  return extension == 'wav' || extension == 'wave';
+}
 
 bool isAacAudioPath(String path) => path.split('.').last.toLowerCase() == 'aac';
 

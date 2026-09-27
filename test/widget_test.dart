@@ -1390,6 +1390,8 @@ FILE "disc image.flac" WAVE
 
   test('folder scans recognize the metadata reader audio formats', () {
     expect(isAacAudioPath('music/track.AAC'), isTrue);
+    expect(isWavAudioPath('music/track.WAVE'), isTrue);
+    expect(isVorbisAudioPath('music/track.OGA'), isTrue);
     expect(isMatroskaAudioPath('music/track.mka'), isTrue);
     expect(isSupportedLibraryAudioPath('recording.mka'), isTrue);
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
