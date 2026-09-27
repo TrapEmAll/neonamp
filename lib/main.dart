@@ -1713,6 +1713,29 @@ Set<String> trackIdentitiesForPaths(
     .map((track) => track.identityKey)
     .toSet();
 
+int selectedQueueIndexAfterRemoval(
+  List<Track> queue,
+  int selected,
+  Set<String> removedIdentities,
+) {
+  final remaining = queue
+      .where((track) => !removedIdentities.contains(track.identityKey))
+      .toList();
+  if (remaining.isEmpty) return 0;
+  if (selected >= 0 && selected < queue.length) {
+    final selectedIdentity = queue[selected].identityKey;
+    if (!removedIdentities.contains(selectedIdentity)) {
+      final preservedIndex = remaining.indexWhere(
+        (track) => track.identityKey == selectedIdentity,
+      );
+      if (preservedIndex >= 0) return preservedIndex;
+    }
+  }
+  if (selected <= 0) return 0;
+  final lastIndex = remaining.length - 1;
+  return selected > lastIndex ? lastIndex : selected;
+}
+
 Track trackForStoredKey(List<Track> library, String key) {
   for (final track in library) {
     if (track.identityKey == key) return track;
@@ -4051,11 +4074,17 @@ class _PlayerPageState extends State<PlayerPage>
       await _stopCurrent();
       if (!mounted) return missingPaths.length;
     }
+    final nextSelected = selectedQueueIndexAfterRemoval(
+      _queue,
+      _selected,
+      missingIdentities,
+    );
     setState(() {
       _library.removeWhere((track) => missingPaths.contains(track.path));
       _queue.removeWhere(
         (track) => missingIdentities.contains(track.identityKey),
       );
+      _selected = nextSelected;
       _bookmarks.removeWhere(
         (track) => missingIdentities.contains(track.identityKey),
       );

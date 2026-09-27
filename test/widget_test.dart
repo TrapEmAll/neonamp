@@ -520,6 +520,29 @@ FILE "disc image.flac" WAVE
     );
   });
 
+  test('queue selection follows its track when missing entries are removed', () {
+    final first = Track(path: '/music/first.mp3', name: 'First');
+    final second = Track(path: '/music/second.mp3', name: 'Second');
+    final third = Track(path: '/music/third.mp3', name: 'Third');
+
+    expect(
+      selectedQueueIndexAfterRemoval(
+        [first, second, third],
+        2,
+        {first.identityKey},
+      ),
+      1,
+    );
+    expect(
+      selectedQueueIndexAfterRemoval(
+        [first, second, third],
+        1,
+        {second.identityKey},
+      ),
+      1,
+    );
+  });
+
   test('playlist keys resolve the requested CUE segment', () {
     final opening = Track(
       path: '/music/disc.flac',
