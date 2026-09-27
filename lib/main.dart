@@ -1705,6 +1705,14 @@ List<Track> mergeTracksByIdentity(
   return merged;
 }
 
+Set<String> trackIdentitiesForPaths(
+  Iterable<Track> tracks,
+  Set<String> paths,
+) => tracks
+    .where((track) => paths.contains(track.path))
+    .map((track) => track.identityKey)
+    .toSet();
+
 Track trackForStoredKey(List<Track> library, String key) {
   for (final track in library) {
     if (track.identityKey == key) return track;
@@ -4017,10 +4025,10 @@ class _PlayerPageState extends State<PlayerPage>
     return added;
   }
 
-  int _pruneMissingFilesystemTracks(
+  Future<int> _pruneMissingFilesystemTracks(
     Set<String> scannedRoots,
     Set<String> discoveredPaths,
-  ) {
+  ) async {
     if (scannedRoots.isEmpty) return 0;
     final missingPaths = _library
         .where((track) {
@@ -4038,8 +4046,26 @@ class _PlayerPageState extends State<PlayerPage>
         .map((track) => track.path)
         .toSet();
     if (missingPaths.isEmpty) return 0;
+    final missingIdentities = trackIdentitiesForPaths(_library, missingPaths);
+    if (missingIdentities.contains(_current?.identityKey)) {
+      await _stopCurrent();
+      if (!mounted) return missingPaths.length;
+    }
     setState(() {
       _library.removeWhere((track) => missingPaths.contains(track.path));
+      _queue.removeWhere(
+        (track) => missingIdentities.contains(track.identityKey),
+      );
+      _bookmarks.removeWhere(
+        (track) => missingIdentities.contains(track.identityKey),
+      );
+      _playHistory.removeWhere(missingIdentities.contains);
+      _resumePositions.removeWhere(
+        (identity, _) => missingIdentities.contains(identity),
+      );
+      for (final entry in _playlists.entries) {
+        entry.value.removeWhere(missingIdentities.contains);
+      }
       _libraryRelativePaths.removeWhere(
         (path, _) => missingPaths.contains(path),
       );
@@ -4124,7 +4150,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted || operation != _libraryOperationGeneration) return;
     final removedMissing = Platform.isAndroid
         ? 0
-        : _pruneMissingFilesystemTracks(
+        : await _pruneMissingFilesystemTracks(
             scannedFilesystemRoots,
             discoveredFilesystemPaths,
           );

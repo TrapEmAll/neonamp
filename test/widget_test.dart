@@ -497,6 +497,29 @@ FILE "disc image.flac" WAVE
     expect(merged.map((track) => track.name), ['Opening', 'Second Track']);
   });
 
+  test('missing shared sources identify every CUE segment for cleanup', () {
+    final opening = Track(
+      path: '/music/disc.flac',
+      name: 'Opening',
+      cueStartMs: 0,
+      cueEndMs: 180000,
+      trackNumber: 1,
+    );
+    final second = Track(
+      path: '/music/disc.flac',
+      name: 'Second Track',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+    );
+    final other = Track(path: '/music/other.flac', name: 'Other');
+
+    expect(
+      trackIdentitiesForPaths([opening, second, other], {'/music/disc.flac'}),
+      {opening.identityKey, second.identityKey},
+    );
+  });
+
   test('playlist keys resolve the requested CUE segment', () {
     final opening = Track(
       path: '/music/disc.flac',
