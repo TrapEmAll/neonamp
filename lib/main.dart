@@ -1859,6 +1859,11 @@ Track trackForStoredKey(List<Track> library, String key) {
   }
   // Playlist files written by older versions used physical paths. Keep those
   // entries playable, while preferring canonical identity keys for new ones.
+  // A plain source path can refer to a CUE-backed album; preserve the legacy
+  // behavior of resolving it to the first segment in that source.
+  for (final track in library) {
+    if (sameTrackPath(track.path, key)) return track;
+  }
   return Track(
     path: key,
     name: key.split(RegExp(r'[/\\]')).last,
