@@ -157,6 +157,26 @@ double normalizeStereoBalance(double balance) => balance.clamp(-1.0, 1.0);
 double normalizePlaybackSpeed(double speed) =>
     speed.isFinite ? speed.clamp(0.5, 2.0).toDouble() : 1.0;
 
+bool storedBool(Map<String, dynamic> settings, String key, bool fallback) {
+  final value = settings[key];
+  return value is bool ? value : fallback;
+}
+
+double storedDouble(Map<String, dynamic> settings, String key, double fallback) {
+  final value = settings[key];
+  return value is num ? value.toDouble() : fallback;
+}
+
+int storedInt(Map<String, dynamic> settings, String key, int fallback) {
+  final value = settings[key];
+  return value is num ? value.toInt() : fallback;
+}
+
+String storedString(Map<String, dynamic> settings, String key, String fallback) {
+  final value = settings[key];
+  return value is String ? value : fallback;
+}
+
 String stereoBalanceLabel(double balance) {
   final normalized = normalizeStereoBalance(balance);
   if (normalized == 0) return 'Center';
@@ -3608,33 +3628,45 @@ class _PlayerPageState extends State<PlayerPage>
               ),
             );
           }
-          _volume = ((settings['volume'] as num?)?.toDouble() ?? _volume)
+          _volume = storedDouble(settings, 'volume', _volume)
               .clamp(0.0, 1.0)
               .toDouble();
           _balance = normalizeStereoBalance(
-            (settings['balance'] as num?)?.toDouble() ?? _balance,
+            storedDouble(settings, 'balance', _balance),
           );
-          _crossfade = settings['crossfade'] as bool? ?? false;
-          _crossfadeSeconds =
-              ((settings['crossfadeSeconds'] as num?)?.toInt() ?? 3)
-                  .clamp(1, 12)
-                  .toInt();
-          _shuffle = settings['shuffle'] as bool? ?? false;
-          _repeat = settings['repeat'] as bool? ?? false;
-          _repeatOne = settings['repeatOne'] as bool? ?? false;
-          _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
-          _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+          _crossfade = storedBool(settings, 'crossfade', false);
+          _crossfadeSeconds = storedInt(settings, 'crossfadeSeconds', 3)
+              .clamp(1, 12)
+              .toInt();
+          _shuffle = storedBool(settings, 'shuffle', false);
+          _repeat = storedBool(settings, 'repeat', false);
+          _repeatOne = storedBool(settings, 'repeatOne', false);
+          _equalizerEnabled = storedBool(
+            settings,
+            'equalizerEnabled',
+            false,
+          );
+          _eqPreset = storedString(settings, 'eqPreset', 'Flat');
           _playbackSpeed = normalizePlaybackSpeed(
-            (settings['playbackSpeed'] as num?)?.toDouble() ?? 1.0,
+            storedDouble(settings, 'playbackSpeed', 1.0),
           );
-          _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
-          final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
+          _replayGainEnabled = storedBool(
+            settings,
+            'replayGainEnabled',
+            false,
+          );
+          final sleepTimerEnd = settings['sleepTimerEndMs'] is num
+              ? (settings['sleepTimerEndMs'] as num).toInt()
+              : null;
           _sleepDeadline = sleepTimerEnd == null
               ? null
               : DateTime.fromMillisecondsSinceEpoch(sleepTimerEnd);
-          _librarySort = settings['librarySort'] as String? ?? 'Added';
-          _librarySortDescending =
-              settings['librarySortDescending'] as bool? ?? false;
+          _librarySort = storedString(settings, 'librarySort', 'Added');
+          _librarySortDescending = storedBool(
+            settings,
+            'librarySortDescending',
+            false,
+          );
           final savedPlayerControls = settings['playerControls'];
           if (savedPlayerControls is List) {
             _playerControls = normalizePlayerControls(savedPlayerControls);

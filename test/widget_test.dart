@@ -741,6 +741,18 @@ FILE "disc image.flac" WAVE
     expect(normalizePlaybackSpeed(double.infinity), 1.0);
   });
 
+  test('malformed persisted settings fall back per field', () {
+    final settings = <String, dynamic>{
+      'volume': 0.6,
+      'shuffle': 'yes',
+      'eqPreset': 'Rock',
+    };
+    expect(storedDouble(settings, 'volume', 0.82), 0.6);
+    expect(storedBool(settings, 'shuffle', false), isFalse);
+    expect(storedString(settings, 'eqPreset', 'Flat'), 'Rock');
+    expect(storedInt(settings, 'missing', 3), 3);
+  });
+
   test('remote media detection accepts mixed-case HTTP URLs only', () {
     expect(isRemoteMediaPath('HTTP://example.test/song.mp3'), isTrue);
     expect(isRemoteMediaPath('https://example.test/song.mp3'), isTrue);
