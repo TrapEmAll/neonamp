@@ -4042,6 +4042,7 @@ class _PlayerPageState extends State<PlayerPage>
     final queueWasEmpty = _queue.isEmpty;
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
+      allowMultiple: true,
       allowedExtensions: [
         'mp3',
         'flac',
@@ -4641,6 +4642,7 @@ class _PlayerPageState extends State<PlayerPage>
     final operation = ++_libraryOperationGeneration;
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
+      allowMultiple: true,
       dialogTitle: 'Select a CUE sheet and its audio file(s)',
       allowedExtensions: [
         'cue',
