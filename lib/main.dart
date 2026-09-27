@@ -2284,6 +2284,15 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _broadcast(position: Duration.zero);
   }
 
+  void clearTrack() {
+    if (_closed) return;
+    _trackStart = Duration.zero;
+    _trackEnd = null;
+    _lastPosition = Duration.zero;
+    mediaItem.add(null);
+    _broadcast(position: Duration.zero, state: PlayerState.stopped);
+  }
+
   Duration _relativePosition(Duration source) {
     final relative = source - _trackStart;
     return relative.isNegative ? Duration.zero : relative;
@@ -5140,6 +5149,9 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _resumePositions.remove(removedIdentity);
+    if (removingCurrent) {
+      _audioHandler?.clearTrack();
+    }
     if (operation == _queueOperationGeneration) await _saveQueue();
   }
 
@@ -5217,6 +5229,7 @@ class _PlayerPageState extends State<PlayerPage>
       _playerState = PlayerState.stopped;
       _resumePositions.clear();
     });
+    _audioHandler?.clearTrack();
     if (operation == _queueOperationGeneration) await _saveQueue();
   }
 
