@@ -670,6 +670,13 @@ FILE "disc image.flac" WAVE
     );
   });
 
+  test('playback events are accepted only for the active track', () {
+    expect(playbackEventMatchesTrack('track-a', 'track-a'), isTrue);
+    expect(playbackEventMatchesTrack('track-a', 'track-b'), isFalse);
+    expect(playbackEventMatchesTrack(null, 'track-a'), isFalse);
+    expect(playbackEventMatchesTrack('track-a', null), isFalse);
+  });
+
   test('playlist keys resolve the requested CUE segment', () {
     final opening = Track(
       path: '/music/disc.flac',

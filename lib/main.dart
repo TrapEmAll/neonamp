@@ -1786,6 +1786,9 @@ bool sameTrackIdentity(Track first, Track second) {
   return trackIdentityKey(first) == trackIdentityKey(second);
 }
 
+bool playbackEventMatchesTrack(String? eventIdentity, String? trackIdentity) =>
+    eventIdentity != null && trackIdentity != null && eventIdentity == trackIdentity;
+
 String _cueTrackIdentityKey(
   String path,
   int? cueStartMs,
@@ -2677,6 +2680,7 @@ class _PlayerPageState extends State<PlayerPage>
   int _midiStreamGeneration = 0;
   int _libraryOperationGeneration = 0;
   int _queueOperationGeneration = 0;
+  String? _playbackTrackIdentity;
 
   bool get _casting => _dlnaCast.isConnected;
 
@@ -2809,7 +2813,11 @@ class _PlayerPageState extends State<PlayerPage>
     _positionSub = _player.onPositionChanged.listen((value) {
       if (!mounted ||
           generation != _playerStreamGeneration ||
-          _selectionInProgress) {
+          _selectionInProgress ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
         return;
       }
       final track = _current;
@@ -2834,13 +2842,27 @@ class _PlayerPageState extends State<PlayerPage>
       }
     });
     _durationSub = _player.onDurationChanged.listen((value) {
-      if (!mounted || generation != _playerStreamGeneration) return;
+      if (!mounted ||
+          generation != _playerStreamGeneration ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
+        return;
+      }
       final duration = _cueRelativeDuration(_current, value);
       setState(() => _duration = duration);
       _audioHandler?.syncExternalState(duration: duration, state: _playerState);
     });
     _stateSub = _player.onPlayerStateChanged.listen((value) {
-      if (!mounted || generation != _playerStreamGeneration) return;
+      if (!mounted ||
+          generation != _playerStreamGeneration ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
+        return;
+      }
       setState(() => _playerState = value);
       _runAsyncSafely(
         _syncWindowsMediaSession(),
@@ -2850,6 +2872,10 @@ class _PlayerPageState extends State<PlayerPage>
     _completeSub = _player.onPlayerComplete.listen((_) {
       if (generation == _playerStreamGeneration &&
           mounted &&
+          playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          ) &&
           !_selectionInProgress &&
           !_crossfadeInProgress) {
         _runAsyncSafely(_handleCompletionSafely(), 'Handling track completion');
@@ -2867,7 +2893,11 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted ||
           generation != _dspStreamGeneration ||
           !_dspActive ||
-          _selectionInProgress) {
+          _selectionInProgress ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
         return;
       }
       final track = _current;
@@ -2896,7 +2926,13 @@ class _PlayerPageState extends State<PlayerPage>
       );
     });
     _dspDurationSub = _dspPlayer.onDurationChanged.listen((value) {
-      if (!mounted || generation != _dspStreamGeneration || !_dspActive) {
+      if (!mounted ||
+          generation != _dspStreamGeneration ||
+          !_dspActive ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
         return;
       }
       final duration = _cueRelativeDuration(_current, value);
@@ -2904,7 +2940,13 @@ class _PlayerPageState extends State<PlayerPage>
       _audioHandler?.syncExternalState(duration: duration, state: _playerState);
     });
     _dspStateSub = _dspPlayer.onPlayerStateChanged.listen((value) {
-      if (!mounted || generation != _dspStreamGeneration || !_dspActive) {
+      if (!mounted ||
+          generation != _dspStreamGeneration ||
+          !_dspActive ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
         return;
       }
       setState(() => _playerState = value);
@@ -2918,6 +2960,10 @@ class _PlayerPageState extends State<PlayerPage>
       if (mounted &&
           generation == _dspStreamGeneration &&
           _dspActive &&
+          playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          ) &&
           !_selectionInProgress &&
           !_crossfadeInProgress) {
         _runAsyncSafely(_handleCompletionSafely(), 'Handling DSP completion');
@@ -2935,7 +2981,11 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted ||
           generation != _midiStreamGeneration ||
           !_midiActive ||
-          _selectionInProgress) {
+          _selectionInProgress ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
         return;
       }
       setState(() => _position = value);
@@ -2943,7 +2993,13 @@ class _PlayerPageState extends State<PlayerPage>
       _audioHandler?.syncExternalState(position: value, state: _playerState);
     });
     _midiDurationSub = _midiPlayer.onDurationChanged.listen((value) {
-      if (!mounted || generation != _midiStreamGeneration || !_midiActive) {
+      if (!mounted ||
+          generation != _midiStreamGeneration ||
+          !_midiActive ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
         return;
       }
       setState(() => _duration = value);
@@ -2957,7 +3013,13 @@ class _PlayerPageState extends State<PlayerPage>
       );
     });
     _midiStateSub = _midiPlayer.onPlayerStateChanged.listen((value) {
-      if (!mounted || generation != _midiStreamGeneration || !_midiActive) {
+      if (!mounted ||
+          generation != _midiStreamGeneration ||
+          !_midiActive ||
+          !playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          )) {
         return;
       }
       setState(() => _playerState = value);
@@ -2971,6 +3033,10 @@ class _PlayerPageState extends State<PlayerPage>
       if (mounted &&
           generation == _midiStreamGeneration &&
           _midiActive &&
+          playbackEventMatchesTrack(
+            _playbackTrackIdentity,
+            _current?.identityKey,
+          ) &&
           !_selectionInProgress &&
           !_crossfadeInProgress) {
         _runAsyncSafely(_handleCompletionSafely(), 'Handling MIDI completion');
@@ -3244,6 +3310,7 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _stopCurrent() async {
     final identity = _current?.identityKey;
+    _playbackTrackIdentity = null;
     if (_casting) {
       _castPositionTimer?.cancel();
       await _dlnaCast.stop();
@@ -4819,6 +4886,7 @@ class _PlayerPageState extends State<PlayerPage>
         _cueTransitioning = false;
       });
       final track = _queue[index];
+      _playbackTrackIdentity = track.identityKey;
       // Selecting a track explicitly is a user request to start that track.
       // Persisted positions are only playback bookkeeping and must not make a
       // later manual selection unexpectedly resume in the middle.
@@ -4911,6 +4979,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || operation != _queueOperationGeneration) return;
     } on Object catch (error) {
       if (!mounted || operation != _queueOperationGeneration) return;
+      _playbackTrackIdentity = null;
       _midiActive = false;
       _dspActive = false;
       setState(() {
@@ -5069,6 +5138,7 @@ class _PlayerPageState extends State<PlayerPage>
         _queue[next] = updatedTrack;
       });
       _activePlayer = incomingPlayer;
+      _playbackTrackIdentity = track.identityKey;
       promoted = true;
       _bindPlayerStreams();
       await _audioHandler?.switchPlayer(incomingPlayer);
@@ -5164,6 +5234,7 @@ class _PlayerPageState extends State<PlayerPage>
         _queue[next] = updatedTrack;
       });
       _dspPlayer = incomingPlayer;
+      _playbackTrackIdentity = track.identityKey;
       promoted = true;
       _bindDspStreams();
       _audioHandler?.publishTrack(track);
