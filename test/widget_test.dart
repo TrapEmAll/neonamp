@@ -1532,6 +1532,27 @@ FILE "disc image.flac" WAVE
     expect(toggleTrackFavorite(toggled, first)[0].favorite, isFalse);
   });
 
+  test('artwork updates preserve virtual CUE metadata', () {
+    final track = Track(
+      path: 'album.flac',
+      name: 'Second',
+      artist: 'Guest Artist',
+      album: 'Cue Album',
+      cueStartMs: 60000,
+      cueEndMs: 120000,
+      trackNumber: 2,
+    );
+
+    final updated = track.copyWith(artwork: Uint8List.fromList([1, 2, 3]));
+
+    expect(updated.name, 'Second');
+    expect(updated.artist, 'Guest Artist');
+    expect(updated.album, 'Cue Album');
+    expect(updated.cueStartMs, 60000);
+    expect(updated.trackNumber, 2);
+    expect(updated.artwork, [1, 2, 3]);
+  });
+
   test('iTunes XML library preserves metadata and named playlists', () {
     final sourceTrack = Track(
       path: 'C:\\Music\\Artist\\Song & Title.mp3',

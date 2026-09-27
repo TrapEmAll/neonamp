@@ -4724,7 +4724,7 @@ class _PlayerPageState extends State<PlayerPage>
           ..addAll(addToPlayHistory(_playHistory, track.identityKey));
         final updatedTrack = track.copyWith(playCount: track.playCount + 1);
         final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
+          (item) => item.identityKey == track.identityKey,
         );
         if (libraryIndex >= 0) {
           _library[libraryIndex] = updatedTrack;
@@ -4807,7 +4807,7 @@ class _PlayerPageState extends State<PlayerPage>
           ..addAll(addToPlayHistory(_playHistory, track.identityKey));
         final updatedTrack = track.copyWith(playCount: track.playCount + 1);
         final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
+          (item) => item.identityKey == track.identityKey,
         );
         if (libraryIndex >= 0) {
           _library[libraryIndex] = updatedTrack;
@@ -6585,14 +6585,19 @@ class _PlayerPageState extends State<PlayerPage>
         });
       }
       if (!mounted) return;
-      final updated = track.copyWith(artwork: bytes);
       setState(() {
-        final libraryIndex = _library.indexWhere(
-          (item) => item.path == track.path,
-        );
-        if (libraryIndex >= 0) _library[libraryIndex] = updated;
+        // Artwork belongs to the shared source file, but CUE metadata belongs
+        // to each virtual segment. Update only the artwork field so replacing
+        // one segment's cover never overwrites its neighboring segments.
+        for (var i = 0; i < _library.length; i++) {
+          if (_library[i].path == track.path) {
+            _library[i] = _library[i].copyWith(artwork: bytes);
+          }
+        }
         for (var i = 0; i < _queue.length; i++) {
-          if (_queue[i].path == track.path) _queue[i] = updated;
+          if (_queue[i].path == track.path) {
+            _queue[i] = _queue[i].copyWith(artwork: bytes);
+          }
         }
       });
       await _saveQueue();
