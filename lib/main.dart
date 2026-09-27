@@ -1774,16 +1774,42 @@ bool sameTrackPath(String first, String second) =>
 String trackIdentityKey(Track track) {
   final path = trackPathKey(track.path);
   if (track.cueStartMs == null) return path;
-  return jsonEncode([
+  return _cueTrackIdentityKey(
     path,
     track.cueStartMs,
     track.cueEndMs,
     track.trackNumber,
-  ]);
+  );
 }
 
 bool sameTrackIdentity(Track first, Track second) {
   return trackIdentityKey(first) == trackIdentityKey(second);
+}
+
+String _cueTrackIdentityKey(
+  String path,
+  int? cueStartMs,
+  int? cueEndMs,
+  int? trackNumber,
+) => jsonEncode([path, cueStartMs, cueEndMs, trackNumber]);
+
+bool sameStoredTrackIdentity(Track track, String key) {
+  if (track.identityKey == key || sameTrackPath(track.path, key)) return true;
+  try {
+    final decoded = jsonDecode(key);
+    if (decoded is! List || decoded.length < 4) return false;
+    final path = decoded[0];
+    if (path is! String || !sameTrackPath(track.path, path)) return false;
+    final cueStartMs = (decoded[1] as num?)?.toInt();
+    final cueEndMs = (decoded[2] as num?)?.toInt();
+    final trackNumber = (decoded[3] as num?)?.toInt();
+    return track.cueStartMs != null &&
+        track.cueStartMs == cueStartMs &&
+        track.cueEndMs == cueEndMs &&
+        track.trackNumber == trackNumber;
+  } on Object {
+    return false;
+  }
 }
 
 int selectedQueueIndexAfterRemoval(
@@ -1811,13 +1837,10 @@ int selectedQueueIndexAfterRemoval(
 
 Track trackForStoredKey(List<Track> library, String key) {
   for (final track in library) {
-    if (track.identityKey == key) return track;
+    if (sameStoredTrackIdentity(track, key)) return track;
   }
   // Playlist files written by older versions used physical paths. Keep those
-  // entries playable, while preferring identityKey for all new entries.
-  for (final track in library) {
-    if (sameTrackPath(track.path, key)) return track;
-  }
+  // entries playable, while preferring canonical identity keys for new ones.
   return Track(
     path: key,
     name: key.split(RegExp(r'[/\\]')).last,
@@ -1906,9 +1929,7 @@ class Track {
   Duration get cueStart => Duration(milliseconds: cueStartMs ?? 0);
   Duration? get cueEnd =>
       cueEndMs == null ? null : Duration(milliseconds: cueEndMs!);
-  String get identityKey => cueStartMs == null
-      ? path
-      : jsonEncode([path, cueStartMs, cueEndMs, trackNumber]);
+  String get identityKey => trackIdentityKey(this);
 
   Track copyWith({
     String? path,
@@ -3589,9 +3610,19 @@ class _PlayerPageState extends State<PlayerPage>
           }),
         );
       }
-      _playHistory.addAll(
-        savedPlayHistory.where((path) => path.trim().isNotEmpty).toSet(),
-      );
+      final restoredTracks = [..._queue, ..._library];
+      Track? restoredTrackForKey(String key) {
+        for (final track in restoredTracks) {
+          if (sameStoredTrackIdentity(track, key)) return track;
+        }
+        return null;
+      }
+      for (final savedKey in savedPlayHistory) {
+        if (savedKey.trim().isEmpty) continue;
+        final restoredTrack = restoredTrackForKey(savedKey);
+        final historyKey = restoredTrack?.identityKey ?? savedKey;
+        if (!_playHistory.contains(historyKey)) _playHistory.add(historyKey);
+      }
       if (savedResumePositions != null) {
         try {
           final decoded = jsonDecode(savedResumePositions);
@@ -3599,7 +3630,10 @@ class _PlayerPageState extends State<PlayerPage>
             for (final entry in decoded.entries) {
               final position = (entry.value as num?)?.toInt();
               if (position != null && position > 0) {
-                _resumePositions[entry.key.toString()] = position;
+                final storedKey = entry.key.toString();
+                final restoredTrack = restoredTrackForKey(storedKey);
+                _resumePositions[restoredTrack?.identityKey ?? storedKey] =
+                    position;
               }
             }
           }
@@ -9095,9 +9129,9 @@ class _PlayerPageState extends State<PlayerPage>
             itemBuilder: (_, index) {
               final identity = _playHistory[index];
               final track = _queue.firstWhere(
-                (item) => item.identityKey == identity,
+                (item) => sameStoredTrackIdentity(item, identity),
                 orElse: () => _library.firstWhere(
-                  (item) => item.identityKey == identity,
+                  (item) => sameStoredTrackIdentity(item, identity),
                   orElse: () {
                     try {
                       final cue = jsonDecode(identity) as List;

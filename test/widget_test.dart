@@ -613,6 +613,44 @@ FILE "disc image.flac" WAVE
     expect(restored.identityKey, physicalPath);
   });
 
+  test('track identity keys canonicalize file URI aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final local = Track(path: physicalPath, name: 'Track');
+    final uri = Track(path: Uri.file(physicalPath).toString(), name: 'Track');
+
+    expect(local.identityKey, trackPathKey(physicalPath));
+    expect(uri.identityKey, local.identityKey);
+    expect(sameStoredTrackIdentity(local, physicalPath), isTrue);
+    expect(
+      sameStoredTrackIdentity(local, Uri.file(physicalPath).toString()),
+      isTrue,
+    );
+  });
+
+  test('stored CUE identity keys match canonical path aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}disc.flac')
+        .absolute
+        .path;
+    final segment = Track(
+      path: physicalPath,
+      name: 'Opening',
+      cueStartMs: 0,
+      cueEndMs: 180000,
+      trackNumber: 1,
+    );
+    final legacyKey = jsonEncode([
+      Uri.file(physicalPath).toString(),
+      segment.cueStartMs,
+      segment.cueEndMs,
+      segment.trackNumber,
+    ]);
+
+    expect(sameStoredTrackIdentity(segment, legacyKey), isTrue);
+    expect(trackForStoredKey([segment], legacyKey), same(segment));
+  });
+
   test('playlist keys resolve the requested CUE segment', () {
     final opening = Track(
       path: '/music/disc.flac',
