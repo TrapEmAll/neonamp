@@ -1928,7 +1928,7 @@ class Track {
   };
 
   static Track fromJson(Map<String, dynamic> json) => Track(
-    path: json['path'] as String,
+    path: normalizeLocalMediaPath(json['path'] as String),
     name: json['name'] as String,
     artist: json['artist'] as String? ?? 'Local library',
     album: json['album'] as String? ?? 'Unknown album',

@@ -569,6 +569,19 @@ FILE "disc image.flac" WAVE
     );
   });
 
+  test('restored tracks normalize legacy file URI paths', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final restored = Track.fromJson({
+      'path': Uri.file(physicalPath).toString(),
+      'name': 'Track',
+    });
+
+    expect(restored.path, physicalPath);
+    expect(restored.identityKey, physicalPath);
+  });
+
   test('playlist keys resolve the requested CUE segment', () {
     final opening = Track(
       path: '/music/disc.flac',
