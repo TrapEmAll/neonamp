@@ -1709,14 +1709,22 @@ Set<String> trackIdentitiesForPaths(
   Iterable<Track> tracks,
   Set<String> paths,
 ) => tracks
-    .where((track) => paths.contains(track.path))
+    .where(
+      (track) => paths.any((path) => sameTrackPath(track.path, path)),
+    )
     .map((track) => track.identityKey)
     .toSet();
 
 String trackPathKey(String path) {
   final uri = Uri.tryParse(path);
   final scheme = uri?.scheme.toLowerCase();
-  if (scheme == 'content' || (scheme != null && scheme.length > 1)) {
+  if (scheme == 'file') {
+    try {
+      path = uri!.toFilePath();
+    } on Object {
+      // Retain the original value if the URI is malformed for this platform.
+    }
+  } else if (scheme == 'content' || (scheme != null && scheme.length > 1)) {
     return path;
   }
   final absolutePath = File(path).absolute.path;

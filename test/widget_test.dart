@@ -553,6 +553,20 @@ FILE "disc image.flac" WAVE
       trackPathKey('https://example.com/stream'),
       'https://example.com/stream',
     );
+    final fileUri = Uri.file(absolute).toString();
+    expect(sameTrackPath(fileUri, absolute), isTrue);
+  });
+
+  test('track identity lookup accepts file URI aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final track = Track(path: physicalPath, name: 'Track');
+
+    expect(
+      trackIdentitiesForPaths([track], {Uri.file(physicalPath).toString()}),
+      {track.identityKey},
+    );
   });
 
   test('playlist keys resolve the requested CUE segment', () {
