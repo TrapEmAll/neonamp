@@ -1713,6 +1713,13 @@ Set<String> trackIdentitiesForPaths(
     .map((track) => track.identityKey)
     .toSet();
 
+String trackPathKey(String path) {
+  final uri = Uri.tryParse(path);
+  if (uri?.scheme.toLowerCase() == 'content') return path;
+  final absolutePath = File(path).absolute.path;
+  return Platform.isWindows ? absolutePath.toLowerCase() : absolutePath;
+}
+
 int selectedQueueIndexAfterRemoval(
   List<Track> queue,
   int selected,
@@ -3988,9 +3995,9 @@ class _PlayerPageState extends State<PlayerPage>
     }
     var added = 0;
     for (final file in files) {
-      final discoveredPath = File(file.path).absolute.path;
-      discoveredFilesystemPaths?.add(
-        Platform.isWindows ? discoveredPath.toLowerCase() : discoveredPath,
+    final discoveredPath = trackPathKey(file.path);
+    discoveredFilesystemPaths?.add(
+      discoveredPath,
       );
       late final Track scannedTrack;
       try {
@@ -4011,7 +4018,7 @@ class _PlayerPageState extends State<PlayerPage>
         _libraryRelativePaths[file.path] = file.relativePath;
         final libraryIndexes = [
           for (var i = 0; i < _library.length; i++)
-            if (_library[i].path == file.path) i,
+            if (trackPathKey(_library[i].path) == discoveredPath) i,
         ];
         if (libraryIndexes.isNotEmpty) {
           for (final libraryIndex in libraryIndexes) {
@@ -4025,7 +4032,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
         final queueIndexes = [
           for (var i = 0; i < _queue.length; i++)
-            if (_queue[i].path == file.path) i,
+            if (trackPathKey(_queue[i].path) == discoveredPath) i,
         ];
         if (queueIndexes.isNotEmpty) {
           for (final queueIndex in queueIndexes) {
@@ -4053,12 +4060,9 @@ class _PlayerPageState extends State<PlayerPage>
     Set<String> discoveredPaths,
   ) async {
     if (scannedRoots.isEmpty) return 0;
-    final missingPaths = _library
+    final missingPathKeys = _library
         .where((track) {
-          final absolutePath = File(track.path).absolute.path;
-          final path = Platform.isWindows
-              ? absolutePath.toLowerCase()
-              : absolutePath;
+          final path = trackPathKey(track.path);
           final belongsToScannedRoot = scannedRoots.any(
             (root) =>
                 path == root ||
@@ -4066,13 +4070,16 @@ class _PlayerPageState extends State<PlayerPage>
           );
           return belongsToScannedRoot && !discoveredPaths.contains(path);
         })
-        .map((track) => track.path)
+        .map((track) => trackPathKey(track.path))
         .toSet();
-    if (missingPaths.isEmpty) return 0;
-    final missingIdentities = trackIdentitiesForPaths(_library, missingPaths);
+    if (missingPathKeys.isEmpty) return 0;
+    final missingIdentities = _library
+        .where((track) => missingPathKeys.contains(trackPathKey(track.path)))
+        .map((track) => track.identityKey)
+        .toSet();
     if (missingIdentities.contains(_current?.identityKey)) {
       await _stopCurrent();
-      if (!mounted) return missingPaths.length;
+      if (!mounted) return missingPathKeys.length;
     }
     final nextSelected = selectedQueueIndexAfterRemoval(
       _queue,
@@ -4080,7 +4087,9 @@ class _PlayerPageState extends State<PlayerPage>
       missingIdentities,
     );
     setState(() {
-      _library.removeWhere((track) => missingPaths.contains(track.path));
+      _library.removeWhere(
+        (track) => missingPathKeys.contains(trackPathKey(track.path)),
+      );
       _queue.removeWhere(
         (track) => missingIdentities.contains(track.identityKey),
       );
@@ -4096,14 +4105,14 @@ class _PlayerPageState extends State<PlayerPage>
         entry.value.removeWhere(missingIdentities.contains);
       }
       _libraryRelativePaths.removeWhere(
-        (path, _) => missingPaths.contains(path),
+        (path, _) => missingPathKeys.contains(trackPathKey(path)),
       );
       _selectedLibraryPaths.removeWhere(
         (identity) =>
             !_library.any((track) => track.identityKey == identity),
       );
     });
-    return missingPaths.length;
+    return missingPathKeys.length;
   }
 
   Future<void> _rescanFolders() async {

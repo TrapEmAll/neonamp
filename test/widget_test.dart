@@ -543,6 +543,13 @@ FILE "disc image.flac" WAVE
     );
   });
 
+  test('track path keys unify relative and absolute local paths', () {
+    final relative = 'music${Platform.pathSeparator}track.mp3';
+    final absolute = File(relative).absolute.path;
+
+    expect(trackPathKey(relative), trackPathKey(absolute));
+  });
+
   test('playlist keys resolve the requested CUE segment', () {
     final opening = Track(
       path: '/music/disc.flac',
