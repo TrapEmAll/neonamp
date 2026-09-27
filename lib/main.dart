@@ -1705,6 +1705,21 @@ List<Track> mergeTracksByIdentity(
   return merged;
 }
 
+Track trackForStoredKey(List<Track> library, String key) {
+  for (final track in library) {
+    if (track.identityKey == key) return track;
+  }
+  // Playlist files written by older versions used physical paths. Keep those
+  // entries playable, while preferring identityKey for all new entries.
+  for (final track in library) {
+    if (track.path == key) return track;
+  }
+  return Track(
+    path: key,
+    name: key.split(RegExp(r'[/\\]')).last,
+  );
+}
+
 class Track {
   Track({
     required this.path,
@@ -6774,14 +6789,8 @@ class _PlayerPageState extends State<PlayerPage>
                   : ListView.builder(
                       itemCount: tracks.length,
                       itemBuilder: (context, index) {
-                        final path = tracks[index];
-                        final track = _library.firstWhere(
-                          (item) => item.path == path,
-                          orElse: () => Track(
-                            path: path,
-                            name: path.split(RegExp(r'[/\\]')).last,
-                          ),
-                        );
+                        final key = tracks[index];
+                        final track = trackForStoredKey(_library, key);
                         return ListTile(
                           dense: true,
                           title: Text(track.name),
@@ -7388,23 +7397,19 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted || name == null) return;
     setState(() {
       final tracks = _playlists[name]!;
-      if (!tracks.contains(track.path)) tracks.add(track.path);
+      if (!tracks.contains(track.identityKey)) {
+        tracks.add(track.identityKey);
+      }
     });
     await _saveQueue();
   }
 
   Future<void> _playPlaylist(String name) async {
     if (_selectionInProgress || _crossfadeInProgress) return;
-    final paths = _playlists[name];
-    if (paths == null || paths.isEmpty) return;
-    final tracks = paths
-        .map(
-          (path) => _library.firstWhere(
-            (track) => track.path == path,
-            orElse: () =>
-                Track(path: path, name: path.split(RegExp(r'[/\\]')).last),
-          ),
-        )
+    final keys = _playlists[name];
+    if (keys == null || keys.isEmpty) return;
+    final tracks = keys
+        .map((key) => trackForStoredKey(_library, key))
         .toList();
     if (!mounted || tracks.isEmpty) return;
     final operation = ++_queueOperationGeneration;
