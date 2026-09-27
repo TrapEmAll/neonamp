@@ -5131,6 +5131,9 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await previousPlayer.stop();
       previousStopped = true;
+      if (!mounted || !_crossfadeInProgress) {
+        throw StateError('Crossfade was cancelled.');
+      }
       setState(() {
         _selected = next;
         _position = Duration.zero;
@@ -5227,6 +5230,9 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await previousPlayer.stop();
       previousStopped = true;
+      if (!mounted || !_crossfadeInProgress) {
+        throw StateError('Crossfade was cancelled.');
+      }
       setState(() {
         _selected = next;
         _position = Duration.zero;
