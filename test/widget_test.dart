@@ -520,6 +520,23 @@ FILE "disc image.flac" WAVE
     expect(trackForStoredKey([opening, second], opening.path).name, 'Opening');
   });
 
+  test('iTunes export converts playlist identities to source paths', () {
+    final segment = Track(
+      path: 'album.flac',
+      name: 'Second Track',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+    );
+
+    expect(
+      playlistPathsForExport({'Album': [segment.identityKey]}, [segment]),
+      {
+        'Album': ['album.flac'],
+      },
+    );
+  });
+
   test('CUE playback timing is relative to each source segment', () {
     expect(
       cueRelativePosition(

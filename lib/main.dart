@@ -1720,6 +1720,16 @@ Track trackForStoredKey(List<Track> library, String key) {
   );
 }
 
+Map<String, List<String>> playlistPathsForExport(
+  Map<String, List<String>> playlists,
+  List<Track> library,
+) => playlists.map(
+  (name, keys) => MapEntry(
+    name,
+    keys.map((key) => trackForStoredKey(library, key).path).toList(),
+  ),
+);
+
 class Track {
   Track({
     required this.path,
@@ -4244,7 +4254,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _exportItunesLibrary() async {
     final xml = buildItunesLibrary(
       _library.map((track) => track.toJson()),
-      _playlists,
+      playlistPathsForExport(_playlists, _library),
     );
     await FilePicker.saveFile(
       fileName: 'neonamp-library.xml',
