@@ -8370,6 +8370,10 @@ class _PlayerPageState extends State<PlayerPage>
     final crossfadeAudioPlayer = _crossfadeAudioPlayer;
     final crossfadeDspPlayer = _crossfadeDspPlayer;
     _crossfadeInProgress = false;
+    _playbackTrackIdentity = null;
+    _playerStreamGeneration++;
+    _dspStreamGeneration++;
+    _midiStreamGeneration++;
     if (crossfadeAudioPlayer != null) {
       _runAsyncSafely(
         crossfadeAudioPlayer.dispose(),
@@ -8407,7 +8411,7 @@ class _PlayerPageState extends State<PlayerPage>
     }
     _searchController.dispose();
     _pulse.dispose();
-    _player.dispose();
+    _runAsyncSafely(_player.dispose(), 'Disposing audio player');
     _runAsyncSafely(_midiPlayer.dispose(), 'Disposing MIDI player');
     _runAsyncSafely(_dspPlayer.dispose(), 'Disposing DSP player');
     super.dispose();
