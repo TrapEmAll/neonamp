@@ -386,9 +386,14 @@ class MainActivity : AudioServiceActivity() {
                     val cachedFile = File(cacheDirectory, cacheName)
                     val sourceSize = if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) cursor.getLong(sizeColumn) else -1L
                     val sourceModified = if (modifiedColumn >= 0 && !cursor.isNull(modifiedColumn)) cursor.getLong(modifiedColumn) else -1L
-                    if (!cachedFile.isFile || (sourceSize >= 0 && cachedFile.length() != sourceSize) ||
-                        (sourceModified > 0 && cachedFile.lastModified() != sourceModified)
-                    ) {
+                    // A number of SAF providers omit both metadata columns. In
+                    // that case an existing cache entry cannot be proven fresh;
+                    // re-read it so rescanning observes provider-side changes.
+                    val hasFreshnessMetadata = sourceSize >= 0 || sourceModified > 0
+                    val cacheMatchesSource = hasFreshnessMetadata &&
+                        (sourceSize < 0 || cachedFile.length() == sourceSize) &&
+                        (sourceModified <= 0 || cachedFile.lastModified() == sourceModified)
+                    if (!cachedFile.isFile || !cacheMatchesSource) {
                         val temporaryFile = try {
                             File.createTempFile(
                                 "$cacheName.",
