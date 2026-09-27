@@ -3968,7 +3968,10 @@ class _PlayerPageState extends State<PlayerPage>
       _libraryRelativePaths.removeWhere(
         (path, _) => missingPaths.contains(path),
       );
-      _selectedLibraryPaths.removeWhere(missingPaths.contains);
+      _selectedLibraryPaths.removeWhere(
+        (identity) =>
+            !_library.any((track) => track.identityKey == identity),
+      );
     });
     return missingPaths.length;
   }
@@ -5726,7 +5729,9 @@ class _PlayerPageState extends State<PlayerPage>
     if (destination == null) return;
     final selected = _selectedLibraryPaths.isEmpty
         ? _library
-        : _library.where((track) => _selectedLibraryPaths.contains(track.path));
+        : _library.where(
+            (track) => _selectedLibraryPaths.contains(track.identityKey),
+          );
     final tracks = <Track>[];
     final seen = <String>{};
     for (final track in selected) {
@@ -6302,7 +6307,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted) return;
     setState(() {
       final libraryIndex = _library.indexWhere(
-        (item) => item.path == track.path,
+        (item) => item.identityKey == track.identityKey,
       );
       if (libraryIndex >= 0) _library[libraryIndex] = updated;
       for (var i = 0; i < _queue.length; i++) {
@@ -6334,15 +6339,15 @@ class _PlayerPageState extends State<PlayerPage>
 
   void _toggleLibrarySelection(Track track) {
     setState(() {
-      if (!_selectedLibraryPaths.add(track.path)) {
-        _selectedLibraryPaths.remove(track.path);
+      if (!_selectedLibraryPaths.add(track.identityKey)) {
+        _selectedLibraryPaths.remove(track.identityKey);
       }
     });
   }
 
   Future<void> _editSelectedTracks() async {
     final selected = _library
-        .where((track) => _selectedLibraryPaths.contains(track.path))
+        .where((track) => _selectedLibraryPaths.contains(track.identityKey))
         .toList();
     if (selected.isEmpty) return;
     final artist = TextEditingController();
@@ -8575,7 +8580,7 @@ class _PlayerPageState extends State<PlayerPage>
         return ListTile(
           dense: true,
           leading: Checkbox(
-            value: _selectedLibraryPaths.contains(track.path),
+            value: _selectedLibraryPaths.contains(track.identityKey),
             onChanged: (_) => _toggleLibrarySelection(track),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
