@@ -1733,9 +1733,12 @@ List<Track> mergeTracksByIdentity(
   Iterable<Track> additions,
 ) {
   final merged = List<Track>.of(existing);
-  final identities = merged.map((track) => track.identityKey).toSet();
+  final identities = <Track>[]..addAll(merged);
   for (final track in additions) {
-    if (identities.add(track.identityKey)) merged.add(track);
+    if (identities.every((item) => !sameTrackIdentity(item, track))) {
+      identities.add(track);
+      merged.add(track);
+    }
   }
   return merged;
 }
@@ -1768,6 +1771,12 @@ String trackPathKey(String path) {
 
 bool sameTrackPath(String first, String second) =>
     trackPathKey(first) == trackPathKey(second);
+
+bool sameTrackIdentity(Track first, Track second) =>
+    first.cueStartMs == second.cueStartMs &&
+    first.cueEndMs == second.cueEndMs &&
+    first.trackNumber == second.trackNumber &&
+    sameTrackPath(first.path, second.path);
 
 int selectedQueueIndexAfterRemoval(
   List<Track> queue,
@@ -3523,7 +3532,7 @@ class _PlayerPageState extends State<PlayerPage>
                     Map<String, dynamic>.from(value),
                   );
                   if (_bookmarks.every(
-                    (item) => item.identityKey != track.identityKey,
+                    (item) => !sameTrackIdentity(item, track),
                   )) {
                     _bookmarks.add(track);
                   }
@@ -3548,7 +3557,7 @@ class _PlayerPageState extends State<PlayerPage>
                     Map<String, dynamic>.from(value),
                   );
                   if (_queue.every(
-                    (item) => item.identityKey != track.identityKey,
+                    (item) => !sameTrackIdentity(item, track),
                   )) {
                     _queue.add(track);
                   }
@@ -4582,7 +4591,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || operation != _libraryOperationGeneration) return;
       setState(() {
         for (final track in tracks) {
-          if (_queue.any((item) => item.identityKey == track.identityKey)) {
+          if (_queue.any((item) => sameTrackIdentity(item, track))) {
             continue;
           }
           _queue.add(track);

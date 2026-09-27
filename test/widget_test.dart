@@ -569,6 +569,17 @@ FILE "disc image.flac" WAVE
     );
   });
 
+  test('mergeTracksByIdentity removes local path aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final local = Track(path: physicalPath, name: 'Track');
+    final uri = Track(path: Uri.file(physicalPath).toString(), name: 'Track');
+
+    expect(sameTrackIdentity(local, uri), isTrue);
+    expect(mergeTracksByIdentity([local], [uri]), hasLength(1));
+  });
+
   test('restored tracks normalize legacy file URI paths', () {
     final physicalPath = File('music${Platform.pathSeparator}track.mp3')
         .absolute
