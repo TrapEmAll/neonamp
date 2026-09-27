@@ -4569,47 +4569,50 @@ class _PlayerPageState extends State<PlayerPage>
       allowedExtensions: ['xml'],
       dialogTitle: 'Import an iTunes XML library',
     );
-    final path = picked.firstOrNull?.path;
-    if (path == null || operation != _libraryOperationGeneration) return;
+    if (picked.isEmpty || operation != _libraryOperationGeneration) return;
     try {
-      final imported = parseItunesLibrary(
-        await File(
-          await _localPickedFilePath(picked.first),
-        ).readAsString(),
-      );
       var addedTracks = 0;
       var addedPlaylists = 0;
-      if (!mounted || operation != _libraryOperationGeneration) return;
-      setState(() {
-        for (final json in imported.tracks) {
-          try {
-            final track = Track.fromJson(Map<String, dynamic>.from(json));
-            if (_library.any((item) => sameTrackPath(item.path, track.path))) {
-              continue;
+      for (final pickedFile in picked) {
+        if (!mounted || operation != _libraryOperationGeneration) return;
+        final imported = parseItunesLibrary(
+          await File(
+            await _localPickedFilePath(pickedFile),
+          ).readAsString(),
+        );
+        if (!mounted || operation != _libraryOperationGeneration) return;
+        setState(() {
+          for (final json in imported.tracks) {
+            try {
+              final track = Track.fromJson(Map<String, dynamic>.from(json));
+              if (_library.any((item) => sameTrackPath(item.path, track.path))) {
+                continue;
+              }
+              _library.add(track);
+              addedTracks++;
+            } on Object catch (trackError) {
+              debugPrint('Skipping invalid iTunes track: $trackError');
             }
-            _library.add(track);
-            addedTracks++;
-          } on Object catch (trackError) {
-            debugPrint('Skipping invalid iTunes track: $trackError');
           }
-        }
-        for (final playlist in imported.playlists.entries) {
-          var name = playlist.key;
-          var suffix = 2;
-          while (_playlists.containsKey(name)) {
-            name = '${playlist.key} (iTunes $suffix)';
-            suffix++;
+          for (final playlist in imported.playlists.entries) {
+            var name = playlist.key;
+            var suffix = 2;
+            while (_playlists.containsKey(name)) {
+              name = '${playlist.key} (iTunes $suffix)';
+              suffix++;
+            }
+            _playlists[name] = playlist.value;
+            addedPlaylists++;
           }
-          _playlists[name] = playlist.value;
-          addedPlaylists++;
-        }
-      });
+        });
+      }
       await _saveQueue();
       if (mounted && operation == _libraryOperationGeneration) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Imported $addedTracks tracks and $addedPlaylists playlists.',
+              'Imported ${picked.length} iTunes file(s): '
+              '$addedTracks tracks and $addedPlaylists playlists.',
             ),
           ),
         );
@@ -5898,24 +5901,27 @@ class _PlayerPageState extends State<PlayerPage>
       allowedExtensions: ['opml', 'xml'],
     );
     if (picked.isEmpty) return;
-    final bytes = await File(
-      await _localPickedFilePath(picked.first),
-    ).readAsBytes();
-    final feeds = podcastFeedsFromOpml(
-      utf8.decode(bytes, allowMalformed: true),
-    );
     var addedFeeds = 0;
     var addedEpisodes = 0;
-    for (final feed in feeds) {
+    for (final pickedFile in picked) {
       if (!mounted) return;
-      if (_podcastFeeds.contains(feed)) continue;
-      try {
-        addedEpisodes += await _loadPodcastFeed(feed);
+      final bytes = await File(
+        await _localPickedFilePath(pickedFile),
+      ).readAsBytes();
+      final feeds = podcastFeedsFromOpml(
+        utf8.decode(bytes, allowMalformed: true),
+      );
+      for (final feed in feeds) {
         if (!mounted) return;
-        _podcastFeeds.add(feed);
-        addedFeeds++;
-      } on Exception {
-        // A bad or temporarily unavailable feed must not block other imports.
+        if (_podcastFeeds.contains(feed)) continue;
+        try {
+          addedEpisodes += await _loadPodcastFeed(feed);
+          if (!mounted) return;
+          _podcastFeeds.add(feed);
+          addedFeeds++;
+        } on Exception {
+          // A bad or temporarily unavailable feed must not block other imports.
+        }
       }
     }
     if (!mounted) return;
