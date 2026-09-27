@@ -1723,6 +1723,9 @@ String trackPathKey(String path) {
   return Platform.isWindows ? absolutePath.toLowerCase() : absolutePath;
 }
 
+bool sameTrackPath(String first, String second) =>
+    trackPathKey(first) == trackPathKey(second);
+
 int selectedQueueIndexAfterRemoval(
   List<Track> queue,
   int selected,
@@ -1753,7 +1756,7 @@ Track trackForStoredKey(List<Track> library, String key) {
   // Playlist files written by older versions used physical paths. Keep those
   // entries playable, while preferring identityKey for all new entries.
   for (final track in library) {
-    if (track.path == key) return track;
+    if (sameTrackPath(track.path, key)) return track;
   }
   return Track(
     path: key,
@@ -3492,7 +3495,7 @@ class _PlayerPageState extends State<PlayerPage>
         _queue.addAll(
           saved.where((path) => path.trim().isNotEmpty).toSet().map((path) {
             return _library.firstWhere(
-              (track) => track.path == path,
+              (track) => sameTrackPath(track.path, path),
               orElse: () =>
                   Track(path: path, name: path.split(RegExp(r'[/\\]')).last),
             );
@@ -3835,7 +3838,7 @@ class _PlayerPageState extends State<PlayerPage>
         skipped++;
         continue;
       }
-      if (_queue.any((track) => track.path == path)) {
+      if (_queue.any((track) => sameTrackPath(track.path, path))) {
         skipped++;
         continue;
       }
@@ -3849,7 +3852,9 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || operation != _libraryOperationGeneration) return;
       setState(() {
         _queue.add(track);
-        if (!_library.any((item) => item.path == path)) _library.add(track);
+        if (!_library.any((item) => sameTrackPath(item.path, path))) {
+          _library.add(track);
+        }
       });
       added++;
     }
@@ -4335,7 +4340,9 @@ class _PlayerPageState extends State<PlayerPage>
         for (final json in imported.tracks) {
           try {
             final track = Track.fromJson(Map<String, dynamic>.from(json));
-            if (_library.any((item) => item.path == track.path)) continue;
+            if (_library.any((item) => sameTrackPath(item.path, track.path))) {
+              continue;
+            }
             _library.add(track);
             addedTracks++;
           } on Object catch (trackError) {
@@ -4488,7 +4495,7 @@ class _PlayerPageState extends State<PlayerPage>
           added++;
         }
         for (final source in sourceTracks.values) {
-          if (!_library.any((item) => item.path == source.path)) {
+          if (!_library.any((item) => sameTrackPath(item.path, source.path))) {
             _library.add(source);
           }
         }
@@ -5166,7 +5173,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       return;
     }
-    if (_queue.any((track) => track.path == url)) {
+    if (_queue.any((track) => sameTrackPath(track.path, url))) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('That stream is already in the queue.')),
@@ -5371,7 +5378,8 @@ class _PlayerPageState extends State<PlayerPage>
                   final saved = path == null
                       ? null
                       : _library.cast<Track?>().firstWhere(
-                          (track) => track?.path == path,
+                          (track) =>
+                              track != null && sameTrackPath(track.path, path),
                           orElse: () => null,
                         );
                   return ListTile(
@@ -5449,14 +5457,16 @@ class _PlayerPageState extends State<PlayerPage>
                 .first
                 .trim(),
       );
-      final existingIndex = _queue.indexWhere((item) => item.path == path);
+      final existingIndex = _queue.indexWhere(
+        (item) => sameTrackPath(item.path, path),
+      );
       if (existingIndex >= 0) {
         await _select(existingIndex);
         return;
       }
       setState(() {
         _queue.add(track);
-        _library.removeWhere((item) => item.path == path);
+        _library.removeWhere((item) => sameTrackPath(item.path, path));
         _library.add(track);
         _selected = _queue.length - 1;
       });
@@ -5484,14 +5494,18 @@ class _PlayerPageState extends State<PlayerPage>
     final path = _stationStreamUrl(station);
     if (!mounted || path == null) return;
     final name = (station['name'] as String? ?? 'Internet radio').trim();
-    final existingIndex = _library.indexWhere((track) => track.path == path);
+    final existingIndex = _library.indexWhere(
+      (track) => sameTrackPath(track.path, path),
+    );
     setState(() {
       if (existingIndex >= 0) {
         final track = _library[existingIndex];
         final updated = track.copyWith(favorite: !track.favorite);
         _library[existingIndex] = updated;
         for (var index = 0; index < _queue.length; index++) {
-          if (_queue[index].path == path) _queue[index] = updated;
+          if (sameTrackPath(_queue[index].path, path)) {
+            _queue[index] = updated;
+          }
         }
       } else {
         _library.add(
@@ -5727,7 +5741,9 @@ class _PlayerPageState extends State<PlayerPage>
       final title = _rssValue(item, 'title') ?? 'Podcast episode';
       final author =
           _rssValue(item, 'author') ?? _rssValue(item, 'creator') ?? 'Podcast';
-      if (_queue.any((track) => track.path == enclosure)) continue;
+      if (_queue.any((track) => sameTrackPath(track.path, enclosure))) {
+        continue;
+      }
       episodes.add(
         Track(
           path: enclosureUri.toString(),
@@ -5743,7 +5759,9 @@ class _PlayerPageState extends State<PlayerPage>
         _queue.addAll(episodes);
         _library.addAll(
           episodes.where(
-            (episode) => !_library.any((track) => track.path == episode.path),
+            (episode) => !_library.any(
+              (track) => sameTrackPath(track.path, episode.path),
+            ),
           ),
         );
       });
@@ -5791,10 +5809,12 @@ class _PlayerPageState extends State<PlayerPage>
       final downloaded = track.copyWith(path: target.path, name: safeFilename);
       if (mounted) {
         setState(() {
-          if (!_queue.any((item) => item.path == downloaded.path)) {
+          if (!_queue.any((item) => sameTrackPath(item.path, downloaded.path))) {
             _queue.add(downloaded);
           }
-          if (!_library.any((item) => item.path == downloaded.path)) {
+          if (!_library.any(
+            (item) => sameTrackPath(item.path, downloaded.path),
+          )) {
             _library.add(downloaded);
           }
         });
@@ -6029,7 +6049,7 @@ class _PlayerPageState extends State<PlayerPage>
       );
       if (!mounted) return;
       setState(() {
-        if (!_library.any((item) => item.path == output)) {
+        if (!_library.any((item) => sameTrackPath(item.path, output))) {
           _library.add(withMetadata);
         }
       });
@@ -6477,7 +6497,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
       for (var i = 0; i < _queue.length; i++) {
-        if (_queue[i].path == track.path) {
+        if (sameTrackPath(_queue[i].path, track.path)) {
           _queue[i] = _mergeEditedMetadata(
             _queue[i],
             updated,
@@ -6778,12 +6798,12 @@ class _PlayerPageState extends State<PlayerPage>
         // to each virtual segment. Update only the artwork field so replacing
         // one segment's cover never overwrites its neighboring segments.
         for (var i = 0; i < _library.length; i++) {
-          if (_library[i].path == track.path) {
+          if (sameTrackPath(_library[i].path, track.path)) {
             _library[i] = _library[i].copyWith(artwork: bytes);
           }
         }
         for (var i = 0; i < _queue.length; i++) {
-          if (_queue[i].path == track.path) {
+          if (sameTrackPath(_queue[i].path, track.path)) {
             _queue[i] = _queue[i].copyWith(artwork: bytes);
           }
         }

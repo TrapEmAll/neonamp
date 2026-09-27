@@ -548,6 +548,7 @@ FILE "disc image.flac" WAVE
     final absolute = File(relative).absolute.path;
 
     expect(trackPathKey(relative), trackPathKey(absolute));
+    expect(sameTrackPath(relative, absolute), isTrue);
     expect(
       trackPathKey('https://example.com/stream'),
       'https://example.com/stream',
