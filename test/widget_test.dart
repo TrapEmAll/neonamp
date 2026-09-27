@@ -537,6 +537,38 @@ FILE "disc image.flac" WAVE
     );
   });
 
+  test('rescanning a shared source preserves each CUE segment', () {
+    final existing = Track(
+      path: 'album.flac',
+      name: 'Second Track',
+      artist: 'Cue Artist',
+      album: 'Cue Album',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+      rating: 5,
+      playCount: 3,
+      favorite: true,
+    );
+    final scanned = Track(
+      path: 'album.flac',
+      name: 'Album',
+      artist: 'File Artist',
+      album: 'File Album',
+      artwork: Uint8List.fromList([4, 5]),
+    );
+
+    final merged = mergeScannedTrack(existing, scanned);
+
+    expect(merged.name, 'Second Track');
+    expect(merged.artist, 'Cue Artist');
+    expect(merged.album, 'Cue Album');
+    expect(merged.rating, 5);
+    expect(merged.playCount, 3);
+    expect(merged.favorite, isTrue);
+    expect(merged.artwork, [4, 5]);
+  });
+
   test('CUE playback timing is relative to each source segment', () {
     expect(
       cueRelativePosition(

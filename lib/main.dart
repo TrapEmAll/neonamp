@@ -1730,6 +1730,28 @@ Map<String, List<String>> playlistPathsForExport(
   ),
 );
 
+Track mergeScannedTrack(Track existing, Track scanned) {
+  final isCueTrack = existing.cueStartMs != null;
+  return existing.copyWith(
+    name: isCueTrack ? existing.name : scanned.name,
+    artist: isCueTrack ? existing.artist : scanned.artist,
+    album: isCueTrack ? existing.album : scanned.album,
+    genre: isCueTrack ? existing.genre : scanned.genre,
+    year: isCueTrack ? existing.year : scanned.year,
+    trackNumber: isCueTrack ? existing.trackNumber : scanned.trackNumber,
+    trackTotal: isCueTrack ? existing.trackTotal : scanned.trackTotal,
+    discNumber: isCueTrack ? existing.discNumber : scanned.discNumber,
+    discTotal: isCueTrack ? existing.discTotal : scanned.discTotal,
+    lyrics: scanned.lyrics,
+    clearLyrics: scanned.lyrics == null,
+    artwork: scanned.artwork,
+    replayGainDb: scanned.replayGainDb,
+    rating: existing.rating,
+    playCount: existing.playCount,
+    favorite: existing.favorite,
+  );
+}
+
 class Track {
   Track({
     required this.path,
@@ -3939,12 +3961,6 @@ class _PlayerPageState extends State<PlayerPage>
       discoveredFilesystemPaths?.add(
         Platform.isWindows ? discoveredPath.toLowerCase() : discoveredPath,
       );
-      final existingLibrary = _library
-          .where((track) => track.path == file.path)
-          .firstOrNull;
-      final existingQueue = _queue
-          .where((track) => track.path == file.path)
-          .firstOrNull;
       late final Track scannedTrack;
       try {
         scannedTrack = await _readTrack(file.path, file.name);
@@ -3952,9 +3968,9 @@ class _PlayerPageState extends State<PlayerPage>
         continue;
       }
       final track = scannedTrack.copyWith(
-        rating: existingLibrary?.rating ?? existingQueue?.rating,
-        playCount: existingLibrary?.playCount ?? existingQueue?.playCount,
-        favorite: existingLibrary?.favorite ?? existingQueue?.favorite,
+        rating: 0,
+        playCount: 0,
+        favorite: false,
       );
       if (!mounted ||
           (operation != null && operation != _libraryOperationGeneration)) {
@@ -3962,19 +3978,38 @@ class _PlayerPageState extends State<PlayerPage>
       }
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
-        final libraryIndex = _library.indexWhere(
-          (item) => item.path == file.path,
-        );
-        if (libraryIndex >= 0) {
-          _library[libraryIndex] = track;
+        final libraryIndexes = [
+          for (var i = 0; i < _library.length; i++)
+            if (_library[i].path == file.path) i,
+        ];
+        if (libraryIndexes.isNotEmpty) {
+          for (final libraryIndex in libraryIndexes) {
+            _library[libraryIndex] = mergeScannedTrack(
+              _library[libraryIndex],
+              track,
+            );
+          }
         } else {
           _library.add(track);
         }
-        final queueIndex = _queue.indexWhere((item) => item.path == file.path);
-        if (queueIndex >= 0) {
-          _queue[queueIndex] = track;
-        } else {
+        final queueIndexes = [
+          for (var i = 0; i < _queue.length; i++)
+            if (_queue[i].path == file.path) i,
+        ];
+        if (queueIndexes.isNotEmpty) {
+          for (final queueIndex in queueIndexes) {
+            _queue[queueIndex] = mergeScannedTrack(
+              _queue[queueIndex],
+              track,
+            );
+          }
+        } else if (!libraryIndexes.any(
+          (index) => _library[index].cueStartMs != null,
+        )) {
           _queue.add(track);
+        } else {
+          // A CUE library owns this physical source; do not add a duplicate
+          // raw source track just because the folder was rescanned.
         }
       });
       added++;
