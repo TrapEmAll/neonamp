@@ -574,10 +574,29 @@ FILE "disc image.flac" WAVE
         .absolute
         .path;
     final local = Track(path: physicalPath, name: 'Track');
-    final uri = Track(path: Uri.file(physicalPath).toString(), name: 'Track');
+    final uri = Track(
+      path: Uri.file(physicalPath).toString(),
+      name: 'Track',
+      trackNumber: 4,
+    );
 
     expect(sameTrackIdentity(local, uri), isTrue);
     expect(mergeTracksByIdentity([local], [uri]), hasLength(1));
+  });
+
+  test('same non-CUE path remains one identity after metadata changes', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final original = Track(path: physicalPath, name: 'Old title');
+    final rescanned = Track(
+      path: physicalPath,
+      name: 'New title',
+      trackNumber: 4,
+    );
+
+    expect(sameTrackIdentity(original, rescanned), isTrue);
+    expect(mergeTracksByIdentity([original], [rescanned]), hasLength(1));
   });
 
   test('restored tracks normalize legacy file URI paths', () {

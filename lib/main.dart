@@ -1708,9 +1708,9 @@ Duration seekByOffset({
 }
 
 List<Track> toggleTrackBookmark(List<Track> bookmarks, Track track) {
-  if (bookmarks.any((item) => item.identityKey == track.identityKey)) {
+  if (bookmarks.any((item) => sameTrackIdentity(item, track))) {
     return bookmarks
-        .where((item) => item.identityKey != track.identityKey)
+        .where((item) => !sameTrackIdentity(item, track))
         .toList();
   }
   return [...bookmarks, track];
@@ -1718,7 +1718,7 @@ List<Track> toggleTrackBookmark(List<Track> bookmarks, Track track) {
 
 List<Track> toggleTrackFavorite(List<Track> tracks, Track track) {
   final index = tracks.indexWhere(
-    (item) => item.identityKey == track.identityKey,
+    (item) => sameTrackIdentity(item, track),
   );
   if (index < 0) return tracks;
   final updated = List<Track>.of(tracks);
@@ -1772,11 +1772,13 @@ String trackPathKey(String path) {
 bool sameTrackPath(String first, String second) =>
     trackPathKey(first) == trackPathKey(second);
 
-bool sameTrackIdentity(Track first, Track second) =>
-    first.cueStartMs == second.cueStartMs &&
-    first.cueEndMs == second.cueEndMs &&
-    first.trackNumber == second.trackNumber &&
-    sameTrackPath(first.path, second.path);
+bool sameTrackIdentity(Track first, Track second) {
+  if (!sameTrackPath(first.path, second.path)) return false;
+  if (first.cueStartMs == null && second.cueStartMs == null) return true;
+  return first.cueStartMs == second.cueStartMs &&
+      first.cueEndMs == second.cueEndMs &&
+      first.trackNumber == second.trackNumber;
+}
 
 int selectedQueueIndexAfterRemoval(
   List<Track> queue,
@@ -6398,7 +6400,7 @@ class _PlayerPageState extends State<PlayerPage>
         ..clear()
         ..addAll(updatedLibrary);
       for (var queueIndex = 0; queueIndex < _queue.length; queueIndex++) {
-        if (_queue[queueIndex].identityKey == track.identityKey) {
+        if (sameTrackIdentity(_queue[queueIndex], track)) {
           _queue[queueIndex] = _queue[queueIndex].copyWith(
             favorite: updated.favorite,
           );
