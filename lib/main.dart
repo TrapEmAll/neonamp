@@ -5442,6 +5442,7 @@ class _PlayerPageState extends State<PlayerPage>
         if (path != null) selected['streamUrl'] = path;
       }
       if (path == null) return;
+      final streamPath = path;
       if (!mounted) return;
       final name = (selected['name'] as String? ?? 'Internet radio').trim();
       final track = Track(
@@ -5458,7 +5459,7 @@ class _PlayerPageState extends State<PlayerPage>
                 .trim(),
       );
       final existingIndex = _queue.indexWhere(
-        (item) => sameTrackPath(item.path, path),
+        (item) => sameTrackPath(item.path, streamPath),
       );
       if (existingIndex >= 0) {
         await _select(existingIndex);
@@ -5466,7 +5467,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       setState(() {
         _queue.add(track);
-        _library.removeWhere((item) => sameTrackPath(item.path, path));
+        _library.removeWhere((item) => sameTrackPath(item.path, streamPath));
         _library.add(track);
         _selected = _queue.length - 1;
       });
@@ -5733,7 +5734,9 @@ class _PlayerPageState extends State<PlayerPage>
       final item = match.group(1) ?? '';
       final enclosure = enclosurePattern.firstMatch(item)?.group(1);
       final enclosureUri = enclosure == null ? null : Uri.tryParse(enclosure);
-      if (enclosureUri == null ||
+      final enclosurePath = enclosure;
+      if (enclosurePath == null ||
+          enclosureUri == null ||
           !isHttpUri(enclosureUri) ||
           enclosureUri.host.isEmpty) {
         continue;
@@ -5741,7 +5744,7 @@ class _PlayerPageState extends State<PlayerPage>
       final title = _rssValue(item, 'title') ?? 'Podcast episode';
       final author =
           _rssValue(item, 'author') ?? _rssValue(item, 'creator') ?? 'Podcast';
-      if (_queue.any((track) => sameTrackPath(track.path, enclosure))) {
+      if (_queue.any((track) => sameTrackPath(track.path, enclosurePath))) {
         continue;
       }
       episodes.add(
