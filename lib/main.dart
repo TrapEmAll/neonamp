@@ -4893,7 +4893,6 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await previousPlayer.stop();
       previousStopped = true;
-      await previousPlayer.dispose();
       setState(() {
         _selected = next;
         _position = Duration.zero;
@@ -4914,6 +4913,7 @@ class _PlayerPageState extends State<PlayerPage>
       _bindPlayerStreams();
       await _audioHandler?.switchPlayer(incomingPlayer);
       _audioHandler?.publishTrack(track);
+      await previousPlayer.dispose();
       await _saveQueue();
     } catch (_) {
       if (!promoted) {
@@ -4923,8 +4923,20 @@ class _PlayerPageState extends State<PlayerPage>
           } on Object catch (restoreError) {
             debugPrint('Could not restore crossfade volume: $restoreError');
           }
+        } else {
+          try {
+            await previousPlayer.dispose();
+          } on Object catch (disposeError) {
+            debugPrint('Could not dispose stopped crossfade player: $disposeError');
+          }
         }
         await incomingPlayer.dispose();
+      } else {
+        try {
+          await previousPlayer.dispose();
+        } on Object catch (disposeError) {
+          debugPrint('Could not dispose previous crossfade player: $disposeError');
+        }
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4976,7 +4988,6 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await previousPlayer.stop();
       previousStopped = true;
-      await previousPlayer.dispose();
       setState(() {
         _selected = next;
         _position = Duration.zero;
@@ -4996,6 +5007,7 @@ class _PlayerPageState extends State<PlayerPage>
       promoted = true;
       _bindDspStreams();
       _audioHandler?.publishTrack(track);
+      await previousPlayer.dispose();
       await _saveQueue();
     } catch (_) {
       if (!promoted) {
@@ -5005,8 +5017,22 @@ class _PlayerPageState extends State<PlayerPage>
           } on Object catch (restoreError) {
             debugPrint('Could not restore DSP crossfade volume: $restoreError');
           }
+        } else {
+          try {
+            await previousPlayer.dispose();
+          } on Object catch (disposeError) {
+            debugPrint(
+              'Could not dispose stopped DSP crossfade player: $disposeError',
+            );
+          }
         }
         await incomingPlayer.dispose();
+      } else {
+        try {
+          await previousPlayer.dispose();
+        } on Object catch (disposeError) {
+          debugPrint('Could not dispose previous DSP player: $disposeError');
+        }
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
