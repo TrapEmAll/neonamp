@@ -1715,7 +1715,10 @@ Set<String> trackIdentitiesForPaths(
 
 String trackPathKey(String path) {
   final uri = Uri.tryParse(path);
-  if (uri?.scheme.toLowerCase() == 'content') return path;
+  final scheme = uri?.scheme.toLowerCase();
+  if (scheme == 'content' || (scheme != null && scheme.length > 1)) {
+    return path;
+  }
   final absolutePath = File(path).absolute.path;
   return Platform.isWindows ? absolutePath.toLowerCase() : absolutePath;
 }
@@ -4260,9 +4263,12 @@ class _PlayerPageState extends State<PlayerPage>
               continue;
             }
           }
-          if (_queue.any((track) => track.path == path)) continue;
+          final pathKey = trackPathKey(path);
+          if (_queue.any((track) => trackPathKey(track.path) == pathKey)) {
+            continue;
+          }
           final existingTrack = _library
-              .where((track) => track.path == path)
+              .where((track) => trackPathKey(track.path) == pathKey)
               .firstOrNull;
           final fallbackName = isStream
               ? (uri?.host ?? 'Internet stream')
@@ -4281,7 +4287,9 @@ class _PlayerPageState extends State<PlayerPage>
                 artist: isStream ? 'Online radio' : 'Local library',
               );
           _queue.add(track);
-          if (!_library.any((item) => item.path == path)) _library.add(track);
+          if (!_library.any((item) => trackPathKey(item.path) == pathKey)) {
+            _library.add(track);
+          }
           added++;
         }
       });

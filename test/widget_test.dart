@@ -548,6 +548,10 @@ FILE "disc image.flac" WAVE
     final absolute = File(relative).absolute.path;
 
     expect(trackPathKey(relative), trackPathKey(absolute));
+    expect(
+      trackPathKey('https://example.com/stream'),
+      'https://example.com/stream',
+    );
   });
 
   test('playlist keys resolve the requested CUE segment', () {
