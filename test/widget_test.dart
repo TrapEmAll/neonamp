@@ -622,6 +622,27 @@ FILE "disc image.flac" WAVE
     expect(merged.artwork, [4, 5]);
   });
 
+  test('rescanning clears metadata removed from a non-CUE source', () {
+    final existing = Track(
+      path: 'track.flac',
+      name: 'Track',
+      year: 2024,
+      trackNumber: 3,
+      artwork: Uint8List.fromList([1, 2]),
+      replayGainDb: -6.0,
+      lyrics: 'old lyrics',
+    );
+    final scanned = Track(path: 'track.flac', name: 'Track');
+
+    final merged = mergeScannedTrack(existing, scanned);
+
+    expect(merged.year, isNull);
+    expect(merged.trackNumber, isNull);
+    expect(merged.artwork, isNull);
+    expect(merged.replayGainDb, isNull);
+    expect(merged.lyrics, isNull);
+  });
+
   test('CUE playback timing is relative to each source segment', () {
     expect(
       cueRelativePosition(
