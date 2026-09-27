@@ -6044,7 +6044,7 @@ class _PlayerPageState extends State<PlayerPage>
     final seen = <String>{};
     for (final track in selected) {
       if (isRemoteMediaPath(track.path)) continue;
-      if (seen.add(track.path)) tracks.add(track);
+      if (seen.add(trackPathKey(track.path))) tracks.add(track);
     }
     if (tracks.isEmpty) {
       if (!mounted) return;
