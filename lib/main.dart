@@ -6309,17 +6309,30 @@ class _PlayerPageState extends State<PlayerPage>
       final libraryIndex = _library.indexWhere(
         (item) => item.identityKey == track.identityKey,
       );
-      if (libraryIndex >= 0) _library[libraryIndex] = updated;
+      if (libraryIndex >= 0) {
+        _library[libraryIndex] = _mergeEditedMetadata(
+          _library[libraryIndex],
+          updated,
+        );
+      }
       for (var i = 0; i < _queue.length; i++) {
         if (_queue[i].path == track.path) {
-          _queue[i] = _mergeEditedMetadata(_queue[i], updated);
+          _queue[i] = _mergeEditedMetadata(
+            _queue[i],
+            updated,
+            applyRating: _queue[i].identityKey == track.identityKey,
+          );
         }
       }
     });
     await _saveQueue();
   }
 
-  Track _mergeEditedMetadata(Track existing, Track updated) {
+  Track _mergeEditedMetadata(
+    Track existing,
+    Track updated, {
+    bool applyRating = true,
+  }) {
     final isCueTrack = existing.cueStartMs != null;
     return existing.copyWith(
       name: isCueTrack ? existing.name : updated.name,
@@ -6333,7 +6346,7 @@ class _PlayerPageState extends State<PlayerPage>
       discTotal: isCueTrack ? existing.discTotal : updated.discTotal,
       lyrics: updated.lyrics,
       clearLyrics: updated.lyrics == null,
-      rating: updated.rating,
+      rating: isCueTrack && !applyRating ? existing.rating : updated.rating,
     );
   }
 
@@ -6418,6 +6431,7 @@ class _PlayerPageState extends State<PlayerPage>
     var updatedCount = 0;
     var failedCount = 0;
     final updatedTracks = <String, Track>{};
+    final updatedByPath = <String, Track>{};
     for (final track in selected) {
       final updated = track.copyWith(
         artist: values[0].isEmpty ? track.artist : values[0],
@@ -6443,7 +6457,8 @@ class _PlayerPageState extends State<PlayerPage>
       ];
       try {
         await writeTrackMetadata(File(track.path), metadataValues);
-        updatedTracks[track.path] = updated;
+        updatedTracks[track.identityKey] = updated;
+        updatedByPath[track.path] = updated;
         updatedCount++;
       } catch (_) {
         failedCount++;
@@ -6452,13 +6467,25 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted) return;
     setState(() {
       for (var index = 0; index < _library.length; index++) {
-        final updated = updatedTracks[_library[index].path];
-        if (updated != null) _library[index] = updated;
+        final exact = updatedTracks[_library[index].identityKey];
+        final source = updatedByPath[_library[index].path];
+        if (source != null) {
+          _library[index] = _mergeEditedMetadata(
+            _library[index],
+            exact ?? source,
+            applyRating: exact != null,
+          );
+        }
       }
       for (var index = 0; index < _queue.length; index++) {
-        final updated = updatedTracks[_queue[index].path];
-        if (updated != null) {
-          _queue[index] = _mergeEditedMetadata(_queue[index], updated);
+        final exact = updatedTracks[_queue[index].identityKey];
+        final source = updatedByPath[_queue[index].path];
+        if (source != null) {
+          _queue[index] = _mergeEditedMetadata(
+            _queue[index],
+            exact ?? source,
+            applyRating: exact != null,
+          );
         }
       }
       _selectedLibraryPaths.clear();
