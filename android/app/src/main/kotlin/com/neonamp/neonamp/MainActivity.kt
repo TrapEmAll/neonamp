@@ -453,19 +453,34 @@ class MainActivity : AudioServiceActivity() {
             ?: "bin"
         val cachedFile = File(cacheDirectory, "${sha256(sourceUri.toString())}.$extension")
         var sourceSize = -1L
+        var sourceModified = -1L
         contentResolver.query(
             sourceUri,
-            arrayOf(OpenableColumns.SIZE),
+            arrayOf(
+                OpenableColumns.SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+            ),
             null,
             null,
             null,
         )?.use { cursor ->
             val sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE)
-            if (sizeColumn >= 0 && cursor.moveToFirst() && !cursor.isNull(sizeColumn)) {
+            if (!cursor.moveToFirst()) return@use
+            if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) {
                 sourceSize = cursor.getLong(sizeColumn)
             }
+            val modifiedColumn = cursor.getColumnIndex(
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+            )
+            if (modifiedColumn >= 0 && !cursor.isNull(modifiedColumn)) {
+                sourceModified = cursor.getLong(modifiedColumn)
+            }
         }
-        if (cachedFile.isFile && (sourceSize < 0 || cachedFile.length() == sourceSize)) {
+        val hasFreshnessMetadata = sourceSize >= 0 || sourceModified > 0
+        val cacheMatchesSource = hasFreshnessMetadata &&
+            (sourceSize < 0 || cachedFile.length() == sourceSize) &&
+            (sourceModified <= 0 || cachedFile.lastModified() == sourceModified)
+        if (cachedFile.isFile && cacheMatchesSource) {
             return cachedFile.absolutePath
         }
         val temporaryFile = File.createTempFile(
@@ -483,6 +498,7 @@ class MainActivity : AudioServiceActivity() {
                 temporaryFile.copyTo(cachedFile, overwrite = true)
             }
             temporaryFile.delete()
+            if (sourceModified > 0) cachedFile.setLastModified(sourceModified)
             return cachedFile.absolutePath
         } catch (error: Throwable) {
             temporaryFile.delete()
