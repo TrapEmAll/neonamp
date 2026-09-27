@@ -1681,6 +1681,18 @@ List<Track> toggleTrackBookmark(List<Track> bookmarks, Track track) {
   return [...bookmarks, track];
 }
 
+List<Track> toggleTrackFavorite(List<Track> tracks, Track track) {
+  final index = tracks.indexWhere(
+    (item) => item.identityKey == track.identityKey,
+  );
+  if (index < 0) return tracks;
+  final updated = List<Track>.of(tracks);
+  updated[index] = updated[index].copyWith(
+    favorite: !updated[index].favorite,
+  );
+  return updated;
+}
+
 class Track {
   Track({
     required this.path,
@@ -6053,13 +6065,18 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   void _toggleFavorite(Track track) {
-    final index = _library.indexWhere((item) => item.path == track.path);
+    final updatedLibrary = toggleTrackFavorite(_library, track);
+    final index = updatedLibrary.indexWhere(
+      (item) => item.identityKey == track.identityKey,
+    );
     if (index < 0) return;
-    final updated = track.copyWith(favorite: !track.favorite);
+    final updated = updatedLibrary[index];
     setState(() {
-      _library[index] = updated;
+      _library
+        ..clear()
+        ..addAll(updatedLibrary);
       for (var queueIndex = 0; queueIndex < _queue.length; queueIndex++) {
-        if (_queue[queueIndex].path == track.path) {
+        if (_queue[queueIndex].identityKey == track.identityKey) {
           _queue[queueIndex] = _queue[queueIndex].copyWith(
             favorite: updated.favorite,
           );

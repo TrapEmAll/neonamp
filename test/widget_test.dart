@@ -1509,6 +1509,29 @@ FILE "disc image.flac" WAVE
     expect(toggleTrackBookmark([], first), [first]);
   });
 
+  test('favorite toggling distinguishes virtual CUE tracks', () {
+    final first = Track(
+      path: 'album.flac',
+      name: 'First',
+      cueStartMs: 0,
+      cueEndMs: 60000,
+      trackNumber: 1,
+    );
+    final second = Track(
+      path: 'album.flac',
+      name: 'Second',
+      cueStartMs: 60000,
+      cueEndMs: 120000,
+      trackNumber: 2,
+    );
+
+    final toggled = toggleTrackFavorite([first, second], first);
+
+    expect(toggled[0].favorite, isTrue);
+    expect(toggled[1].favorite, isFalse);
+    expect(toggleTrackFavorite(toggled, first)[0].favorite, isFalse);
+  });
+
   test('iTunes XML library preserves metadata and named playlists', () {
     final sourceTrack = Track(
       path: 'C:\\Music\\Artist\\Song & Title.mp3',
