@@ -2293,6 +2293,22 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     _broadcast(position: Duration.zero, state: PlayerState.stopped);
   }
 
+  void syncQueue(Iterable<Track> tracks) {
+    if (_closed) return;
+    queue.add([
+      for (final track in tracks)
+        MediaItem(
+          id: track.identityKey,
+          title: track.name,
+          artist: track.artist,
+          album: track.album,
+          duration: track.cueEnd == null
+              ? null
+              : track.cueEnd! - track.cueStart,
+        ),
+    ]);
+  }
+
   Duration _relativePosition(Duration source) {
     final relative = source - _trackStart;
     return relative.isNegative ? Duration.zero : relative;
@@ -3857,6 +3873,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (_playerLayoutCustomized)
         'playerControls': List<String>.of(_playerControls),
     };
+    _audioHandler?.syncQueue(_queue);
     await prefs.setString('queueTracks', jsonEncode(queueTracks));
     await Future.wait([
       prefs.setStringList('queue', queuePaths),
