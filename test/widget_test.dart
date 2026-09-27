@@ -1783,6 +1783,17 @@ FILE "disc image.flac" WAVE
     expect(toggleTrackFavorite(toggled, first)[0].favorite, isFalse);
   });
 
+  test('bookmark and favorite toggles recognize local path aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final local = Track(path: physicalPath, name: 'Track');
+    final uri = Track(path: Uri.file(physicalPath).toString(), name: 'Track');
+
+    expect(toggleTrackBookmark([local], uri), isEmpty);
+    expect(toggleTrackFavorite([local], uri).single.favorite, isTrue);
+  });
+
   test('artwork updates preserve virtual CUE metadata', () {
     final track = Track(
       path: 'album.flac',

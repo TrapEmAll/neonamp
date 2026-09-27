@@ -4829,7 +4829,7 @@ class _PlayerPageState extends State<PlayerPage>
             ..clear()
             ..addAll(addToPlayHistory(_playHistory, track.identityKey));
           final libraryIndex = _library.indexWhere(
-            (item) => item.identityKey == track.identityKey,
+            (item) => sameTrackIdentity(item, track),
           );
           if (libraryIndex >= 0) {
             _library[libraryIndex] = _library[libraryIndex].copyWith(
@@ -4996,7 +4996,7 @@ class _PlayerPageState extends State<PlayerPage>
           ..addAll(addToPlayHistory(_playHistory, track.identityKey));
         final updatedTrack = track.copyWith(playCount: track.playCount + 1);
         final libraryIndex = _library.indexWhere(
-          (item) => item.identityKey == track.identityKey,
+          (item) => sameTrackIdentity(item, track),
         );
         if (libraryIndex >= 0) {
           _library[libraryIndex] = updatedTrack;
@@ -5091,7 +5091,7 @@ class _PlayerPageState extends State<PlayerPage>
           ..addAll(addToPlayHistory(_playHistory, track.identityKey));
         final updatedTrack = track.copyWith(playCount: track.playCount + 1);
         final libraryIndex = _library.indexWhere(
-          (item) => item.identityKey == track.identityKey,
+          (item) => sameTrackIdentity(item, track),
         );
         if (libraryIndex >= 0) {
           _library[libraryIndex] = updatedTrack;
@@ -5187,7 +5187,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   bool _isBookmarked(Track track) =>
-      _bookmarks.any((item) => item.identityKey == track.identityKey);
+      _bookmarks.any((item) => sameTrackIdentity(item, track));
 
   Future<void> _toggleBookmark(Track track) async {
     if (!mounted) return;
@@ -5204,7 +5204,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted || _crossfadeInProgress) return;
     final operation = ++_queueOperationGeneration;
     var index = _queue.indexWhere(
-      (item) => item.identityKey == track.identityKey,
+      (item) => sameTrackIdentity(item, track),
     );
     if (index < 0) {
       setState(() {
@@ -6391,7 +6391,7 @@ class _PlayerPageState extends State<PlayerPage>
   void _toggleFavorite(Track track) {
     final updatedLibrary = toggleTrackFavorite(_library, track);
     final index = updatedLibrary.indexWhere(
-      (item) => item.identityKey == track.identityKey,
+      (item) => sameTrackIdentity(item, track),
     );
     if (index < 0) return;
     final updated = updatedLibrary[index];
@@ -6626,7 +6626,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted) return;
     setState(() {
       final libraryIndex = _library.indexWhere(
-        (item) => item.identityKey == track.identityKey,
+        (item) => sameTrackIdentity(item, track),
       );
       if (libraryIndex >= 0) {
         _library[libraryIndex] = _mergeEditedMetadata(
@@ -6639,7 +6639,7 @@ class _PlayerPageState extends State<PlayerPage>
           _queue[i] = _mergeEditedMetadata(
             _queue[i],
             updated,
-            applyRating: _queue[i].identityKey == track.identityKey,
+            applyRating: sameTrackIdentity(_queue[i], track),
           );
         }
       }
