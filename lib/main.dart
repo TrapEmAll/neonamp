@@ -1693,6 +1693,18 @@ List<Track> toggleTrackFavorite(List<Track> tracks, Track track) {
   return updated;
 }
 
+List<Track> mergeTracksByIdentity(
+  List<Track> existing,
+  Iterable<Track> additions,
+) {
+  final merged = List<Track>.of(existing);
+  final identities = merged.map((track) => track.identityKey).toSet();
+  for (final track in additions) {
+    if (identities.add(track.identityKey)) merged.add(track);
+  }
+  return merged;
+}
+
 class Track {
   Track({
     required this.path,
@@ -3309,19 +3321,22 @@ class _PlayerPageState extends State<PlayerPage>
     final savedSettings = prefs.getString('settings');
     if (!mounted) return;
     setState(() {
+      final restoredLibrary = <Track>[];
       for (final value in savedLibrary) {
         try {
           final decoded = jsonDecode(value);
           if (decoded is Map) {
             final track = Track.fromJson(Map<String, dynamic>.from(decoded));
-            if (_library.every((item) => item.path != track.path)) {
-              _library.add(track);
-            }
+            restoredLibrary.add(track);
           }
         } on Object catch (error) {
           debugPrint('Skipping invalid saved library track: $error');
         }
       }
+      final mergedLibrary = mergeTracksByIdentity(_library, restoredLibrary);
+      _library
+        ..clear()
+        ..addAll(mergedLibrary);
       if (savedBookmarks != null) {
         try {
           final decoded = jsonDecode(savedBookmarks);

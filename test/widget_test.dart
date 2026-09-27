@@ -475,6 +475,28 @@ FILE "disc image.flac" WAVE
     expect(tracks[2].end, const Duration(minutes: 10));
   });
 
+  test('saved library merging preserves distinct CUE identities', () {
+    final first = Track(
+      path: '/music/disc.flac',
+      name: 'Opening',
+      cueStartMs: 0,
+      cueEndMs: 180000,
+      trackNumber: 1,
+    );
+    final second = Track(
+      path: '/music/disc.flac',
+      name: 'Second Track',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+    );
+
+    final merged = mergeTracksByIdentity([first], [second, first]);
+
+    expect(merged, hasLength(2));
+    expect(merged.map((track) => track.name), ['Opening', 'Second Track']);
+  });
+
   test('CUE playback timing is relative to each source segment', () {
     expect(
       cueRelativePosition(
