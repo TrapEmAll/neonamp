@@ -1733,10 +1733,9 @@ List<Track> mergeTracksByIdentity(
   Iterable<Track> additions,
 ) {
   final merged = List<Track>.of(existing);
-  final identities = <Track>[]..addAll(merged);
+  final identities = merged.map(trackIdentityKey).toSet();
   for (final track in additions) {
-    if (identities.every((item) => !sameTrackIdentity(item, track))) {
-      identities.add(track);
+    if (identities.add(trackIdentityKey(track))) {
       merged.add(track);
     }
   }
@@ -1772,12 +1771,19 @@ String trackPathKey(String path) {
 bool sameTrackPath(String first, String second) =>
     trackPathKey(first) == trackPathKey(second);
 
+String trackIdentityKey(Track track) {
+  final path = trackPathKey(track.path);
+  if (track.cueStartMs == null) return path;
+  return jsonEncode([
+    path,
+    track.cueStartMs,
+    track.cueEndMs,
+    track.trackNumber,
+  ]);
+}
+
 bool sameTrackIdentity(Track first, Track second) {
-  if (!sameTrackPath(first.path, second.path)) return false;
-  if (first.cueStartMs == null && second.cueStartMs == null) return true;
-  return first.cueStartMs == second.cueStartMs &&
-      first.cueEndMs == second.cueEndMs &&
-      first.trackNumber == second.trackNumber;
+  return trackIdentityKey(first) == trackIdentityKey(second);
 }
 
 int selectedQueueIndexAfterRemoval(
