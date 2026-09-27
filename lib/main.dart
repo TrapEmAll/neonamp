@@ -172,6 +172,21 @@ int storedInt(Map<String, dynamic> settings, String key, int fallback) {
   return value is num ? value.toInt() : fallback;
 }
 
+List<double>? storedDoubles(
+  Map<String, dynamic> settings,
+  String key,
+  int expectedLength,
+) {
+  final value = settings[key];
+  if (value is! List || value.length != expectedLength) return null;
+  final numbers = <double>[];
+  for (final item in value) {
+    if (item is! num || !item.isFinite) return null;
+    numbers.add(item.toDouble());
+  }
+  return numbers;
+}
+
 String storedString(Map<String, dynamic> settings, String key, String fallback) {
   final value = settings[key];
   return value is String ? value : fallback;
@@ -3672,11 +3687,13 @@ class _PlayerPageState extends State<PlayerPage>
             _playerControls = normalizePlayerControls(savedPlayerControls);
             _playerLayoutCustomized = true;
           }
-          final savedBands = (settings['eqBands'] as List?)?.cast<num>();
-          if (savedBands != null && savedBands.length == _eqBands.length) {
-            for (var i = 0; i < _eqBands.length; i++) {
-              _eqBands[i] = savedBands[i].toDouble();
-            }
+          final savedBands = storedDoubles(
+            settings,
+            'eqBands',
+            _eqBands.length,
+          );
+          if (savedBands != null) {
+            _eqBands.setAll(0, savedBands);
           }
         } on Object catch (error) {
           debugPrint('Ignoring invalid saved settings: $error');

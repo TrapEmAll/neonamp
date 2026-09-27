@@ -751,6 +751,11 @@ FILE "disc image.flac" WAVE
     expect(storedBool(settings, 'shuffle', false), isFalse);
     expect(storedString(settings, 'eqPreset', 'Flat'), 'Rock');
     expect(storedInt(settings, 'missing', 3), 3);
+    expect(storedDoubles(settings, 'eqBands', 2), isNull);
+    expect(
+      storedDoubles({'eqBands': [1, -2.5]}, 'eqBands', 2),
+      [1.0, -2.5],
+    );
   });
 
   test('remote media detection accepts mixed-case HTTP URLs only', () {
