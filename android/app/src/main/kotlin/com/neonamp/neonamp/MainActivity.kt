@@ -1026,6 +1026,7 @@ class MainActivity : AudioServiceActivity() {
                         name
                     }
                     val sidecarLyrics = readSidecarLyrics(treeUri, parentId, name)
+                    val folderArtwork = readFolderArtwork(treeUri, parentId)
                     results.add(
                         mapOf(
                             // Keep the provider URI as the durable library identity.
@@ -1039,6 +1040,7 @@ class MainActivity : AudioServiceActivity() {
                             "size" to sourceSize,
                             "modified" to sourceModified,
                             "sidecarLyrics" to sidecarLyrics,
+                            "folderArtwork" to folderArtwork,
                         ),
                     )
                 }
@@ -1087,6 +1089,52 @@ class MainActivity : AudioServiceActivity() {
                         ?.bufferedReader()
                         ?.use { reader -> reader.readText() }
                         ?.takeIf { it.isNotBlank() }
+                }
+                null
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun readFolderArtwork(
+        treeUri: Uri,
+        parentDocumentId: String,
+    ): ByteArray? {
+        val artworkNames = setOf("cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.jpeg", "folder.png")
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+            treeUri,
+            parentDocumentId,
+        )
+        return try {
+            contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                )
+                val nameColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                )
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(nameColumn)?.lowercase(Locale.ROOT) ?: continue
+                    if (name !in artworkNames) continue
+                    val documentUri = DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        cursor.getString(idColumn),
+                    )
+                    val bytes = contentResolver.openInputStream(documentUri)
+                        ?.use { stream -> stream.readBytes() }
+                    if (bytes != null && bytes.isNotEmpty() && bytes.size <= 8 * 1024 * 1024) {
+                        return@use bytes
+                    }
                 }
                 null
             }
