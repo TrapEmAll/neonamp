@@ -2965,6 +2965,7 @@ class _PlayerPageState extends State<PlayerPage>
         return;
       }
       setState(() => _playerState = value);
+      unawaited(_syncAndroidWidget());
       _runAsyncSafely(
         _syncWindowsMediaSession(),
         'Updating Windows media session',
@@ -3053,6 +3054,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       setState(() => _playerState = value);
       _audioHandler?.syncExternalState(position: _position, state: value);
+      unawaited(_syncAndroidWidget());
       _runAsyncSafely(
         _syncWindowsMediaSession(),
         'Updating Windows media session',
@@ -3127,6 +3129,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       setState(() => _playerState = value);
       _audioHandler?.syncExternalState(position: _position, state: value);
+      unawaited(_syncAndroidWidget());
       _runAsyncSafely(
         _syncWindowsMediaSession(),
         'Updating Windows media session',
