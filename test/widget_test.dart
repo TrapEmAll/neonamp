@@ -2120,7 +2120,7 @@ FILE "disc image.flac" WAVE
   test('scopes WebDAV credentials to the server origin', () {
     expect(
       webDavCredentialKey(Uri.parse('HTTPS://NAS.example:443/music/album/a.flac')),
-      'https://nas.example:443',
+      'https://nas.example',
     );
     expect(
       webDavCredentialKey(Uri.parse('https://nas.example/music/album/b.flac')),

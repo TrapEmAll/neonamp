@@ -189,10 +189,24 @@ bool isHttpUri(Uri? uri) {
   return scheme == 'http' || scheme == 'https';
 }
 
-String webDavCredentialKey(Uri uri) => uri
-    .replace(path: '', query: '', fragment: '')
-    .toString()
-    .toLowerCase();
+String webDavCredentialKey(Uri uri) {
+  final scheme = uri.scheme.toLowerCase();
+  final port = (scheme == 'http' && uri.port == 80) ||
+          (scheme == 'https' && uri.port == 443)
+      ? 0
+      : uri.port;
+  return uri
+      .replace(
+        scheme: scheme,
+        userInfo: '',
+        host: uri.host.toLowerCase(),
+        port: port,
+        path: '',
+        query: '',
+        fragment: '',
+      )
+      .toString();
+}
 
 class LrcLine {
   const LrcLine(this.timestamp, this.text);
