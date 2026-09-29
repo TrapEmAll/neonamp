@@ -5521,18 +5521,17 @@ class _PlayerPageState extends State<PlayerPage>
       }
 
       var added = 0;
+      var updated = 0;
+      final discovered = <Track>[];
       for (final item in results ?? const <Map<Object?, Object?>>[]) {
         final path = item['path'] as String?;
         if (path == null || path.isEmpty) continue;
-        if (_library.any((existing) => sameTrackPath(existing.path, path))) {
-          continue;
-        }
         final title = item['title'] as String?;
         final name = item['name'] as String?;
         final artwork = item['artwork'] is Uint8List
             ? item['artwork'] as Uint8List
             : null;
-        _library.add(
+        discovered.add(
           Track(
             path: path,
             name: valueOr(name, valueOr(title, 'Unknown audio')),
@@ -5541,12 +5540,39 @@ class _PlayerPageState extends State<PlayerPage>
             artwork: artwork,
           ),
         );
-        added++;
       }
+      if (!mounted || operation != _libraryOperationGeneration) return;
+      setState(() {
+        for (final discoveredTrack in discovered) {
+          final existingIndex = _library.indexWhere(
+            (existing) => sameTrackPath(existing.path, discoveredTrack.path),
+          );
+          if (existingIndex < 0) {
+            _library.add(discoveredTrack);
+            added++;
+            continue;
+          }
+          final existing = _library[existingIndex];
+          final merged = existing.copyWith(
+            name: discoveredTrack.name,
+            artist: discoveredTrack.artist,
+            album: discoveredTrack.album,
+            artwork: discoveredTrack.artwork ?? existing.artwork,
+          );
+          if (merged.toJson().toString() != existing.toJson().toString()) {
+            _library[existingIndex] = merged;
+            updated++;
+          }
+        }
+      });
       await _saveQueue();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added $added device track(s) to the library.')),
+          SnackBar(
+            content: Text(
+              'Added $added device track(s)${updated == 0 ? '' : ' · Updated $updated'}',
+            ),
+          ),
         );
       }
     } on Object catch (error) {
