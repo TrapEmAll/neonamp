@@ -6273,7 +6273,6 @@ class _PlayerPageState extends State<PlayerPage>
       return type is num && const {7, 8, 11, 22}.contains(type.toInt());
     });
     for (final value in [...preferred, ...outputDevices]) {
-      if (value is! Map) continue;
       final name = value['name']?.toString().trim() ?? '';
       final address = value['address']?.toString().trim() ?? '';
       if (name.isNotEmpty || address.isNotEmpty) return '$address|$name';
