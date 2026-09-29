@@ -1124,7 +1124,18 @@ class MainActivity : AudioServiceActivity() {
         treeUri: Uri,
         parentDocumentId: String,
     ): ByteArray? {
-        val artworkNames = setOf("cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.jpeg", "folder.png")
+        val artworkNames = setOf(
+            "cover.jpg",
+            "cover.jpeg",
+            "cover.png",
+            "cover.webp",
+            "cover.avif",
+            "folder.jpg",
+            "folder.jpeg",
+            "folder.png",
+            "folder.webp",
+            "folder.avif",
+        )
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
             treeUri,
             parentDocumentId,
