@@ -6302,6 +6302,10 @@ class _PlayerPageState extends State<PlayerPage>
                   Text('Codec: ${current?['codec'] ?? 'unknown'}'),
                   Text('Bluetooth A2DP: ${current?['bluetoothA2dpOn'] == true ? 'connected' : 'not active'}'),
                   Text('Music volume: ${current?['musicVolume'] ?? '?'} / ${current?['musicMaxVolume'] ?? '?'}'),
+                  if (current?['activeDevice'] is Map)
+                    Text(
+                      'Active output: ${((current?['activeDevice'] as Map)['name'] ?? 'unknown').toString()}',
+                    ),
                   const SizedBox(height: 12),
                   Text(liveDevices.isEmpty ? 'No output devices reported.' : 'Outputs:\n${liveDevices.join('\n')}'),
                   const SizedBox(height: 8),

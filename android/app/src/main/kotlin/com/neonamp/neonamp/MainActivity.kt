@@ -12,6 +12,7 @@ import android.media.MediaMuxer
 import android.media.AudioManager
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
+import android.media.AudioFormat
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.PowerManager
@@ -754,17 +755,32 @@ class MainActivity : AudioServiceActivity() {
             ?.toIntOrNull()
         val devices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { device ->
+                val encodings = device.encodings.toList()
                 mapOf(
                     "type" to device.type,
                     "name" to device.productName.toString(),
                     "address" to device.address,
+                    "sampleRates" to device.sampleRates.toList(),
+                    "encodings" to encodings,
+                    "bitDepths" to encodings.mapNotNull(::pcmBitDepth).distinct().sorted(),
                 )
             }
         } else {
             emptyList<Map<String, Any>>()
         }
+        val activeDevice = devices.firstOrNull { device ->
+            val type = device["type"] as? Int ?: return@firstOrNull false
+            type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+                type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
+        } ?: devices.firstOrNull()
+        val activeBitDepths = (activeDevice?.get("bitDepths") as? List<*>)
+            ?.filterIsInstance<Int>()
         return mapOf(
             "devices" to devices,
+            "activeDevice" to activeDevice,
             "sampleRate" to sampleRate,
             "framesPerBuffer" to framesPerBuffer,
             "bufferLatencyMs" to if (sampleRate != null && sampleRate > 0 && framesPerBuffer != null) {
@@ -772,12 +788,30 @@ class MainActivity : AudioServiceActivity() {
             } else {
                 null
             },
-            "bitDepth" to "OS-managed",
-            "codec" to if (manager.isBluetoothA2dpOn) "Bluetooth codec managed by Android" else "PCM",
+            "bitDepth" to if (activeBitDepths.isNullOrEmpty()) {
+                "OS-managed"
+            } else {
+                activeBitDepths.joinToString("/") { "$it-bit PCM" }
+            },
+            "codec" to if (manager.isBluetoothA2dpOn) {
+                "Bluetooth codec managed by Android"
+            } else if (activeDevice != null) {
+                "PCM (${activeDevice["name"]})"
+            } else {
+                "PCM"
+            },
             "bluetoothA2dpOn" to manager.isBluetoothA2dpOn,
             "musicVolume" to manager.getStreamVolume(AudioManager.STREAM_MUSIC),
             "musicMaxVolume" to manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         )
+    }
+
+    private fun pcmBitDepth(encoding: Int): Int? = when (encoding) {
+        AudioFormat.ENCODING_PCM_8BIT -> 8
+        AudioFormat.ENCODING_PCM_16BIT -> 16
+        AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
+        AudioFormat.ENCODING_PCM_32BIT -> 32
+        else -> null
     }
 
     private fun queryMediaStore(result: MethodChannel.Result) {
