@@ -8613,6 +8613,58 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _downloadRemoteTrack(Track track) async {
+    final source = Uri.tryParse(track.path);
+    if (source == null || !isHttpUri(source)) return;
+    final directory = await _pickFolderLocation('Choose an offline music folder');
+    if (!mounted || directory == null) return;
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(source);
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('Remote track returned ${response.statusCode}');
+      }
+      final safeName = syncFileName(track.name);
+      final sourceExtension = source.path.split('.').last.toLowerCase();
+      final filename = safeName.contains('.')
+          ? safeName
+          : '$safeName.${RegExp(r'^[a-z0-9]{1,5}$').hasMatch(sourceExtension) ? sourceExtension : 'mp3'}';
+      final target = Platform.isAndroid
+          ? File(
+              '${(await getApplicationSupportDirectory()).path}'
+              '${Platform.pathSeparator}offline${Platform.pathSeparator}$filename',
+            )
+          : File('$directory${Platform.pathSeparator}$filename');
+      await target.parent.create(recursive: true);
+      await response.pipe(target.openWrite());
+      if (Platform.isAndroid) {
+        await _copyFileToFolder(directory, target.path, filename);
+      }
+      final downloaded = track.copyWith(path: target.path, name: filename);
+      if (!mounted) return;
+      setState(() {
+        if (!_library.any((item) => sameTrackPath(item.path, downloaded.path))) {
+          _library.add(downloaded);
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saved ${track.name} for offline playback.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save this track offline: $error')),
+        );
+      }
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   String? _rssValue(String item, String tag) {
     final match = RegExp(
       '<(?:[A-Za-z0-9_]+:)?$tag\\b[^>]*>([\\s\\S]*?)</(?:[A-Za-z0-9_]+:)?$tag>',
@@ -12190,6 +12242,16 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
                 onPressed: () => _downloadArtwork(track),
               ),
+              if (isRemoteMediaPath(track.path))
+                IconButton(
+                  tooltip: 'Save for offline playback',
+                  icon: const Icon(
+                    Icons.download_for_offline_outlined,
+                    size: 17,
+                    color: Colors.white30,
+                  ),
+                  onPressed: () => _downloadRemoteTrack(track),
+                ),
               if (!isUriMediaPath(track.path))
                 IconButton(
                   tooltip: 'Convert to M4A',

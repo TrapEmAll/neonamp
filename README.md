@@ -19,6 +19,7 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Add HTTP audio streams and online radio URLs.
 - Discover DLNA/UPnP network players and cast local audio or HTTP(S) streams from Windows or Android; local files are served temporarily over the LAN, so both devices must be able to communicate on the same network.
 - Android also includes Google Cast discovery, remote transport, seek, volume, album artwork, and track metadata for HTTP(S) audio streams and local/provider-backed audio; local media is served temporarily over the LAN because the Cast receiver requires a network URL.
+- Remote HTTP(S) library tracks expose an explicit offline-download action; downloaded copies retain their metadata and are not inserted into the playback queue automatically.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
