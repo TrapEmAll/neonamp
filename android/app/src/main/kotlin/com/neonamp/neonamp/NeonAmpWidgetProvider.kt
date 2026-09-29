@@ -17,7 +17,7 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
         manager: AppWidgetManager,
         widgetIds: IntArray,
     ) {
-        updateAll(context, "NeonAmp", "Nothing queued", false, null)
+        updateFromStoredState(context)
     }
 
     override fun onAppWidgetOptionsChanged(
@@ -27,7 +27,7 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
         newOptions: android.os.Bundle,
     ) {
         super.onAppWidgetOptionsChanged(context, manager, appWidgetId, newOptions)
-        updateAll(context, "NeonAmp", "Nothing queued", false, null)
+        updateFromStoredState(context)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -60,11 +60,25 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
         }
     }
 
-    companion object {
+        companion object {
         const val ACTION_PLAY_PAUSE = "com.neonamp.neonamp.WIDGET_PLAY_PAUSE"
         const val ACTION_NEXT = "com.neonamp.neonamp.WIDGET_NEXT"
         const val ACTION_PREVIOUS = "com.neonamp.neonamp.WIDGET_PREVIOUS"
         const val ACTION_OPEN = "com.neonamp.neonamp.WIDGET_OPEN"
+
+        private fun updateFromStoredState(context: Context) {
+            val state = context.getSharedPreferences("neonamp_widget", Context.MODE_PRIVATE)
+            val artwork = state.getString("artwork", null)?.let {
+                try { android.util.Base64.decode(it, android.util.Base64.DEFAULT) } catch (_: Throwable) { null }
+            }
+            updateAll(
+                context,
+                state.getString("title", "NeonAmp") ?: "NeonAmp",
+                state.getString("artist", "Nothing queued") ?: "Nothing queued",
+                state.getBoolean("playing", false),
+                artwork,
+            )
+        }
 
         fun updateAll(
             context: Context,
@@ -73,6 +87,16 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
             playing: Boolean,
             artwork: ByteArray?,
         ) {
+            val state = context.getSharedPreferences("neonamp_widget", Context.MODE_PRIVATE)
+            state.edit()
+                .putString("title", title)
+                .putString("artist", artist)
+                .putBoolean("playing", playing)
+                .apply {
+                    if (artwork == null) remove("artwork")
+                    else putString("artwork", android.util.Base64.encodeToString(artwork, android.util.Base64.NO_WRAP))
+                }
+                .apply()
             val manager = AppWidgetManager.getInstance(context)
             val component = ComponentName(context, NeonAmpWidgetProvider::class.java)
             val ids = manager.getAppWidgetIds(component)
