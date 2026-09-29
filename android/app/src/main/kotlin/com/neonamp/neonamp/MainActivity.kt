@@ -1045,11 +1045,26 @@ class MainActivity : AudioServiceActivity() {
     }
 
     private fun mediaIntentPayload(intent: Intent?): Map<String, String>? {
-        if (intent?.action != Intent.ACTION_VIEW) return null
-        val uri = intent.data ?: return null
+        if (intent == null) return null
+        val action = intent.action
+        val sharedText = if (action == Intent.ACTION_SEND) {
+            intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()?.takeIf { it.isNotEmpty() }
+        } else {
+            null
+        }
+        val uri = when {
+            sharedText != null -> Uri.parse(sharedText)
+            action == Intent.ACTION_VIEW -> intent.data
+            action == Intent.ACTION_SEND -> intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            else -> null
+        } ?: return null
         val mimeType = intent.type.orEmpty()
+        val isHttpStream = uri.scheme.equals("http", ignoreCase = true) ||
+            uri.scheme.equals("https", ignoreCase = true)
         val kind = when {
-            mimeType.startsWith("audio/", ignoreCase = true) || isSupportedMediaUri(uri) -> "audio"
+            mimeType.startsWith("audio/", ignoreCase = true) ||
+                isSupportedMediaUri(uri) ||
+                isHttpStream -> "audio"
             isSupportedPlaylistUri(uri, mimeType) -> "playlist"
             isCueUri(uri, mimeType) -> "cue"
             else -> return null
