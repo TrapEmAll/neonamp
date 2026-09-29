@@ -2283,6 +2283,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<void> Function()? onPauseRequested;
   Future<void> Function()? onStopRequested;
   Future<void> Function(Duration position)? onSeekRequested;
+  Future<List<MediaItem>> Function(String parentMediaId)? onBrowseChildren;
+  Future<void> Function(String mediaId)? onPlayMediaId;
+  Future<List<MediaItem>> Function(String query)? onSearchRequested;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
@@ -2452,6 +2455,25 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   @override
   Future<void> stop() =>
       _closed ? Future<void>.value() : onStopRequested?.call() ?? player.stop();
+
+  @override
+  Future<List<MediaItem>> getChildren(
+    String parentMediaId, [Map<String, dynamic>? options]
+  ) async =>
+      onBrowseChildren?.call(parentMediaId) ?? const <MediaItem>[];
+
+  @override
+  Future<void> playFromMediaId(
+    String mediaId, [Map<String, dynamic>? extras]
+  ) async {
+    await onPlayMediaId?.call(mediaId);
+  }
+
+  @override
+  Future<List<MediaItem>> search(
+    String query, [Map<String, dynamic>? extras]
+  ) async =>
+      onSearchRequested?.call(query) ?? const <MediaItem>[];
 
   @override
   Future<void> seek(Duration position) {
@@ -2825,9 +2847,128 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       await _loadQueue();
       await _consumeIncomingMediaIntent();
+      _configureAndroidAutoBrowse();
     } on Object catch (error, stackTrace) {
       debugPrint('Could not restore NeonAmp state: $error\n$stackTrace');
     }
+  }
+
+  void _configureAndroidAutoBrowse() {
+    final handler = _audioHandler;
+    if (handler == null) return;
+    handler.onBrowseChildren = _androidAutoChildren;
+    handler.onPlayMediaId = _playAndroidAutoMedia;
+    handler.onSearchRequested = _searchAndroidAutoMedia;
+  }
+
+  MediaItem _androidAutoTrack(Track track) => MediaItem(
+    id: track.identityKey,
+    title: track.name,
+    artist: track.artist,
+    album: track.album,
+    playable: true,
+    duration: track.cueEnd == null
+        ? null
+        : track.cueEnd! - track.cueStart,
+    extras: <String, dynamic>{'path': track.path},
+  );
+
+  MediaItem _androidAutoFolder(String id, String title) => MediaItem(
+    id: id,
+    title: title,
+    playable: false,
+    extras: const <String, dynamic>{'browsable': true},
+  );
+
+  Future<List<MediaItem>> _androidAutoChildren(String parentId) async {
+    final id = parentId.isEmpty ? AudioService.browsableRootId : parentId;
+    if (id == AudioService.browsableRootId) {
+      return [
+        _androidAutoFolder('all', 'All music'),
+        _androidAutoFolder('artists', 'Artists'),
+        _androidAutoFolder('albums', 'Albums'),
+        _androidAutoFolder('favorites', 'Favorites'),
+        _androidAutoFolder('playlists', 'Playlists'),
+        _androidAutoFolder('podcasts', 'Podcasts'),
+        _androidAutoFolder('recent', 'Recently played'),
+      ];
+    }
+    if (id == 'all') return _library.map(_androidAutoTrack).toList();
+    if (id == 'favorites') {
+      return _library.where((track) => track.favorite).map(_androidAutoTrack).toList();
+    }
+    if (id == 'recent') {
+      return _playHistory
+          .map((key) => trackForStoredKey(_library, key))
+          .map(_androidAutoTrack)
+          .toList();
+    }
+    if (id == 'podcasts') {
+      return _library
+          .where((track) => track.genre.toLowerCase() == 'podcast')
+          .map(_androidAutoTrack)
+          .toList();
+    }
+    if (id == 'artists' || id == 'albums') {
+      final values = <String>{};
+      for (final track in _library) {
+        final value = id == 'artists' ? track.artist : track.album;
+        if (value.trim().isNotEmpty) values.add(value);
+      }
+      final sorted = values.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return sorted
+          .map((value) => _androidAutoFolder(
+                '${id.substring(0, id.length - 1)}:${Uri.encodeComponent(value)}',
+                value,
+              ))
+          .toList();
+    }
+    if (id == 'playlists') {
+      return _playlists.keys
+          .map((name) => _androidAutoFolder('playlist:${Uri.encodeComponent(name)}', name))
+          .toList();
+    }
+    if (id.startsWith('artist:') || id.startsWith('album:')) {
+      final value = Uri.decodeComponent(id.substring(id.indexOf(':') + 1));
+      final artist = id.startsWith('artist:');
+      return _library
+          .where((track) => (artist ? track.artist : track.album) == value)
+          .map(_androidAutoTrack)
+          .toList();
+    }
+    if (id.startsWith('playlist:')) {
+      final name = Uri.decodeComponent(id.substring('playlist:'.length));
+      return (_playlists[name] ?? const <String>[])
+          .map((key) => trackForStoredKey(_library, key))
+          .map(_androidAutoTrack)
+          .toList();
+    }
+    return const <MediaItem>[];
+  }
+
+  Future<void> _playAndroidAutoMedia(String mediaId) async {
+    final track = _library
+        .where((item) => item.identityKey == mediaId)
+        .firstOrNull;
+    if (track == null || !mounted) return;
+    final existing = _queue.indexWhere((item) => sameTrackIdentity(item, track));
+    final index = existing >= 0 ? existing : _queue.length;
+    if (existing < 0) _queue.add(track);
+    await _saveQueue();
+    if (mounted) await _select(index);
+  }
+
+  Future<List<MediaItem>> _searchAndroidAutoMedia(String query) async {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return const <MediaItem>[];
+    return _library
+        .where((track) =>
+            '${track.name} ${track.artist} ${track.album}'
+                .toLowerCase()
+                .contains(normalized))
+        .map(_androidAutoTrack)
+        .toList();
   }
 
   Future<void> _consumeIncomingMediaIntent() async {
