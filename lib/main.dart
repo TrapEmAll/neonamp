@@ -5336,6 +5336,24 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _saveQueueSnapshotManually() async {
+    if (_queue.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('There is no queue to save.')),
+        );
+      }
+      return;
+    }
+    _rememberQueueSnapshot();
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Queue saved to history.')),
+      );
+    }
+  }
+
   Future<void> _addFiles() async {
     final operation = ++_libraryOperationGeneration;
     final result = await FilePicker.pickFiles(
@@ -11706,6 +11724,13 @@ class _PlayerPageState extends State<PlayerPage>
                 icon: const Icon(Icons.history, size: 18),
                 color: Colors.white38,
                 tooltip: 'Queue history',
+                visualDensity: VisualDensity.compact,
+              ),
+              IconButton(
+                onPressed: _saveQueueSnapshotManually,
+                icon: const Icon(Icons.save_outlined, size: 18),
+                color: Colors.white38,
+                tooltip: 'Save queue',
                 visualDensity: VisualDensity.compact,
               ),
               if (_queue.isNotEmpty)
