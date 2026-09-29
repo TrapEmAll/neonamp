@@ -3,15 +3,19 @@ name: NeonAmp build
 on:
   push:
     branches: [main, 'feat/**', 'fix/**']
+    tags: ['v*']
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   analyze-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -28,7 +32,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -46,14 +50,24 @@ jobs:
         run: cmake --build build/windows/x64 --config Release --target tracker_decoder_test
       - name: Test native tracker decoding
         run: ctest --test-dir build/windows/x64/runner/tracker -C Release --output-on-failure
+      - name: Package Windows release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "NeonAmp-Windows-${{ github.ref_name }}.zip"
+      - name: Upload Windows release artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-release
+          path: NeonAmp-Windows-${{ github.ref_name }}.zip
 
   build-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       GRADLE_OPTS: -Dorg.gradle.vfs.watch=false
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
@@ -66,13 +80,101 @@ jobs:
           cache: true
       - name: Fetch dependencies
         run: flutter pub get
+      - name: Configure Android upload signing
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_BASE64" || { echo "ANDROID_KEYSTORE_BASE64 is required for tagged Android releases"; exit 1; }
+          test -n "$ANDROID_KEYSTORE_PASSWORD" || { echo "ANDROID_KEYSTORE_PASSWORD is required for tagged Android releases"; exit 1; }
+          test -n "$ANDROID_KEY_ALIAS" || { echo "ANDROID_KEY_ALIAS is required for tagged Android releases"; exit 1; }
+          test -n "$ANDROID_KEY_PASSWORD" || { echo "ANDROID_KEY_PASSWORD is required for tagged Android releases"; exit 1; }
+          mkdir -p android/keys
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/keys/neonamp-upload.jks
+          cat > android/key.properties <<EOF
+          storeFile=../keys/neonamp-upload.jks
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
       - name: Build Android release
         run: |
           for attempt in 1 2 3; do
-            flutter build apk --release && exit 0
+            flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 && \
+              flutter build appbundle --release --target-platform android-arm,android-arm64 && exit 0
             if [ "$attempt" -lt 3 ]; then
               echo "Android build attempt $attempt failed; retrying dependency resolution..."
               sleep 15
             fi
           done
           exit 1
+      - name: Verify tagged Android artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          apksigner="$build_tools/apksigner"
+          test -x "$apksigner" || { echo "Android apksigner was not found"; exit 1; }
+          mapfile -t apks < <(find build/app/outputs/flutter-apk -type f -name '*-release.apk' -print)
+          test "${#apks[@]}" -gt 0 || { echo "No split Android APKs were produced"; exit 1; }
+          for apk in "${apks[@]}"; do
+            "$apksigner" verify --verbose "$apk"
+            certs="$($apksigner verify --print-certs "$apk" 2>&1)"
+            if grep -qi 'Android Debug' <<<"$certs"; then
+              echo "Tagged release is signed with the Android debug key: $apk"
+              exit 1
+            fi
+            if unzip -l "$apk" | grep -Eq 'lib/(x86|x86_64)/'; then
+              echo "Unsupported x86 ABI found in $apk"
+              exit 1
+            fi
+          done
+          jarsigner -verify -strict build/app/outputs/bundle/release/app-release.aab
+      - name: Upload Android release artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-release
+          path: |
+            build/app/outputs/flutter-apk/*-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [analyze-and-test, build-windows, build-android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: windows-release
+      - name: Download Android artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: android-release
+          path: android
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: TrapEmAll/neonamp
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "NeonAmp $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+          android_assets=()
+          while IFS= read -r asset; do
+            android_assets+=("$asset")
+          done < <(find android -type f \( -name '*-release.apk' -o -name 'app-release.aab' \) -print)
+          test "${#android_assets[@]}" -gt 0 || { echo "No Android release assets were downloaded"; exit 1; }
+          gh release upload "$GITHUB_REF_NAME" \
+            "NeonAmp-Windows-$GITHUB_REF_NAME.zip" \
+            "${android_assets[@]}" \
+            --clobber

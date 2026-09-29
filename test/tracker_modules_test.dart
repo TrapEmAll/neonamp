@@ -11,6 +11,7 @@ void main() {
     expect(isTrackerModulePath('music.MoD'), isTrue);
     expect(isTrackerModulePath('music.mp3'), isFalse);
     expect(isSupportedLibraryAudioPath('C:/Music/video.mp4'), isTrue);
+    expect(isSupportedLibraryAudioPath('C:/Music/audiobook.m4b'), isTrue);
     expect(isSupportedLibraryAudioPath('C:/Music/readme.txt'), isFalse);
   });
 

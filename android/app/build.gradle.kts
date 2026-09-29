@@ -1,7 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
 android {
@@ -15,7 +23,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // Stable application ID used by Play Console, Android Auto, widgets, and upgrades.
         applicationId = "com.neonamp.neonamp"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -44,9 +52,19 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.create("releaseUpload") {
+                    storeFile = file(keystoreProperties["storeFile"] as String)
+                    storePassword = keystoreProperties["storePassword"] as String
+                    keyAlias = keystoreProperties["keyAlias"] as String
+                    keyPassword = keystoreProperties["keyPassword"] as String
+                }
+            } else {
+                // Keep local development builds installable. A Play Store build
+                // must provide android/key.properties in CI and will use the
+                // upload key above automatically.
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }
@@ -59,4 +77,10 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+  implementation("com.google.android.gms:play-services-cast-framework:21.5.0")
+  implementation("com.google.android.play:integrity:1.4.0")
+  implementation("androidx.media3:media3-exoplayer:1.5.1")
 }

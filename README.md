@@ -10,12 +10,16 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 
 - Native Windows desktop build and Android APK from one Flutter codebase.
 - Android background playback with lock-screen, headset, notification, and Android Auto media controls.
+- Android file-manager/share-sheet audio opens, including multi-select shares, are routed directly into playback.
+- Per-track A/B looping is available from the compact menu for practice, sampling, and cue work.
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
 - Play local videos in a separate Windows/Android queue with seeking, speed and volume controls; codec support depends on the device's native decoders.
 - Add HTTP audio streams and online radio URLs.
 - Discover DLNA/UPnP network players and cast local audio or HTTP(S) streams from Windows or Android; local files are served temporarily over the LAN, so both devices must be able to communicate on the same network.
+- Android also includes Google Cast discovery, remote transport, seek, volume, album artwork, and track metadata for HTTP(S) audio streams and local/provider-backed audio; local media is served temporarily over the LAN because the Cast receiver requires a network URL.
+- Remote HTTP(S) library tracks expose an explicit offline-download action; downloaded copies retain their metadata and are not inserted into the playback queue automatically.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
@@ -28,6 +32,7 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Import and export podcast subscriptions as OPML files to move feeds between players and devices.
 - Manage podcast subscriptions and unsubscribe without removing episodes already added to the queue or library.
 - Persistent queue between launches.
+- Adding files or folders to the library does not change the playback queue; tracks enter the queue only through an explicit playback or playlist action.
 - Persistent Bookmarks view for quick access to local tracks, CUE tracks, and radio streams.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
@@ -65,8 +70,20 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Responsive layout for desktop and mobile.
 - Animated spectrum visualizer.
 - Desktop Visuals and Settings actions are available on Windows and Android.
+- Android media playback publishes a persistent notification with transport controls, current-track metadata, seek actions, and launcher access.
+- Display size is adjustable from 85% to 125%, and color themes can be changed or imported as portable skin packages.
+- Backup files include Android's persisted folder-URI inventory; Android access grants remain device-scoped and unavailable folders are clearly flagged for re-selection during migration.
+- Monetization boundaries are isolated behind a persisted ad-removal entitlement so a future Play Billing purchase can disable configured ads without coupling ads to playback or library state.
 
-The Android APK is a debug/distribution artifact signed with Flutter's local release key for direct installation. A Play Store release will need a real upload keystore and store configuration.
+The Android APK is a direct-install artifact. For Play Store distribution, copy
+`android/key.properties.example` to `android/key.properties` and replace the
+placeholders with a real upload keystore. The Gradle release build uses that
+keystore automatically when present and otherwise keeps local development
+builds installable with the debug key. Never commit the real keystore or
+`key.properties`.
+
+The complete tagged-release and Play Console checklist is in
+[`docs/android-play-store.md`](docs/android-play-store.md).
 
 ## Development
 

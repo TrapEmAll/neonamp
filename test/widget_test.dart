@@ -475,6 +475,301 @@ FILE "disc image.flac" WAVE
     expect(tracks[2].end, const Duration(minutes: 10));
   });
 
+  test('saved library merging preserves distinct CUE identities', () {
+    final first = Track(
+      path: '/music/disc.flac',
+      name: 'Opening',
+      cueStartMs: 0,
+      cueEndMs: 180000,
+      trackNumber: 1,
+    );
+    final second = Track(
+      path: '/music/disc.flac',
+      name: 'Second Track',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+    );
+
+    final merged = mergeTracksByIdentity([first], [second, first]);
+
+    expect(merged, hasLength(2));
+    expect(merged.map((track) => track.name), ['Opening', 'Second Track']);
+  });
+
+  test('missing shared sources identify every CUE segment for cleanup', () {
+    final opening = Track(
+      path: '/music/disc.flac',
+      name: 'Opening',
+      cueStartMs: 0,
+      cueEndMs: 180000,
+      trackNumber: 1,
+    );
+    final second = Track(
+      path: '/music/disc.flac',
+      name: 'Second Track',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+    );
+    final other = Track(path: '/music/other.flac', name: 'Other');
+
+    expect(
+      trackIdentitiesForPaths([opening, second, other], {'/music/disc.flac'}),
+      {opening.identityKey, second.identityKey},
+    );
+  });
+
+  test('queue selection follows its track when missing entries are removed', () {
+    final first = Track(path: '/music/first.mp3', name: 'First');
+    final second = Track(path: '/music/second.mp3', name: 'Second');
+    final third = Track(path: '/music/third.mp3', name: 'Third');
+
+    expect(
+      selectedQueueIndexAfterRemoval(
+        [first, second, third],
+        2,
+        {first.identityKey},
+      ),
+      1,
+    );
+    expect(
+      selectedQueueIndexAfterRemoval(
+        [first, second, third],
+        1,
+        {second.identityKey},
+      ),
+      1,
+    );
+  });
+
+  test('track path keys unify relative and absolute local paths', () {
+    final relative = 'music${Platform.pathSeparator}track.mp3';
+    final absolute = File(relative).absolute.path;
+
+    expect(trackPathKey(relative), trackPathKey(absolute));
+    expect(sameTrackPath(relative, absolute), isTrue);
+    expect(
+      trackPathKey('https://example.com/stream'),
+      'https://example.com/stream',
+    );
+    final fileUri = Uri.file(absolute).toString();
+    expect(sameTrackPath(fileUri, absolute), isTrue);
+  });
+
+  test('track identity lookup accepts file URI aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final track = Track(path: physicalPath, name: 'Track');
+
+    expect(
+      trackIdentitiesForPaths([track], {Uri.file(physicalPath).toString()}),
+      {track.identityKey},
+    );
+  });
+
+  test('mergeTracksByIdentity removes local path aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final local = Track(path: physicalPath, name: 'Track');
+    final uri = Track(
+      path: Uri.file(physicalPath).toString(),
+      name: 'Track',
+      trackNumber: 4,
+    );
+
+    expect(sameTrackIdentity(local, uri), isTrue);
+    expect(mergeTracksByIdentity([local], [uri]), hasLength(1));
+    expect(mergeTracksByIdentity([local, uri], const []), hasLength(1));
+  });
+
+  test('same non-CUE path remains one identity after metadata changes', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final original = Track(path: physicalPath, name: 'Old title');
+    final rescanned = Track(
+      path: physicalPath,
+      name: 'New title',
+      trackNumber: 4,
+    );
+
+    expect(sameTrackIdentity(original, rescanned), isTrue);
+    expect(mergeTracksByIdentity([original], [rescanned]), hasLength(1));
+  });
+
+  test('restored tracks normalize legacy file URI paths', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final restored = Track.fromJson({
+      'path': Uri.file(physicalPath).toString(),
+      'name': 'Track',
+    });
+
+    expect(restored.path.toLowerCase(), physicalPath.toLowerCase());
+    expect(restored.identityKey.toLowerCase(), physicalPath.toLowerCase());
+  });
+
+  test('track identity keys canonicalize file URI aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final local = Track(path: physicalPath, name: 'Track');
+    final uri = Track(path: Uri.file(physicalPath).toString(), name: 'Track');
+
+    expect(local.identityKey, trackPathKey(physicalPath));
+    expect(uri.identityKey, local.identityKey);
+    expect(sameStoredTrackIdentity(local, physicalPath), isTrue);
+    expect(
+      sameStoredTrackIdentity(local, Uri.file(physicalPath).toString()),
+      isTrue,
+    );
+  });
+
+  test('stored CUE identity keys match canonical path aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}disc.flac')
+        .absolute
+        .path;
+    final segment = Track(
+      path: physicalPath,
+      name: 'Opening',
+      cueStartMs: 0,
+      cueEndMs: 180000,
+      trackNumber: 1,
+    );
+    final legacyKey = jsonEncode([
+      Uri.file(physicalPath).toString(),
+      segment.cueStartMs,
+      segment.cueEndMs,
+      segment.trackNumber,
+    ]);
+
+    expect(sameStoredTrackIdentity(segment, legacyKey), isTrue);
+    expect(trackForStoredKey([segment], legacyKey), same(segment));
+  });
+
+  test('stored track keys expose their source path for cleanup', () {
+    final physicalPath = File('music${Platform.pathSeparator}disc.flac')
+        .absolute
+        .path;
+    final cueKey = jsonEncode([
+      Uri.file(physicalPath).toString(),
+      0,
+      180000,
+      1,
+    ]);
+
+    expect(storedTrackKeyMatchesPath(cueKey, physicalPath), isTrue);
+    expect(storedTrackKeyMatchesPath(physicalPath, physicalPath), isTrue);
+    expect(
+      storedTrackKeyMatchesPath(cueKey, '${physicalPath}.missing'),
+      isFalse,
+    );
+  });
+
+  test('playback events are accepted only for the active track', () {
+    expect(playbackEventMatchesTrack('track-a', 'track-a'), isTrue);
+    expect(playbackEventMatchesTrack('track-a', 'track-b'), isFalse);
+    expect(playbackEventMatchesTrack(null, 'track-a'), isFalse);
+    expect(playbackEventMatchesTrack('track-a', null), isFalse);
+  });
+
+  test('playlist keys resolve the requested CUE segment', () {
+    final opening = Track(
+      path: '/music/disc.flac',
+      name: 'Opening',
+      cueStartMs: 0,
+      cueEndMs: 180000,
+      trackNumber: 1,
+    );
+    final second = Track(
+      path: '/music/disc.flac',
+      name: 'Second Track',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+    );
+
+    expect(
+      trackForStoredKey([opening, second], second.identityKey).name,
+      'Second Track',
+    );
+    expect(trackForStoredKey([opening, second], opening.path).name, 'Opening');
+  });
+
+  test('iTunes export converts playlist identities to source paths', () {
+    final segment = Track(
+      path: 'album.flac',
+      name: 'Second Track',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+    );
+
+    expect(
+      playlistPathsForExport({'Album': [segment.identityKey]}, [segment]),
+      {
+        'Album': ['album.flac'],
+      },
+    );
+  });
+
+  test('rescanning a shared source preserves each CUE segment', () {
+    final existing = Track(
+      path: 'album.flac',
+      name: 'Second Track',
+      artist: 'Cue Artist',
+      album: 'Cue Album',
+      cueStartMs: 180000,
+      cueEndMs: 360000,
+      trackNumber: 2,
+      rating: 5,
+      playCount: 3,
+      favorite: true,
+    );
+    final scanned = Track(
+      path: 'album.flac',
+      name: 'Album',
+      artist: 'File Artist',
+      album: 'File Album',
+      artwork: Uint8List.fromList([4, 5]),
+    );
+
+    final merged = mergeScannedTrack(existing, scanned);
+
+    expect(merged.name, 'Second Track');
+    expect(merged.artist, 'Cue Artist');
+    expect(merged.album, 'Cue Album');
+    expect(merged.rating, 5);
+    expect(merged.playCount, 3);
+    expect(merged.favorite, isTrue);
+    expect(merged.artwork, [4, 5]);
+  });
+
+  test('rescanning clears metadata removed from a non-CUE source', () {
+    final existing = Track(
+      path: 'track.flac',
+      name: 'Track',
+      year: 2024,
+      trackNumber: 3,
+      artwork: Uint8List.fromList([1, 2]),
+      replayGainDb: -6.0,
+      lyrics: 'old lyrics',
+    );
+    final scanned = Track(path: 'track.flac', name: 'Track');
+
+    final merged = mergeScannedTrack(existing, scanned);
+
+    expect(merged.year, isNull);
+    expect(merged.trackNumber, isNull);
+    expect(merged.artwork, isNull);
+    expect(merged.replayGainDb, isNull);
+    expect(merged.lyrics, isNull);
+  });
+
   test('CUE playback timing is relative to each source segment', () {
     expect(
       cueRelativePosition(
@@ -531,6 +826,75 @@ FILE "disc image.flac" WAVE
     expect(stereoBalanceLabel(-1), 'Left 100%');
     expect(stereoBalanceLabel(0), 'Center');
     expect(stereoBalanceLabel(.5), 'Right 50%');
+  });
+
+  test('playback speed clamps invalid persisted values', () {
+    expect(normalizePlaybackSpeed(0.1), 0.5);
+    expect(normalizePlaybackSpeed(1.25), 1.25);
+    expect(normalizePlaybackSpeed(4), 2.0);
+    expect(normalizePlaybackSpeed(double.nan), 1.0);
+    expect(normalizePlaybackSpeed(double.infinity), 1.0);
+  });
+
+  test('malformed persisted settings fall back per field', () {
+    final settings = <String, dynamic>{
+      'volume': 0.6,
+      'shuffle': 'yes',
+      'eqPreset': 'Rock',
+    };
+    expect(storedDouble(settings, 'volume', 0.82), 0.6);
+    expect(storedBool(settings, 'shuffle', false), isFalse);
+    expect(storedString(settings, 'eqPreset', 'Flat'), 'Rock');
+    expect(storedInt(settings, 'missing', 3), 3);
+    expect(storedDoubles(settings, 'eqBands', 2), isNull);
+    expect(
+      storedDoubles({'eqBands': [1, -2.5]}, 'eqBands', 2),
+      [1.0, -2.5],
+    );
+    expect(
+      storedDoubles({'eqBands': [20, -20]}, 'eqBands', 2),
+      [12.0, -12.0],
+    );
+  });
+
+  test('remote media detection accepts mixed-case HTTP URLs only', () {
+    expect(isRemoteMediaPath('HTTP://example.test/song.mp3'), isTrue);
+    expect(isRemoteMediaPath('https://example.test/song.mp3'), isTrue);
+    expect(isRemoteMediaPath('content://media/song.mp3'), isFalse);
+    expect(isContentMediaPath('content://media/song.mp3'), isTrue);
+    expect(isContentMediaPath('CONTENT://media/song.mp3'), isTrue);
+    expect(isUriMediaPath('content://media/song.mp3'), isTrue);
+    expect(isRemoteMediaPath(r'C:\Music\song.mp3'), isFalse);
+  });
+
+  test('normalizes file URIs before local playback', () {
+    expect(
+      normalizeLocalMediaPath('file:///tmp/song.mp3'),
+      '/tmp/song.mp3',
+    );
+    expect(normalizeLocalMediaPath('/tmp/song.mp3'), '/tmp/song.mp3');
+  });
+
+  test('HTTP URI validation is case-insensitive and rejects local paths', () {
+    expect(isHttpUri(Uri.parse('HtTpS://example.test/feed.xml')), isTrue);
+    expect(isHttpUri(Uri.parse('file:///song.mp3')), isFalse);
+    expect(isHttpUri(null), isFalse);
+  });
+
+  test('parses and selects synchronized LRC lyric lines', () {
+    final lines = parseLrcLyrics(
+      '[offset:-100]\n[00:02.50]First line\n[00:00.10][00:01.20]Intro\n[bad]ignored',
+    );
+    expect(
+      lines.map((line) => line.text).toList(),
+      ['Intro', 'Intro', 'First line'],
+    );
+    expect(lines[0].timestamp, Duration.zero);
+    expect(lines[1].timestamp, const Duration(milliseconds: 1100));
+    expect(lines[2].timestamp, const Duration(milliseconds: 2400));
+    expect(currentLrcLineIndex(lines, const Duration(milliseconds: 100)), 0);
+    expect(currentLrcLineIndex(lines, const Duration(seconds: 3)), 2);
+    expect(currentLrcLineIndex(lines, Duration.zero), 0);
   });
 
   test('video queue wraps in both directions and filters extensions', () {
@@ -1042,11 +1406,15 @@ FILE "disc image.flac" WAVE
 
   test('folder scans recognize the metadata reader audio formats', () {
     expect(isAacAudioPath('music/track.AAC'), isTrue);
+    expect(isWavAudioPath('music/track.WAVE'), isTrue);
+    expect(isVorbisAudioPath('music/track.OGA'), isTrue);
     expect(isMatroskaAudioPath('music/track.mka'), isTrue);
     expect(isSupportedLibraryAudioPath('recording.mka'), isTrue);
     expect(isSupportedLibraryAudioPath('recording.aiff'), isTrue);
     expect(isSupportedLibraryAudioPath('track.mkv'), isTrue);
     expect(isSupportedLibraryAudioPath('track.wma'), isTrue);
+    expect(isSupportedLibraryAudioPath('track.wave'), isTrue);
+    expect(isSupportedLibraryAudioPath('track.oga'), isTrue);
     expect(isAsfAudioPath('track.WMA'), isTrue);
     expect(isSupportedLibraryAudioPath('cover.jpg'), isFalse);
   });
@@ -1359,6 +1727,18 @@ FILE "disc image.flac" WAVE
     expect(restored.cueEndMs, 422000);
   });
 
+  test('playback bookmarks round-trip track and resume position', () {
+    final bookmark = PlaybackBookmark(
+      track: Track(path: 'song.flac', name: 'Song', artist: 'Artist'),
+      position: Duration(seconds: 42),
+      label: 'Chorus',
+    );
+    final restored = PlaybackBookmark.fromJson(bookmark.toJson());
+    expect(restored.track.identityKey, bookmark.track.identityKey);
+    expect(restored.position, const Duration(seconds: 42));
+    expect(restored.label, 'Chorus');
+  });
+
   test('skin packages round-trip through JSON', () {
     const original = ThemeSkin(
       name: 'Midnight Citrus',
@@ -1389,6 +1769,9 @@ FILE "disc image.flac" WAVE
     expect(dspGainForDb(6), closeTo(1.995, 0.001));
     expect(dspGainForDb(12), closeTo(3.981, 0.001));
     expect(dspGainForDb(-12), closeTo(0.251, 0.001));
+    expect(dspGainForDb(double.nan), 1.0);
+    expect(dspGainForDb(double.infinity), 1.0);
+    expect(dspGainForDb(double.negativeInfinity), 1.0);
   });
 
   testWidgets('renders the empty NeonAmp player', (tester) async {
@@ -1396,6 +1779,30 @@ FILE "disc image.flac" WAVE
     await tester.pump();
     expect(find.text('NEONAMP'), findsOneWidget);
     expect(find.text('Your library is quiet.'), findsOneWidget);
+  });
+
+  testWidgets('phone layout gives the library more room than now playing', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NeonAmpApp());
+    await tester.pump();
+
+    expect(find.text('NOW PLAYING'), findsOneWidget);
+    expect(find.text('QUEUE'), findsOneWidget);
+    expect(find.text('Your library is quiet.'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Add folder'), findsOneWidget);
+    expect(find.text('Equalizer'), findsOneWidget);
+    expect(find.text('Playback speed'), findsOneWidget);
+    expect(find.text('Sync music to device folder'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('custom player controls restore and persist from the editor', (
@@ -1448,6 +1855,61 @@ FILE "disc image.flac" WAVE
     expect(twoBookmarks, hasLength(2));
     expect(toggleTrackBookmark(twoBookmarks, first), [second]);
     expect(toggleTrackBookmark([], first), [first]);
+  });
+
+  test('favorite toggling distinguishes virtual CUE tracks', () {
+    final first = Track(
+      path: 'album.flac',
+      name: 'First',
+      cueStartMs: 0,
+      cueEndMs: 60000,
+      trackNumber: 1,
+    );
+    final second = Track(
+      path: 'album.flac',
+      name: 'Second',
+      cueStartMs: 60000,
+      cueEndMs: 120000,
+      trackNumber: 2,
+    );
+
+    final toggled = toggleTrackFavorite([first, second], first);
+
+    expect(toggled[0].favorite, isTrue);
+    expect(toggled[1].favorite, isFalse);
+    expect(toggleTrackFavorite(toggled, first)[0].favorite, isFalse);
+  });
+
+  test('bookmark and favorite toggles recognize local path aliases', () {
+    final physicalPath = File('music${Platform.pathSeparator}track.mp3')
+        .absolute
+        .path;
+    final local = Track(path: physicalPath, name: 'Track');
+    final uri = Track(path: Uri.file(physicalPath).toString(), name: 'Track');
+
+    expect(toggleTrackBookmark([local], uri), isEmpty);
+    expect(toggleTrackFavorite([local], uri).single.favorite, isTrue);
+  });
+
+  test('artwork updates preserve virtual CUE metadata', () {
+    final track = Track(
+      path: 'album.flac',
+      name: 'Second',
+      artist: 'Guest Artist',
+      album: 'Cue Album',
+      cueStartMs: 60000,
+      cueEndMs: 120000,
+      trackNumber: 2,
+    );
+
+    final updated = track.copyWith(artwork: Uint8List.fromList([1, 2, 3]));
+
+    expect(updated.name, 'Second');
+    expect(updated.artist, 'Guest Artist');
+    expect(updated.album, 'Cue Album');
+    expect(updated.cueStartMs, 60000);
+    expect(updated.trackNumber, 2);
+    expect(updated.artwork, [1, 2, 3]);
   });
 
   test('iTunes XML library preserves metadata and named playlists', () {
@@ -1584,5 +2046,85 @@ FILE "disc image.flac" WAVE
     await tester.drag(balanceSlider, const Offset(1000, 0));
     await tester.pump();
     expect(find.text('Stereo balance · Right 100%'), findsOneWidget);
+  });
+
+  test('detects common artwork MIME types for media-session metadata', () {
+    expect(
+      detectArtworkMimeType(Uint8List.fromList([0xff, 0xd8, 0xff, 0x00])),
+      'image/jpeg',
+    );
+    expect(
+      detectArtworkMimeType(
+        Uint8List.fromList([
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+        ]),
+      ),
+      'image/png',
+    );
+    expect(
+      detectArtworkMimeType(
+        Uint8List.fromList([
+          0x52,
+          0x49,
+          0x46,
+          0x46,
+          0,
+          0,
+          0,
+          0,
+          0x57,
+          0x45,
+          0x42,
+          0x50,
+        ]),
+      ),
+      'image/webp',
+    );
+    expect(
+      detectArtworkMimeType(
+        Uint8List.fromList([
+          0,
+          0,
+          0,
+          0,
+          0x66,
+          0x74,
+          0x79,
+          0x70,
+          0x61,
+          0x76,
+          0x69,
+          0x66,
+        ]),
+      ),
+      'image/avif',
+    );
+    expect(
+      detectArtworkMimeType(Uint8List.fromList([0x47, 0x49, 0x46, 0x38])),
+      'image/gif',
+    );
+    expect(
+      detectArtworkMimeType(Uint8List.fromList([0x42, 0x4d])),
+      'image/bmp',
+    );
+    expect(detectArtworkMimeType(Uint8List.fromList([1, 2, 3])), 'image/jpeg');
+  });
+
+  test('scopes WebDAV credentials to the server origin', () {
+    expect(
+      webDavCredentialKey(Uri.parse('HTTPS://NAS.example:443/music/album/a.flac')),
+      'https://nas.example',
+    );
+    expect(
+      webDavCredentialKey(Uri.parse('https://nas.example/music/album/b.flac')),
+      webDavCredentialKey(Uri.parse('https://nas.example/music/album/a.flac')),
+    );
   });
 }

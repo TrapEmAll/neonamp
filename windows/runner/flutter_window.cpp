@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <algorithm>
+#include <cmath>
 #include <cwchar>
 #include <fstream>
 #include <iterator>
@@ -51,6 +52,14 @@ bool SendMidiCommand(const std::wstring& command,
   return false;
 }
 
+void CloseMidiPlayer() {
+  if (!g_midiOpen) return;
+  std::wstring error;
+  SendMidiCommand(L"stop neonamp_midi", nullptr, &error);
+  SendMidiCommand(L"close neonamp_midi", nullptr, &error);
+  g_midiOpen = false;
+}
+
 std::wstring GetWideStringArgument(const flutter::EncodableMap& values,
                                    const char* key) {
   const auto found = values.find(flutter::EncodableValue(key));
@@ -73,7 +82,9 @@ double GetDoubleArgument(const flutter::EncodableMap& values,
                          double fallback) {
   const auto found = values.find(flutter::EncodableValue(key));
   if (found == values.end()) return fallback;
-  if (const auto* value = std::get_if<double>(&found->second)) return *value;
+  if (const auto* value = std::get_if<double>(&found->second)) {
+    return std::isfinite(*value) ? *value : fallback;
+  }
   if (const auto* value = std::get_if<int32_t>(&found->second)) {
     return static_cast<double>(*value);
   }
@@ -95,12 +106,16 @@ bool GetMidiState(flutter::EncodableMap* state, std::wstring* error) {
   }
   state->emplace(flutter::EncodableValue("mode"),
                  flutter::EncodableValue(ToUtf8(mode)));
+  const auto parse_milliseconds = [](const std::wstring& value) -> int64_t {
+    wchar_t* end = nullptr;
+    const auto parsed = std::wcstoll(value.c_str(), &end, 10);
+    if (end == value.c_str()) return 0;
+    return std::max<int64_t>(0, parsed);
+  };
   state->emplace(flutter::EncodableValue("positionMs"),
-                 flutter::EncodableValue(static_cast<int64_t>(
-                     std::wcstoll(position.c_str(), nullptr, 10))));
+                 flutter::EncodableValue(parse_milliseconds(position)));
   state->emplace(flutter::EncodableValue("durationMs"),
-                 flutter::EncodableValue(static_cast<int64_t>(
-                     std::wcstoll(length.c_str(), nullptr, 10))));
+                 flutter::EncodableValue(parse_milliseconds(length)));
   return true;
 }
 
@@ -178,7 +193,11 @@ bool TranscodeToM4a(const std::wstring& input_path,
     winrt::check_hresult(writer->Finalize());
     success = true;
   } catch (...) {
-    if (writer) writer->Finalize();
+    try {
+      if (writer) writer->Finalize();
+    } catch (...) {
+      // Preserve the original conversion failure and still shut down Media Foundation.
+    }
   }
   if (!success) DeleteFileW(output_path.c_str());
   MFShutdown();
@@ -187,11 +206,7 @@ bool TranscodeToM4a(const std::wstring& input_path,
 
 std::wstring GetStringArgument(const flutter::EncodableMap& values,
                                const char* key) {
-  const auto found = values.find(flutter::EncodableValue(key));
-  if (found == values.end()) return {};
-  const auto* value = std::get_if<std::string>(&found->second);
-  if (value == nullptr) return {};
-  return std::wstring(value->begin(), value->end());
+  return GetWideStringArgument(values, key);
 }
 
 std::string ToUtf8(const std::wstring& value) {
@@ -494,12 +509,7 @@ bool FlutterWindow::OnCreate() {
         const flutter::EncodableMap empty;
         const auto& args = values == nullptr ? empty : *values;
         std::wstring error;
-        auto close_player = [&]() {
-          if (!g_midiOpen) return;
-          SendMidiCommand(L"stop neonamp_midi", nullptr, &error);
-          SendMidiCommand(L"close neonamp_midi", nullptr, &error);
-          g_midiOpen = false;
-        };
+        const auto close_player = []() { CloseMidiPlayer(); };
         if (call.method_name() == "openAndPlay") {
           close_player();
           const auto path = GetWideStringArgument(args, "path");
@@ -626,6 +636,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  CloseMidiPlayer();
   if (system_media_controls_ != nullptr && system_media_button_token_.value != 0) {
     system_media_controls_.ButtonPressed(system_media_button_token_);
     system_media_button_token_ = {};
