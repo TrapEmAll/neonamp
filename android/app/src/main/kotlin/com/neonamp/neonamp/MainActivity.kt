@@ -54,7 +54,7 @@ class MainActivity : AudioServiceActivity() {
     private var nearbyPermissionResult: MethodChannel.Result? = null
     private var folderPickerResult: MethodChannel.Result? = null
     private var mediaStorePermissionResult: MethodChannel.Result? = null
-    private var pendingMediaIntent: Map<String, String>? = null
+    private var pendingMediaIntent: List<Map<String, String>>? = null
     private var pendingWidgetQueue = false
     private var castContext: CastContext? = null
     private var pendingCastMedia: Map<String, Any?>? = null
@@ -189,7 +189,7 @@ class MainActivity : AudioServiceActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        pendingMediaIntent = mediaIntentPayload(intent)
+        pendingMediaIntent = mediaIntentPayloads(intent)
         pendingWidgetQueue = intent?.getBooleanExtra(
             NeonAmpWidgetProvider.EXTRA_OPEN_QUEUE,
             false,
@@ -1340,7 +1340,7 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
-    private fun mediaIntentPayload(intent: Intent?): Map<String, String>? {
+    private fun mediaIntentPayloads(intent: Intent?): List<Map<String, String>>? {
         if (intent == null) return null
         val action = intent.action
         val sharedText = if (action == Intent.ACTION_SEND) {
@@ -1348,16 +1348,19 @@ class MainActivity : AudioServiceActivity() {
         } else {
             null
         }
-        val uri = when {
-            sharedText != null -> Uri.parse(sharedText)
-            action == Intent.ACTION_VIEW -> intent.data
-            action == Intent.ACTION_SEND -> intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-            else -> null
-        } ?: return null
-        if (uri.scheme.equals("content", ignoreCase = true)) {
-            val persistableFlags = intent.flags and
-                (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            if (persistableFlags != 0) {
+        val uris = when {
+            sharedText != null -> listOf(Uri.parse(sharedText))
+            action == Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            action == Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+            action == Intent.ACTION_SEND_MULTIPLE ->
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.toList().orEmpty()
+            else -> emptyList()
+        }
+        if (uris.isEmpty()) return null
+        val persistableFlags = intent.flags and
+            (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        return uris.mapNotNull { uri ->
+            if (uri.scheme.equals("content", ignoreCase = true) && persistableFlags != 0) {
                 try {
                     contentResolver.takePersistableUriPermission(uri, persistableFlags)
                 } catch (_: SecurityException) {
@@ -1366,24 +1369,24 @@ class MainActivity : AudioServiceActivity() {
                     // made durable without a provider-issued persistable grant.
                 }
             }
-        }
-        val mimeType = intent.type.orEmpty()
-        val isHttpStream = uri.scheme.equals("http", ignoreCase = true) ||
-            uri.scheme.equals("https", ignoreCase = true)
-        val kind = when {
-            mimeType.startsWith("audio/", ignoreCase = true) ||
-                isSupportedMediaUri(uri) ||
-                isHttpStream -> "audio"
-            isSupportedPlaylistUri(uri, mimeType) -> "playlist"
-            isCueUri(uri, mimeType) -> "cue"
-            else -> return null
-        }
-        val name = queryDisplayName(uri) ?: uri.lastPathSegment.orEmpty()
-        return mapOf(
-            "uri" to uri.toString(),
-            "name" to name.ifBlank { "Incoming audio" },
-            "kind" to kind,
-        )
+            val mimeType = intent.type.orEmpty()
+            val isHttpStream = uri.scheme.equals("http", ignoreCase = true) ||
+                uri.scheme.equals("https", ignoreCase = true)
+            val kind = when {
+                mimeType.startsWith("audio/", ignoreCase = true) ||
+                    isSupportedMediaUri(uri) ||
+                    isHttpStream -> "audio"
+                isSupportedPlaylistUri(uri, mimeType) -> "playlist"
+                isCueUri(uri, mimeType) -> "cue"
+                else -> return@mapNotNull null
+            }
+            val name = queryDisplayName(uri) ?: uri.lastPathSegment.orEmpty()
+            mapOf(
+                "uri" to uri.toString(),
+                "name" to name.ifBlank { "Incoming audio" },
+                "kind" to kind,
+            )
+        }.takeIf { it.isNotEmpty() }
     }
 
     private fun isSupportedMediaUri(uri: Uri): Boolean {

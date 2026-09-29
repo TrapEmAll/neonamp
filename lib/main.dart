@@ -3417,9 +3417,25 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _consumeIncomingMediaIntent() async {
     if (!Platform.isAndroid || !mounted) return;
-    final payload = await const MethodChannel('neonamp/intents')
-        .invokeMapMethod<String, dynamic>('consumeIncomingMedia');
-    if (!mounted || payload == null) return;
+    final rawPayload = await const MethodChannel('neonamp/intents')
+        .invokeMethod<dynamic>('consumeIncomingMedia');
+    if (!mounted || rawPayload == null) return;
+    final payloads = rawPayload is List
+        ? rawPayload
+            .whereType<Map>()
+            .map((value) => Map<String, dynamic>.from(value))
+            .toList()
+        : rawPayload is Map
+        ? [Map<String, dynamic>.from(rawPayload)]
+        : const <Map<String, dynamic>>[];
+    for (final payload in payloads) {
+      await _consumeIncomingMediaPayload(payload);
+      if (!mounted) return;
+    }
+  }
+
+  Future<void> _consumeIncomingMediaPayload(Map<String, dynamic> payload) async {
+    if (!mounted) return;
     final path = payload['uri'] as String?;
     if (path == null || path.trim().isEmpty) return;
     final name = (payload['name'] as String?)?.trim();
