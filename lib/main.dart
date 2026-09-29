@@ -2333,6 +2333,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<void> Function(String mediaId)? onPlayMediaId;
   Future<List<MediaItem>> Function(String query)? onSearchRequested;
   bool showSkipControls = true;
+  bool showSeekControls = false;
+  bool showArtwork = true;
+  bool podcastMode = false;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
@@ -2382,6 +2385,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     if (playbackSpeed != null) {
       _playbackSpeed = normalizePlaybackSpeed(playbackSpeed);
     }
+    podcastMode = track.genre.toLowerCase() == 'podcast';
     await player.stop();
     if (_closed || generation != _commandGeneration) return;
     _trackStart = track.cueStart;
@@ -2396,7 +2400,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         title: track.name,
         artist: track.artist,
         album: track.album,
-        artUri: null,
+        artUri: showArtwork && track.artwork != null
+            ? Uri.dataFromBytes(track.artwork!, mimeType: 'image/jpeg')
+            : null,
         duration: duration,
       ),
     );
@@ -2424,6 +2430,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     if (_closed) return;
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
+    podcastMode = track.genre.toLowerCase() == 'podcast';
     _lastPosition = Duration.zero;
     final duration = track.cueEnd == null
         ? null
@@ -2434,7 +2441,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         title: track.name,
         artist: track.artist,
         album: track.album,
-        artUri: null,
+        artUri: showArtwork && track.artwork != null
+            ? Uri.dataFromBytes(track.artwork!, mimeType: 'image/jpeg')
+            : null,
         duration: duration,
       ),
     );
@@ -2569,22 +2578,33 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     if (updatePosition.isNegative) updatePosition = Duration.zero;
     if (duration != null && updatePosition > duration)
       updatePosition = duration;
+    final showSeek = showSeekControls || podcastMode;
     final controls = <MediaControl>[
       if (showSkipControls) MediaControl.skipToPrevious,
+      if (showSeek) MediaControl.rewind,
       currentState == PlayerState.playing
           ? MediaControl.pause
           : MediaControl.play,
+      if (showSeek) MediaControl.fastForward,
       MediaControl.stop,
       if (showSkipControls) MediaControl.skipToNext,
     ];
-    final compactIndices = showSkipControls ? const [0, 1, 3] : const [0, 1];
+    final compactIndices = showSkipControls
+        ? showSeek
+            ? const [0, 2, 5]
+            : const [0, 1, 3]
+        : showSeek
+        ? const [0, 1, 2]
+        : const [0, 1];
     playbackState.add(
       PlaybackState(
         controls: controls,
-        systemActions: const {
+        systemActions: {
           MediaAction.seek,
-          MediaAction.seekForward,
-          MediaAction.seekBackward,
+          if (showSeek) ...{
+            MediaAction.seekForward,
+            MediaAction.seekBackward,
+          },
         },
         androidCompactActionIndices: compactIndices,
         processingState: currentState == PlayerState.completed
@@ -2839,6 +2859,8 @@ class _PlayerPageState extends State<PlayerPage>
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
   bool _notificationSkipControls = true;
+  bool _notificationSeekControls = false;
+  bool _notificationArtwork = true;
   Duration? _loopA;
   Duration? _loopB;
   bool _abLoopSeekInProgress = false;
@@ -3526,6 +3548,10 @@ class _PlayerPageState extends State<PlayerPage>
           notificationColor: const Color(0xffef4bff),
           androidNotificationOngoing: true,
           androidStopForegroundOnPause: false,
+          fastForwardInterval: const Duration(seconds: 10),
+          rewindInterval: const Duration(seconds: 10),
+          artDownscaleWidth: 512,
+          artDownscaleHeight: 512,
         ),
       );
       if (!mounted) {
@@ -3544,6 +3570,8 @@ class _PlayerPageState extends State<PlayerPage>
     _audioHandler!.onStopRequested = _stopCurrent;
     _audioHandler!.onSeekRequested = _seekCurrent;
     _audioHandler!.showSkipControls = _notificationSkipControls;
+    _audioHandler!.showSeekControls = _notificationSeekControls;
+    _audioHandler!.showArtwork = _notificationArtwork;
     _audioHandler!.syncExternalState(state: _playerState);
     _syncAndroidWidget();
   }
@@ -4566,6 +4594,16 @@ class _PlayerPageState extends State<PlayerPage>
             'notificationSkipControls',
             true,
           );
+          _notificationSeekControls = storedBool(
+            settings,
+            'notificationSeekControls',
+            false,
+          );
+          _notificationArtwork = storedBool(
+            settings,
+            'notificationArtwork',
+            true,
+          );
           _scrobblingEnabled = storedBool(settings, 'scrobblingEnabled', false);
           _scrobbleToken = storedString(settings, 'scrobbleToken', '');
           _scrobbleEndpoint = storedString(
@@ -4789,6 +4827,8 @@ class _PlayerPageState extends State<PlayerPage>
       'replayGainEnabled': _replayGainEnabled,
       'gaplessEnabled': _gaplessEnabled,
       'notificationSkipControls': _notificationSkipControls,
+      'notificationSeekControls': _notificationSeekControls,
+      'notificationArtwork': _notificationArtwork,
       'scrobblingEnabled': _scrobblingEnabled,
       'scrobbleToken': _scrobbleToken,
       'scrobbleEndpoint': _scrobbleEndpoint,
@@ -9628,6 +9668,38 @@ class _PlayerPageState extends State<PlayerPage>
                     _audioHandler?.showSkipControls = value;
                   });
                   _audioHandler?.syncExternalState(state: _playerState);
+                  _saveQueueSafely();
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Seek buttons in notification'),
+                subtitle: const Text('Show 10-second rewind and fast-forward actions'),
+                value: _notificationSeekControls,
+                onChanged: (value) {
+                  if (!mounted) return;
+                  setState(() {
+                    _notificationSeekControls = value;
+                    _audioHandler?.showSeekControls = value;
+                  });
+                  _audioHandler?.syncExternalState(state: _playerState);
+                  _saveQueueSafely();
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Show artwork in notification'),
+                value: _notificationArtwork,
+                onChanged: (value) {
+                  if (!mounted) return;
+                  setState(() {
+                    _notificationArtwork = value;
+                    _audioHandler?.showArtwork = value;
+                  });
+                  final current = _current;
+                  if (current != null) _audioHandler?.publishTrack(current);
                   _saveQueueSafely();
                   setDialogState(() {});
                 },
