@@ -71,6 +71,7 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Desktop Visuals and Settings actions are available on Windows and Android.
 - Android media playback publishes a persistent notification with transport controls, current-track metadata, seek actions, and launcher access.
 - Display size is adjustable from 85% to 125%, and color themes can be changed or imported as portable skin packages.
+- Backup files include Android's persisted folder-URI inventory; Android access grants remain device-scoped and unavailable folders are clearly flagged for re-selection during migration.
 - Monetization boundaries are isolated behind a persisted ad-removal entitlement so a future Play Billing purchase can disable configured ads without coupling ads to playback or library state.
 
 The Android APK is a direct-install artifact. For Play Store distribution, copy

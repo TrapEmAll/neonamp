@@ -429,6 +429,11 @@ class MainActivity : AudioServiceActivity() {
                         }
                     }
                     "scanMediaStore" -> scanMediaStore(result)
+                    "persistedFolderUris" -> result.success(
+                        contentResolver.persistedUriPermissions
+                            .filter { it.isReadPermission }
+                            .map { it.uri.toString() },
+                    )
                     "cacheStats" -> {
                         val directory = File(filesDir, "neonamp-library-cache")
                         val files = directory.listFiles().orEmpty().filter { it.isFile }

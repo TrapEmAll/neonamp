@@ -5799,11 +5799,17 @@ class _PlayerPageState extends State<PlayerPage>
     for (final key in prefs.getKeys()) {
       values[key] = prefs.get(key);
     }
+    final persistedFolderUris = Platform.isAndroid
+        ? await const MethodChannel('neonamp/library')
+              .invokeListMethod<String>('persistedFolderUris') ??
+          const <String>[]
+        : const <String>[];
     final payload = <String, dynamic>{
       'format': 'neonamp-backup',
-      'version': 1,
+      'version': 2,
       'createdAt': DateTime.now().toUtc().toIso8601String(),
       'preferences': values,
+      'androidPersistedFolderUris': persistedFolderUris,
     };
     await FilePicker.saveFile(
       fileName: 'neonamp-backup.json',
@@ -6249,6 +6255,11 @@ class _PlayerPageState extends State<PlayerPage>
       if (values is! Map) {
         throw const FormatException('Backup preferences are missing.');
       }
+      final persistedFolderUris = (decoded['androidPersistedFolderUris'] is List)
+          ? (decoded['androidPersistedFolderUris'] as List)
+                .whereType<String>()
+                .toList()
+          : const <String>[];
       final prefs = await SharedPreferences.getInstance();
       for (final entry in values.entries) {
         final key = entry.key;
@@ -6285,7 +6296,13 @@ class _PlayerPageState extends State<PlayerPage>
       await _loadQueue();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Backup restored.')),
+          SnackBar(
+            content: Text(
+              Platform.isAndroid && persistedFolderUris.isNotEmpty
+                  ? 'Backup restored. Android folder permissions are device-scoped; reselect any folders not currently available.'
+                  : 'Backup restored.',
+            ),
+          ),
         );
       }
     } on Object catch (error) {
