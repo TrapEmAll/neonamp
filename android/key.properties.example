@@ -1,0 +1,6 @@
+# Copy this file to android/key.properties for a Play Store upload build.
+# Keep the real file out of source control.
+storeFile=../keys/neonamp-upload.jks
+storePassword=REPLACE_WITH_KEYSTORE_PASSWORD
+keyAlias=neonamp-upload
+keyPassword=REPLACE_WITH_KEY_PASSWORD

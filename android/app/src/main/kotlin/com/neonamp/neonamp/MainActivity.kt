@@ -8,11 +8,13 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.provider.Settings
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -66,6 +68,21 @@ class MainActivity : AudioServiceActivity() {
                         val artwork = call.argument<ByteArray>("artwork")
                         NeonAmpWidgetProvider.updateAll(this, title, artist, playing, artwork)
                         result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/audio_output")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "getState" -> result.success(audioOutputState())
+                    "openBluetoothSettings" -> {
+                        try {
+                            startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                            result.success(true)
+                        } catch (_: Throwable) {
+                            result.success(false)
+                        }
                     }
                     else -> result.notImplemented()
                 }
@@ -302,6 +319,29 @@ class MainActivity : AudioServiceActivity() {
             return
         }
         queryMediaStore(result)
+    }
+
+    private fun audioOutputState(): Map<String, Any?> {
+        val manager = getSystemService(AUDIO_SERVICE) as AudioManager
+        val devices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { device ->
+                mapOf(
+                    "type" to device.type,
+                    "name" to device.productName.toString(),
+                    "address" to device.address,
+                )
+            }
+        } else {
+            emptyList<Map<String, Any>>()
+        }
+        return mapOf(
+            "devices" to devices,
+            "sampleRate" to manager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE),
+            "framesPerBuffer" to manager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER),
+            "bluetoothA2dpOn" to manager.isBluetoothA2dpOn,
+            "musicVolume" to manager.getStreamVolume(AudioManager.STREAM_MUSIC),
+            "musicMaxVolume" to manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+        )
     }
 
     private fun queryMediaStore(result: MethodChannel.Result) {

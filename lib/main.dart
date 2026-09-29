@@ -4197,6 +4197,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _showStorageMaintenance();
       case 'scrobbling':
         operation = _showScrobblingSettings();
+      case 'audioOutput':
+        operation = _showAudioOutputInfo();
       case 'visuals':
         operation = _showVisualizer();
       case 'settings':
@@ -4702,6 +4704,58 @@ class _PlayerPageState extends State<PlayerPage>
               },
               child: const Text('Clear cache'),
             ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showAudioOutputInfo() async {
+    if (!Platform.isAndroid) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Output telemetry is available on Android devices.')),
+        );
+      }
+      return;
+    }
+    final state = await const MethodChannel('neonamp/audio_output')
+        .invokeMapMethod<Object?, Object?>('getState');
+    if (!mounted) return;
+    final devices = (state?['devices'] as List?)
+            ?.whereType<Map>()
+            .map((item) => item['name']?.toString())
+            .whereType<String>()
+            .where((name) => name.isNotEmpty)
+            .toList() ??
+        const <String>[];
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Audio output'),
+        content: SingleChildScrollView(
+          child: ListBody(
+            children: [
+              Text('Sample rate: ${state?['sampleRate'] ?? 'unknown'} Hz'),
+              Text('Frames per buffer: ${state?['framesPerBuffer'] ?? 'unknown'}'),
+              Text('Bluetooth A2DP: ${state?['bluetoothA2dpOn'] == true ? 'connected' : 'not active'}'),
+              Text('Music volume: ${state?['musicVolume'] ?? '?'} / ${state?['musicMaxVolume'] ?? '?'}'),
+              const SizedBox(height: 12),
+              Text(devices.isEmpty ? 'No output devices reported.' : 'Outputs:\n${devices.join('\n')}'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await const MethodChannel('neonamp/audio_output')
+                  .invokeMethod<bool>('openBluetoothSettings');
+            },
+            child: const Text('Bluetooth settings'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Done'),
@@ -9735,6 +9789,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'scrobbling',
                 child: Text('Scrobbling settings'),
+              ),
+              PopupMenuItem(
+                value: 'audioOutput',
+                child: Text('Audio output and DAC info'),
               ),
               PopupMenuItem(
                 value: 'sync',

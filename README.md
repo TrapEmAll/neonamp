@@ -72,7 +72,12 @@ Download the ready-to-install Windows setup program or Android APK from the [lat
 - Display size is adjustable from 85% to 125%, and color themes can be changed or imported as portable skin packages.
 - Monetization boundaries are isolated behind a persisted ad-removal entitlement so a future Play Billing purchase can disable configured ads without coupling ads to playback or library state.
 
-The Android APK is a debug/distribution artifact signed with Flutter's local release key for direct installation. A Play Store release will need a real upload keystore and store configuration.
+The Android APK is a direct-install artifact. For Play Store distribution, copy
+`android/key.properties.example` to `android/key.properties` and replace the
+placeholders with a real upload keystore. The Gradle release build uses that
+keystore automatically when present and otherwise keeps local development
+builds installable with the debug key. Never commit the real keystore or
+`key.properties`.
 
 ## Development
 
