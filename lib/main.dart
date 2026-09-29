@@ -2286,6 +2286,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<List<MediaItem>> Function(String parentMediaId)? onBrowseChildren;
   Future<void> Function(String mediaId)? onPlayMediaId;
   Future<List<MediaItem>> Function(String query)? onSearchRequested;
+  bool showSkipControls = true;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
@@ -2522,22 +2523,24 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     if (updatePosition.isNegative) updatePosition = Duration.zero;
     if (duration != null && updatePosition > duration)
       updatePosition = duration;
+    final controls = <MediaControl>[
+      if (showSkipControls) MediaControl.skipToPrevious,
+      currentState == PlayerState.playing
+          ? MediaControl.pause
+          : MediaControl.play,
+      MediaControl.stop,
+      if (showSkipControls) MediaControl.skipToNext,
+    ];
+    final compactIndices = showSkipControls ? const [0, 1, 3] : const [0, 1];
     playbackState.add(
       PlaybackState(
-        controls: [
-          MediaControl.skipToPrevious,
-          currentState == PlayerState.playing
-              ? MediaControl.pause
-              : MediaControl.play,
-          MediaControl.stop,
-          MediaControl.skipToNext,
-        ],
+        controls: controls,
         systemActions: const {
           MediaAction.seek,
           MediaAction.seekForward,
           MediaAction.seekBackward,
         },
-        androidCompactActionIndices: const [0, 1, 3],
+        androidCompactActionIndices: compactIndices,
         processingState: currentState == PlayerState.completed
             ? AudioProcessingState.completed
             : AudioProcessingState.ready,
@@ -2766,6 +2769,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _midiActive = false;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
+  bool _notificationSkipControls = true;
   Duration? _loopA;
   Duration? _loopB;
   bool _abLoopSeekInProgress = false;
@@ -3359,6 +3363,8 @@ class _PlayerPageState extends State<PlayerPage>
     _audioHandler!.onPauseRequested = _pauseCurrent;
     _audioHandler!.onStopRequested = _stopCurrent;
     _audioHandler!.onSeekRequested = _seekCurrent;
+    _audioHandler!.showSkipControls = _notificationSkipControls;
+    _audioHandler!.syncExternalState(state: _playerState);
     _syncAndroidWidget();
   }
 
@@ -4320,6 +4326,11 @@ class _PlayerPageState extends State<PlayerPage>
             'replayGainEnabled',
             false,
           );
+          _notificationSkipControls = storedBool(
+            settings,
+            'notificationSkipControls',
+            true,
+          );
           _scrobblingEnabled = storedBool(settings, 'scrobblingEnabled', false);
           _scrobbleToken = storedString(settings, 'scrobbleToken', '');
           _scrobbleEndpoint = storedString(
@@ -4536,6 +4547,7 @@ class _PlayerPageState extends State<PlayerPage>
       'eqBands': List<double>.of(_eqBands),
       'playbackSpeed': _playbackSpeed,
       'replayGainEnabled': _replayGainEnabled,
+      'notificationSkipControls': _notificationSkipControls,
       'scrobblingEnabled': _scrobblingEnabled,
       'scrobbleToken': _scrobbleToken,
       'scrobbleEndpoint': _scrobbleEndpoint,
@@ -5047,6 +5059,12 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted) return;
     final bytes = (stats?['bytes'] as num?)?.toInt() ?? 0;
     final files = (stats?['files'] as num?)?.toInt() ?? 0;
+    var cacheLimitMb = (((stats?['limitBytes'] as num?)?.toDouble() ??
+                512 * 1024 * 1024) /
+            (1024 * 1024))
+        .round()
+        .clamp(64, 2048)
+        .toDouble();
     String formatBytes(int value) {
       if (value < 1024) return '$value B';
       if (value < 1024 * 1024) return '${(value / 1024).toStringAsFixed(1)} KB';
@@ -5054,18 +5072,43 @@ class _PlayerPageState extends State<PlayerPage>
     }
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Storage and battery'),
-        content: Text(
-          Platform.isAndroid
-              ? 'Provider cache: $files file(s), ${formatBytes(bytes)}.\n\n'
-                  'The cache is rebuilt when a provider-backed track is played. '
-                  'Clearing it can free storage without removing your library entries.\n\n'
-                  'Background playback optimization: '
-                  '${battery?['ignoringOptimizations'] == true ? 'disabled for NeonAmp' : 'may pause playback'}.'
-              : 'Local files are played directly. No NeonAmp provider cache is active.',
-        ),
-        actions: [
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Storage and battery'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                Platform.isAndroid
+                    ? 'Provider cache: $files file(s), ${formatBytes(bytes)}.\n\n'
+                        'The cache is rebuilt when a provider-backed track is played. '
+                        'Clearing it can free storage without removing your library entries.\n\n'
+                        'Background playback optimization: '
+                        '${battery?['ignoringOptimizations'] == true ? 'disabled for NeonAmp' : 'may pause playback'}.'
+                    : 'Local files are played directly. No NeonAmp provider cache is active.',
+              ),
+              if (Platform.isAndroid) ...[
+                const SizedBox(height: 16),
+                Text('Provider cache limit: ${cacheLimitMb.round()} MB'),
+                Slider(
+                  value: cacheLimitMb,
+                  min: 64,
+                  max: 2048,
+                  divisions: 31,
+                  label: '${cacheLimitMb.round()} MB',
+                  onChanged: (value) => setDialogState(() => cacheLimitMb = value),
+                  onChangeEnd: (value) async {
+                    await const MethodChannel('neonamp/library').invokeMethod<int>(
+                      'setCacheLimit',
+                      {'megabytes': value.round()},
+                    );
+                  },
+                ),
+              ],
+            ],
+          ),
+          actions: [
           if (Platform.isAndroid)
             TextButton(
               onPressed: () async {
@@ -5092,7 +5135,8 @@ class _PlayerPageState extends State<PlayerPage>
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Done'),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -8998,6 +9042,22 @@ class _PlayerPageState extends State<PlayerPage>
                     _setReplayGainEnabled(value),
                     'Applying ReplayGain setting',
                   );
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Previous/next notification buttons'),
+                subtitle: const Text('Keep skip controls in the Android media notification'),
+                value: _notificationSkipControls,
+                onChanged: (value) {
+                  if (!mounted) return;
+                  setState(() {
+                    _notificationSkipControls = value;
+                    _audioHandler?.showSkipControls = value;
+                  });
+                  _audioHandler?.syncExternalState(state: _playerState);
+                  _saveQueueSafely();
                   setDialogState(() {});
                 },
               ),
