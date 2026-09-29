@@ -10630,6 +10630,9 @@ class _PlayerPageState extends State<PlayerPage>
     final lrcLines = parseLrcLyrics(lyrics);
     Timer? refreshTimer;
     var dialogAlive = true;
+    var lastActiveLine = -1;
+    final lyricsScrollController = ScrollController();
+    final lineKeys = List<GlobalKey>.generate(lrcLines.length, (_) => GlobalKey());
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -10656,27 +10659,46 @@ class _PlayerPageState extends State<PlayerPage>
               if (dialogAlive) setDialogState(() {});
             });
             final activeLine = currentLrcLineIndex(lrcLines, _position);
+            if (activeLine >= 0 && activeLine != lastActiveLine) {
+              lastActiveLine = activeLine;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!dialogAlive || !context.mounted) return;
+                final targetContext = lineKeys[activeLine].currentContext;
+                if (targetContext != null) {
+                  Scrollable.ensureVisible(
+                    targetContext,
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    alignment: 0.45,
+                  );
+                }
+              });
+            }
             return AlertDialog(
               title: Text('${track.name} · Synced lyrics'),
               content: SizedBox(
                 width: 560,
                 height: 360,
                 child: ListView.builder(
+                  controller: lyricsScrollController,
                   itemCount: lrcLines.length,
-                  itemBuilder: (_, index) => InkWell(
-                    onTap: () => _seekCurrent(lrcLines[index].timestamp),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 7),
-                      child: Text(
-                        lrcLines[index].text,
-                        style: TextStyle(
-                          color: index == activeLine
-                              ? const Color(0xffef4bff)
-                              : Colors.white70,
-                          fontWeight: index == activeLine
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          fontSize: index == activeLine ? 17 : 14,
+                  itemBuilder: (_, index) => KeyedSubtree(
+                    key: lineKeys[index],
+                    child: InkWell(
+                      onTap: () => _seekCurrent(lrcLines[index].timestamp),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 7),
+                        child: Text(
+                          lrcLines[index].text,
+                          style: TextStyle(
+                            color: index == activeLine
+                                ? const Color(0xffef4bff)
+                                : Colors.white70,
+                            fontWeight: index == activeLine
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            fontSize: index == activeLine ? 17 : 14,
+                          ),
                         ),
                       ),
                     ),
@@ -10696,6 +10718,7 @@ class _PlayerPageState extends State<PlayerPage>
     );
     dialogAlive = false;
     refreshTimer?.cancel();
+    lyricsScrollController.dispose();
   }
 
   Future<void> _showVisualizer() async {
