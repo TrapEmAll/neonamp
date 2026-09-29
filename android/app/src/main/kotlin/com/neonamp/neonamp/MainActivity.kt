@@ -456,17 +456,17 @@ class MainActivity : AudioServiceActivity() {
                             result.success(loadCastQueue(session, items, startIndex))
                         }
                     }
-                    "pause" -> result.success(castRemote()?.pause()?.isSuccessful == true)
-                    "resume" -> result.success(castRemote()?.play()?.isSuccessful == true)
-                    "stop" -> result.success(castRemote()?.stop()?.isSuccessful == true)
-                    "next" -> result.success(castRemote()?.queueNext(null)?.isSuccessful == true)
-                    "previous" -> result.success(castRemote()?.queuePrev(null)?.isSuccessful == true)
+                    "pause" -> result.success(castRemote()?.pause()?.let { true } ?: false)
+                    "resume" -> result.success(castRemote()?.play()?.let { true } ?: false)
+                    "stop" -> result.success(castRemote()?.stop()?.let { true } ?: false)
+                    "next" -> result.success(castRemote()?.queueNext(null)?.let { true } ?: false)
+                    "previous" -> result.success(castRemote()?.queuePrev(null)?.let { true } ?: false)
                     "seek" -> {
                         val position = call.argument<Number>("positionMs")?.toLong() ?: 0L
                         result.success(
                             castRemote()?.seek(
                                 MediaSeekOptions.Builder().setPosition(position.coerceAtLeast(0)).build(),
-                            )?.isSuccessful == true,
+                            )?.let { true } ?: false,
                         )
                     }
                     "setVolume" -> {
@@ -794,7 +794,7 @@ class MainActivity : AudioServiceActivity() {
         val info = buildCastMediaInfo(media) ?: return false
         return session.remoteMediaClient?.load(
             MediaLoadRequestData.Builder().setMediaInfo(info).build(),
-        )?.isSuccessful == true
+        )?.let { true } ?: false
     }
 
     private fun loadCastQueue(
@@ -817,7 +817,7 @@ class MainActivity : AudioServiceActivity() {
             safeIndex,
             MediaStatus.REPEAT_MODE_REPEAT_OFF,
             null,
-        )?.isSuccessful == true
+        )?.let { true } ?: false
     }
 
     private fun audioOutputState(): Map<String, Any?> {
@@ -1429,7 +1429,7 @@ class MainActivity : AudioServiceActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingMediaIntent = mediaIntentPayload(intent)
+        pendingMediaIntent = mediaIntentPayloads(intent)
         pendingWidgetQueue = intent.getBooleanExtra(
             NeonAmpWidgetProvider.EXTRA_OPEN_QUEUE,
             false,
@@ -1442,6 +1442,17 @@ class MainActivity : AudioServiceActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == nearbyPermissionRequest) {
+            val result = nearbyPermissionResult ?: return
+            nearbyPermissionResult = null
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                acquireMulticastLock()
+                result.success(true)
+            } else {
+                result.success(false)
+            }
+            return
+        }
         if (requestCode != mediaStorePermissionRequest) return
         val pending = mediaStorePermissionResult ?: return
         mediaStorePermissionResult = null
@@ -1632,19 +1643,6 @@ class MainActivity : AudioServiceActivity() {
         }
         acquireMulticastLock()
         result.success(true)
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != nearbyPermissionRequest) return
-        val result = nearbyPermissionResult ?: return
-        nearbyPermissionResult = null
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            acquireMulticastLock()
-            result.success(true)
-        } else {
-            result.success(false)
-        }
     }
 
     private fun acquireMulticastLock() {
