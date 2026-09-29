@@ -91,6 +91,31 @@ bool isAndroidGaplessCompatiblePath(String path) {
 
 bool isAsfAudioPath(String path) => path.split('.').last.toLowerCase() == 'wma';
 
+String detectArtworkMimeType(Uint8List bytes) {
+  bool matchesAt(int offset, List<int> signature) {
+    if (offset < 0 || bytes.length < offset + signature.length) return false;
+    for (var index = 0; index < signature.length; index++) {
+      if (bytes[offset + index] != signature[index]) return false;
+    }
+    return true;
+  }
+
+  if (matchesAt(0, const [0xff, 0xd8, 0xff])) return 'image/jpeg';
+  if (matchesAt(0, const [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+    return 'image/png';
+  }
+  if (matchesAt(0, const [0x47, 0x49, 0x46, 0x38])) return 'image/gif';
+  if (matchesAt(0, const [0x52, 0x49, 0x46, 0x46]) &&
+      matchesAt(8, const [0x57, 0x45, 0x42, 0x50])) {
+    return 'image/webp';
+  }
+  if (matchesAt(4, const [0x66, 0x74, 0x79, 0x70])) {
+    return 'image/avif';
+  }
+  if (matchesAt(0, const [0x42, 0x4d])) return 'image/bmp';
+  return 'image/jpeg';
+}
+
 AudioMetadata readTrackMetadata(File file, {bool getImage = false}) =>
     isAsfAudioPath(file.path)
     ? readAsfMetadata(file, getImage: getImage)
@@ -2468,7 +2493,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         artist: track.artist,
         album: track.album,
         artUri: showArtwork && track.artwork != null
-            ? Uri.dataFromBytes(track.artwork!, mimeType: 'image/jpeg')
+            ? Uri.dataFromBytes(
+                track.artwork!,
+                mimeType: detectArtworkMimeType(track.artwork!),
+              )
             : null,
         duration: duration,
       ),
@@ -2509,7 +2537,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         artist: track.artist,
         album: track.album,
         artUri: showArtwork && track.artwork != null
-            ? Uri.dataFromBytes(track.artwork!, mimeType: 'image/jpeg')
+            ? Uri.dataFromBytes(
+                track.artwork!,
+                mimeType: detectArtworkMimeType(track.artwork!),
+              )
             : null,
         duration: duration,
       ),
@@ -2537,7 +2568,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           album: track.album,
           artUri: track.artwork == null
               ? null
-              : Uri.dataFromBytes(track.artwork!, mimeType: 'image/jpeg'),
+              : Uri.dataFromBytes(
+                  track.artwork!,
+                  mimeType: detectArtworkMimeType(track.artwork!),
+                ),
           duration: track.cueEnd == null
               ? null
               : track.cueEnd! - track.cueStart,
@@ -3229,7 +3263,10 @@ class _PlayerPageState extends State<PlayerPage>
     album: track.album,
     artUri: track.artwork == null
         ? null
-        : Uri.dataFromBytes(track.artwork!, mimeType: 'image/jpeg'),
+        : Uri.dataFromBytes(
+            track.artwork!,
+            mimeType: detectArtworkMimeType(track.artwork!),
+          ),
     playable: true,
     duration: track.cueEnd == null
         ? null
