@@ -1,0 +1,33 @@
+{
+  "id": "community.bass-foundation",
+  "name": "Bass Foundation",
+  "version": "1.0.0",
+  "description": "Tight sub-bass lift for small headphones and speakers.",
+  "capabilities": [
+    "equalizer-presets",
+    "audio-effects"
+  ],
+  "equalizerPresets": {
+    "Bass Foundation": [
+      4,
+      3,
+      2,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "audioEffects": [
+    {
+      "type": "bassBoost",
+      "parameters": {
+        "wet": 0.35,
+        "boost": 2.5
+      }
+    }
+  ]
+}

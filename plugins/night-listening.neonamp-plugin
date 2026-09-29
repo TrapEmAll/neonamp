@@ -1,0 +1,23 @@
+{
+  "id": "community.night-listening",
+  "name": "Night Listening",
+  "version": "1.0.0",
+  "description": "Gentle, low-fatigue curve for quiet playback.",
+  "capabilities": [
+    "equalizer-presets"
+  ],
+  "equalizerPresets": {
+    "Night Listening": [
+      -3,
+      -2,
+      -1,
+      0,
+      1,
+      1,
+      0,
+      -1,
+      -2,
+      -3
+    ]
+  }
+}

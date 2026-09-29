@@ -1,0 +1,23 @@
+{
+  "id": "community.metal-guitars",
+  "name": "Metal Guitars",
+  "version": "1.0.0",
+  "description": "Clear guitar mids with controlled sub-bass.",
+  "capabilities": [
+    "equalizer-presets"
+  ],
+  "equalizerPresets": {
+    "Metal Guitars": [
+      -2,
+      -1,
+      1,
+      3,
+      4,
+      2,
+      0,
+      -1,
+      -1,
+      0
+    ]
+  }
+}
