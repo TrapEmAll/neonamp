@@ -3028,6 +3028,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _notificationSkipControls = true;
   bool _notificationSeekControls = false;
   bool _notificationArtwork = true;
+  Uint8List? _widgetArtworkSource;
+  Uint8List? _widgetArtworkBytes;
   final ValueNotifier<Map<Object?, Object?>?> _audioOutputNotifier =
       ValueNotifier<Map<Object?, Object?>?>(null);
   Duration? _loopA;
@@ -3838,11 +3840,35 @@ class _PlayerPageState extends State<PlayerPage>
     if (!Platform.isAndroid) return;
     final current = _current;
     try {
+      final sourceArtwork = current?.artwork;
+      Uint8List? widgetArtwork = sourceArtwork;
+      if (sourceArtwork != null && sourceArtwork.length > 256 * 1024) {
+        if (!identical(_widgetArtworkSource, sourceArtwork)) {
+          _widgetArtworkSource = sourceArtwork;
+          try {
+            final decoded = img.decodeImage(sourceArtwork);
+            _widgetArtworkBytes = decoded == null
+                ? null
+                : Uint8List.fromList(
+                    img.encodeJpg(
+                      img.copyResizeCropSquare(decoded, size: 256),
+                      quality: 78,
+                    ),
+                  );
+          } on Object {
+            _widgetArtworkBytes = null;
+          }
+        }
+        widgetArtwork = _widgetArtworkBytes;
+      } else if (!identical(_widgetArtworkSource, sourceArtwork)) {
+        _widgetArtworkSource = sourceArtwork;
+        _widgetArtworkBytes = sourceArtwork;
+      }
       await const MethodChannel('neonamp/widget').invokeMethod('update', {
         'title': current?.name ?? 'NeonAmp',
         'artist': current?.artist ?? 'Nothing queued',
         'playing': _isPlaying,
-        if (current?.artwork != null) 'artwork': current!.artwork,
+        if (widgetArtwork != null) 'artwork': widgetArtwork,
       });
     } on Object catch (error) {
       debugPrint('Could not update Android widget: $error');
