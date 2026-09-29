@@ -33,6 +33,7 @@ import 'playlist_library_resolution.dart';
 import 'webdav_library.dart';
 import 'scrobbling.dart';
 import 'google_cast.dart';
+import 'storage_limits.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -5837,7 +5838,10 @@ class _PlayerPageState extends State<PlayerPage>
                 512 * 1024 * 1024) /
             (1024 * 1024))
         .round()
-        .clamp(64, 2048)
+        .clamp(
+          minimumLibraryCacheMegabytes,
+          maximumLibraryCacheMegabytes,
+        )
         .toDouble();
     String formatBytes(int value) {
       if (value < 1024) return '$value B';
@@ -5880,15 +5884,17 @@ class _PlayerPageState extends State<PlayerPage>
                 Text('Provider cache limit: ${cacheLimitMb.round()} MB'),
                 Slider(
                   value: cacheLimitMb,
-                  min: 64,
-                  max: 2048,
+                  min: minimumLibraryCacheMegabytes.toDouble(),
+                  max: maximumLibraryCacheMegabytes.toDouble(),
                   divisions: 31,
                   label: '${cacheLimitMb.round()} MB',
                   onChanged: (value) => setDialogState(() => cacheLimitMb = value),
                   onChangeEnd: (value) async {
-                    await const MethodChannel('neonamp/library').invokeMethod<int>(
+                    await const MethodChannel('neonamp/library').invokeMethod<bool>(
                       'setCacheLimit',
-                      {'megabytes': value.round()},
+                      {
+                        'bytes': libraryCacheBytesFromMegabytes(value.round()),
+                      },
                     );
                   },
                 ),
