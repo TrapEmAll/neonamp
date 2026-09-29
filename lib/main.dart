@@ -2896,6 +2896,8 @@ class _PlayerPageState extends State<PlayerPage>
   ScrobbleProtocol _scrobbleProtocol = ScrobbleProtocol.listenBrainz;
   String _scrobbleEndpoint = 'https://api.listenbrainz.org/1/submit-listens';
   String _scrobbleToken = '';
+  String _scrobbleApiKey = '';
+  String _scrobbleApiSecret = '';
   DateTime? _trackStartedAt;
   String? _submittedScrobbleIdentity;
   final List<String> _podcastFeeds = [];
@@ -4978,6 +4980,8 @@ class _PlayerPageState extends State<PlayerPage>
           );
           _scrobblingEnabled = storedBool(settings, 'scrobblingEnabled', false);
           _scrobbleToken = storedString(settings, 'scrobbleToken', '');
+          _scrobbleApiKey = storedString(settings, 'scrobbleApiKey', '');
+          _scrobbleApiSecret = storedString(settings, 'scrobbleApiSecret', '');
           _scrobbleEndpoint = storedString(
             settings,
             'scrobbleEndpoint',
@@ -5241,6 +5245,8 @@ class _PlayerPageState extends State<PlayerPage>
       'notificationArtwork': _notificationArtwork,
       'scrobblingEnabled': _scrobblingEnabled,
       'scrobbleToken': _scrobbleToken,
+      'scrobbleApiKey': _scrobbleApiKey,
+      'scrobbleApiSecret': _scrobbleApiSecret,
       'scrobbleEndpoint': _scrobbleEndpoint,
       'scrobbleProtocol': _scrobbleProtocol.name,
       'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
@@ -10491,6 +10497,8 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _showScrobblingSettings() async {
     final endpoint = TextEditingController(text: _scrobbleEndpoint);
     final token = TextEditingController(text: _scrobbleToken);
+    final apiKey = TextEditingController(text: _scrobbleApiKey);
+    final apiSecret = TextEditingController(text: _scrobbleApiSecret);
     var enabled = _scrobblingEnabled;
     var protocol = _scrobbleProtocol;
     final result = await showDialog<bool>(
@@ -10530,7 +10538,7 @@ class _PlayerPageState extends State<PlayerPage>
                   keyboardType: TextInputType.url,
                   decoration: const InputDecoration(
                     labelText: 'Submission endpoint',
-                    helperText: 'ListenBrainz works out of the box; compatible services may require their own session token.',
+                    helperText: 'ListenBrainz uses a user token; Last.fm-compatible services require a session token, API key, and API secret.',
                   ),
                 ),
                 TextField(
@@ -10539,9 +10547,20 @@ class _PlayerPageState extends State<PlayerPage>
                   decoration: InputDecoration(
                     labelText: protocol == ScrobbleProtocol.listenBrainz
                         ? 'ListenBrainz user token'
-                        : 'Session token',
+                    : 'Session token',
                   ),
                 ),
+                if (protocol == ScrobbleProtocol.lastFmCompatible) ...[
+                  TextField(
+                    controller: apiKey,
+                    decoration: const InputDecoration(labelText: 'API key'),
+                  ),
+                  TextField(
+                    controller: apiSecret,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'API secret'),
+                  ),
+                ],
               ],
             ),
           ),
@@ -10555,6 +10574,8 @@ class _PlayerPageState extends State<PlayerPage>
     if (result != true || !mounted) {
       endpoint.dispose();
       token.dispose();
+      apiKey.dispose();
+      apiSecret.dispose();
       return;
     }
     setState(() {
@@ -10562,9 +10583,13 @@ class _PlayerPageState extends State<PlayerPage>
       _scrobbleProtocol = protocol;
       _scrobbleEndpoint = endpoint.text.trim();
       _scrobbleToken = token.text.trim();
+      _scrobbleApiKey = apiKey.text.trim();
+      _scrobbleApiSecret = apiSecret.text.trim();
     });
     endpoint.dispose();
     token.dispose();
+    apiKey.dispose();
+    apiSecret.dispose();
     await _saveQueue();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -10583,6 +10608,8 @@ class _PlayerPageState extends State<PlayerPage>
         endpoint: endpoint,
         token: _scrobbleToken,
         protocol: _scrobbleProtocol,
+        apiKey: _scrobbleApiKey,
+        apiSecret: _scrobbleApiSecret,
         track: ScrobbleTrack(
           title: track.name,
           artist: track.artist,

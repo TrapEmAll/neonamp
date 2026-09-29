@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+
 class ScrobbleTrack {
   const ScrobbleTrack({
     required this.title,
@@ -15,6 +17,17 @@ class ScrobbleTrack {
 
 enum ScrobbleProtocol { listenBrainz, lastFmCompatible }
 
+String lastFmApiSignature(
+  Map<String, String> parameters,
+  String apiSecret,
+) {
+  final canonical = (parameters.entries.toList()
+        ..sort((a, b) => a.key.compareTo(b.key)))
+      .map((entry) => '${entry.key}${entry.value}')
+      .join();
+  return md5.convert(utf8.encode('$canonical${apiSecret.trim()}')).toString();
+}
+
 class ScrobbleClient {
   ScrobbleClient({HttpClient? client}) : _client = client ?? HttpClient();
 
@@ -26,6 +39,8 @@ class ScrobbleClient {
     required ScrobbleProtocol protocol,
     required ScrobbleTrack track,
     required DateTime startedAt,
+    String apiKey = '',
+    String apiSecret = '',
   }) async {
     if (token.trim().isEmpty) throw ArgumentError('A scrobbling token is required.');
     final request = await _client.postUrl(endpoint);
@@ -46,20 +61,35 @@ class ScrobbleClient {
         ],
       }));
     } else {
-      request.headers.contentType = ContentType('application', 'x-www-form-urlencoded');
-      request.write(Uri(queryParameters: {
-        'method': 'track.scrobble',
-        'artist': track.artist,
-        'track': track.title,
+      if (apiKey.trim().isEmpty || apiSecret.trim().isEmpty) {
+        throw ArgumentError(
+          'Last.fm-compatible services require an API key and secret.',
+        );
+      }
+      final parameters = <String, String>{
         'album': track.album,
-        'timestamp': '${startedAt.millisecondsSinceEpoch ~/ 1000}',
+        'api_key': apiKey.trim(),
+        'artist': track.artist,
+        'format': 'json',
+        'method': 'track.scrobble',
         'sk': token.trim(),
-      }).query);
+        'timestamp': '${startedAt.millisecondsSinceEpoch ~/ 1000}',
+        'track': track.title,
+      };
+      request.headers.contentType = ContentType('application', 'x-www-form-urlencoded');
+      parameters['api_sig'] = lastFmApiSignature(parameters, apiSecret);
+      request.write(Uri(queryParameters: parameters).query);
     }
     final response = await request.close();
     final body = await response.transform(utf8.decoder).join();
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw HttpException('Scrobble service returned ${response.statusCode}: $body', uri: endpoint);
+    }
+    if (protocol == ScrobbleProtocol.lastFmCompatible) {
+      final decoded = jsonDecode(body);
+      if (decoded is Map && decoded['error'] != null) {
+        throw HttpException('Scrobble service rejected the listen: ${decoded['message'] ?? decoded['error']}', uri: endpoint);
+      }
     }
   }
 
