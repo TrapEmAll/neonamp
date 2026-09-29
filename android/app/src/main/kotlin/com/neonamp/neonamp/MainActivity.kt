@@ -904,6 +904,7 @@ class MainActivity : AudioServiceActivity() {
         val results = mutableListOf<Map<String, Any?>>()
         val visited = mutableSetOf<String>()
         val seenDocuments = mutableSetOf<String>()
+        val folderArtworkCache = mutableMapOf<String, ByteArray?>()
         val rootDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
         val pending = ArrayDeque<String>()
         pending.add(rootDocumentId)
@@ -1027,7 +1028,13 @@ class MainActivity : AudioServiceActivity() {
                         name
                     }
                     val sidecarLyrics = readSidecarLyrics(treeUri, parentId, name)
-                    val folderArtwork = readFolderArtwork(treeUri, parentId)
+                    val folderArtwork = if (folderArtworkCache.containsKey(parentId)) {
+                        folderArtworkCache[parentId]
+                    } else {
+                        readFolderArtwork(treeUri, parentId).also {
+                            folderArtworkCache[parentId] = it
+                        }
+                    }
                     results.add(
                         mapOf(
                             // Keep the provider URI as the durable library identity.
