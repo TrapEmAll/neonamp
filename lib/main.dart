@@ -8,6 +8,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -2580,6 +2581,7 @@ class NeonAmpApp extends StatefulWidget {
 class _NeonAmpAppState extends State<NeonAmpApp> {
   String _themeName = 'Neon';
   double _uiScale = 1.0;
+  bool _useDynamicColor = true;
   final Map<String, ThemeSkin> _customSkins = {};
   int _themeOperationGeneration = 0;
 
@@ -2611,6 +2613,7 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     setState(() {
       _themeName = prefs.getString('themeName') ?? 'Neon';
       _uiScale = savedScale.clamp(0.85, 1.25).toDouble();
+      _useDynamicColor = prefs.getBool('useDynamicColor') ?? true;
     });
   }
 
@@ -2631,6 +2634,13 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     final prefs = await SharedPreferences.getInstance();
     if (operation != _themeOperationGeneration) return;
     await prefs.setDouble('uiScale', value);
+  }
+
+  Future<void> _setDynamicColor(bool enabled) async {
+    if (!mounted) return;
+    setState(() => _useDynamicColor = enabled);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('useDynamicColor', enabled);
   }
 
   Future<void> _addCustomSkin(ThemeSkin skin) async {
@@ -2654,7 +2664,7 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
 
   List<ThemeSkin> get _skins => [...builtInSkins(), ..._customSkins.values];
 
-  ThemeData _themeData() {
+  ThemeData _themeData({ColorScheme? dynamicScheme}) {
     final skin = _skins.firstWhere(
       (value) => value.name == _themeName,
       orElse: () => builtInSkins().first,
@@ -2662,10 +2672,12 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: skin.backgroundColor,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: skin.seedColor,
-        brightness: Brightness.dark,
-      ),
+      colorScheme: _useDynamicColor && dynamicScheme != null
+          ? dynamicScheme
+          : ColorScheme.fromSeed(
+              seedColor: skin.seedColor,
+              brightness: Brightness.dark,
+            ),
       fontFamily: 'Segoe UI',
       textTheme: ThemeData.dark().textTheme.apply(fontSizeFactor: _uiScale),
       visualDensity: VisualDensity(
@@ -2677,17 +2689,21 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'NeonAmp',
-    debugShowCheckedModeBanner: false,
-    theme: _themeData(),
-    home: PlayerPage(
-      themeName: _themeName,
-      uiScale: _uiScale,
-      skins: _skins,
-      onThemeChanged: _setTheme,
-      onUiScaleChanged: _setUiScale,
-      onSkinImported: _addCustomSkin,
+  Widget build(BuildContext context) => DynamicColorBuilder(
+    builder: (lightScheme, darkScheme) => MaterialApp(
+      title: 'NeonAmp',
+      debugShowCheckedModeBanner: false,
+      theme: _themeData(dynamicScheme: darkScheme),
+      home: PlayerPage(
+        themeName: _themeName,
+        uiScale: _uiScale,
+        skins: _skins,
+        onThemeChanged: _setTheme,
+        onUiScaleChanged: _setUiScale,
+        onSkinImported: _addCustomSkin,
+        useDynamicColor: _useDynamicColor,
+        onDynamicColorChanged: _setDynamicColor,
+      ),
     ),
   );
 }
@@ -2701,6 +2717,8 @@ class PlayerPage extends StatefulWidget {
     this.onThemeChanged,
     this.onUiScaleChanged,
     this.onSkinImported,
+    this.useDynamicColor = true,
+    this.onDynamicColorChanged,
   });
 
   final String themeName;
@@ -2709,6 +2727,8 @@ class PlayerPage extends StatefulWidget {
   final ValueChanged<String>? onThemeChanged;
   final ValueChanged<double>? onUiScaleChanged;
   final Future<void> Function(ThemeSkin skin)? onSkinImported;
+  final bool useDynamicColor;
+  final ValueChanged<bool>? onDynamicColorChanged;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -2863,6 +2883,18 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void initState() {
     super.initState();
+    if (Platform.isAndroid) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarDividerColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          systemNavigationBarIconBrightness: Brightness.light,
+        ),
+      );
+    }
     _initializeGaplessPlayback();
     _bindPlayerStreams();
     _bindDspStreams();
@@ -9191,6 +9223,17 @@ class _PlayerPageState extends State<PlayerPage>
                 alignment: Alignment.centerLeft,
                 child: Text('Color themes are available under Choose skin.'),
               ),
+              if (Platform.isAndroid)
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Use Android dynamic colors'),
+                  subtitle: const Text('Follow the device accent palette'),
+                  value: widget.useDynamicColor,
+                  onChanged: (value) {
+                    widget.onDynamicColorChanged?.call(value);
+                    setDialogState(() {});
+                  },
+                ),
             ],
           ),
           actions: [
