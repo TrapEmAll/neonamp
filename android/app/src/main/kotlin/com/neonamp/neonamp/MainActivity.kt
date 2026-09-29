@@ -666,13 +666,17 @@ class MainActivity : AudioServiceActivity() {
         if (intent?.action != Intent.ACTION_VIEW) return null
         val uri = intent.data ?: return null
         val mimeType = intent.type.orEmpty()
-        if (!mimeType.startsWith("audio/", ignoreCase = true) &&
-            !isSupportedMediaUri(uri)
-        ) return null
+        val kind = when {
+            mimeType.startsWith("audio/", ignoreCase = true) || isSupportedMediaUri(uri) -> "audio"
+            isSupportedPlaylistUri(uri, mimeType) -> "playlist"
+            isCueUri(uri, mimeType) -> "cue"
+            else -> return null
+        }
         val name = queryDisplayName(uri) ?: uri.lastPathSegment.orEmpty()
         return mapOf(
             "uri" to uri.toString(),
             "name" to name.ifBlank { "Incoming audio" },
+            "kind" to kind,
         )
     }
 
@@ -680,6 +684,19 @@ class MainActivity : AudioServiceActivity() {
         val name = uri.lastPathSegment.orEmpty().lowercase(Locale.US)
         return listOf(".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wav", ".wma", ".aiff", ".aif")
             .any(name::endsWith)
+    }
+
+    private fun isSupportedPlaylistUri(uri: Uri, mimeType: String): Boolean {
+        if (mimeType.contains("mpegurl", ignoreCase = true) ||
+            mimeType.contains("playlist", ignoreCase = true)
+        ) return true
+        val name = uri.lastPathSegment.orEmpty().lowercase(Locale.US)
+        return listOf(".m3u", ".m3u8", ".pls", ".b4s", ".wpl", ".asx").any(name::endsWith)
+    }
+
+    private fun isCueUri(uri: Uri, mimeType: String): Boolean {
+        if (mimeType.contains("cue", ignoreCase = true)) return true
+        return uri.lastPathSegment.orEmpty().lowercase(Locale.US).endsWith(".cue")
     }
 
     private fun queryDisplayName(uri: Uri): String? {

@@ -2826,6 +2826,29 @@ class _PlayerPageState extends State<PlayerPage>
     final path = payload['uri'] as String?;
     if (path == null || path.trim().isEmpty) return;
     final name = (payload['name'] as String?)?.trim();
+    final kind = payload['kind'] as String? ?? 'audio';
+    if (kind == 'playlist') {
+      final playlistPath = isContentMediaPath(path)
+          ? await const MethodChannel('neonamp/library')
+                .invokeMethod<String>('materializeUri', {
+                  'uri': path,
+                  'name': name ?? 'incoming-playlist.m3u',
+                })
+          : normalizeLocalMediaPath(path);
+      if (playlistPath == null || playlistPath.isEmpty) return;
+      await _importPlaylistFile(playlistPath);
+      return;
+    }
+    if (kind == 'cue') {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('CUE files opened from another app require selecting their audio source in Import CUE.'),
+          ),
+        );
+      }
+      return;
+    }
     final incoming = Track(
       path: normalizeLocalMediaPath(path),
       name: name == null || name.isEmpty ? 'Incoming audio' : name,
@@ -5013,6 +5036,69 @@ class _PlayerPageState extends State<PlayerPage>
           ),
         ),
       );
+    }
+  }
+
+  Future<void> _importPlaylistFile(String playlistPath) async {
+    final operation = ++_libraryOperationGeneration;
+    try {
+      final extension = playlistPath.split('.').last.toLowerCase();
+      final document = parsePlaylistDocument(
+        await File(playlistPath).readAsString(),
+        extension,
+      );
+      var added = 0;
+      var skipped = 0;
+      if (!mounted || operation != _libraryOperationGeneration) return;
+      setState(() {
+        for (final entry in document.entries) {
+          var path = resolvePlaylistPath(entry.path, playlistPath);
+          if (path.isEmpty || path.startsWith('#')) continue;
+          final uri = Uri.tryParse(path);
+          final isStream = isHttpUri(uri);
+          if (!isStream && !File(path).existsSync()) {
+            skipped++;
+            continue;
+          }
+          final pathKey = trackPathKey(path);
+          if (_queue.any((track) => trackPathKey(track.path) == pathKey)) continue;
+          final existingTrack = _library
+              .where((track) => trackPathKey(track.path) == pathKey)
+              .firstOrNull;
+          final fallbackName = isStream
+              ? (uri?.host ?? 'Internet stream')
+              : path.split(RegExp(r'[/\\]')).last;
+          final track = existingTrack?.copyWith(
+                name: entry.title?.isNotEmpty == true
+                    ? entry.title!
+                    : existingTrack.name,
+              ) ??
+              Track(
+                path: path,
+                name: entry.title?.isNotEmpty == true
+                    ? entry.title!
+                    : fallbackName.replaceFirst(RegExp(r'\.[^.]+$'), ''),
+                artist: isStream ? 'Online radio' : 'Local library',
+              );
+          _queue.add(track);
+          if (!_library.any((item) => trackPathKey(item.path) == pathKey)) {
+            _library.add(track);
+          }
+          added++;
+        }
+      });
+      await _saveQueue();
+      if (mounted && operation == _libraryOperationGeneration) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imported $added track(s) from playlist.${skipped == 0 ? '' : ' $skipped missing.'}')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted && operation == _libraryOperationGeneration) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import playlist: $error')),
+        );
+      }
     }
   }
 
