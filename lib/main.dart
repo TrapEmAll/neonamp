@@ -4187,6 +4187,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _addWebDavLibrary();
       case 'cleanLibrary':
         operation = _cleanLibraryEntries();
+      case 'libraryStats':
+        operation = _showLibraryStatistics();
       case 'exportBackup':
         operation = _exportBackup();
       case 'importBackup':
@@ -4616,6 +4618,47 @@ class _PlayerPageState extends State<PlayerPage>
             : 'Removed $removed duplicate library entr${removed == 1 ? 'y' : 'ies'}.')),
       );
     }
+  }
+
+  Future<void> _showLibraryStatistics() async {
+    final byFolder = <String, int>{};
+    var missing = 0;
+    for (final track in _library) {
+      final folder = _libraryRelativePaths[track.path]?.split('/').first ??
+          track.path.split(RegExp(r'[/\\]')).skip(0).take(2).join('/');
+      byFolder[folder.isEmpty ? 'Uncategorized' : folder] =
+          (byFolder[folder.isEmpty ? 'Uncategorized' : folder] ?? 0) + 1;
+      if (!isUriMediaPath(track.path) && !File(track.path).existsSync()) missing++;
+    }
+    if (!mounted) return;
+    final largest = byFolder.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Library statistics'),
+        content: SizedBox(
+          width: 460,
+          height: 320,
+          child: ListView(
+            children: [
+              Text('Tracks: ${_library.length}'),
+              Text('Folders: ${_libraryFolders.length}'),
+              Text('Missing local files: $missing'),
+              const Divider(),
+              ...largest.map((entry) => ListTile(
+                    dense: true,
+                    title: Text(entry.key),
+                    trailing: Text('${entry.value}'),
+                  )),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Done')),
+        ],
+      ),
+    );
   }
 
   Future<void> _exportBackup() async {
@@ -5503,6 +5546,23 @@ class _PlayerPageState extends State<PlayerPage>
       }
       final metadata = readTrackMetadata(File(path), getImage: true);
       final replayGainDb = readReplayGainDb(File(path));
+      Uint8List? folderArtwork;
+      if (metadata.pictures.isEmpty) {
+        final parent = File(path).parent;
+        for (final candidateName in const ['cover.jpg', 'cover.jpeg', 'folder.jpg', 'folder.png']) {
+          final candidate = File('${parent.path}${Platform.pathSeparator}$candidateName');
+          if (!candidate.existsSync()) continue;
+          try {
+            final pictures = readTrackMetadata(candidate, getImage: true).pictures;
+            if (pictures.isNotEmpty) {
+              folderArtwork = pictures.first.bytes;
+              break;
+            }
+          } on Object {
+            // A malformed fallback image should not prevent the track from loading.
+          }
+        }
+      }
       final hasContainerId3 = isAiffAudioPath(path) || isWavAudioPath(path);
       final containerId3 = hasContainerId3
           ? await File(path).readAsBytes()
@@ -5538,9 +5598,10 @@ class _PlayerPageState extends State<PlayerPage>
                 : null),
         artwork: metadata.pictures.isNotEmpty
             ? metadata.pictures.first.bytes
-            : (isAiffAudioPath(path) || isWavAudioPath(path))
-            ? readAiffId3Picture(containerId3!)?.$1
-            : null,
+            : folderArtwork ??
+                  ((isAiffAudioPath(path) || isWavAudioPath(path))
+                      ? readAiffId3Picture(containerId3!)?.$1
+                      : null),
         replayGainDb: replayGainDb,
       );
     } catch (_) {
@@ -9716,6 +9777,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'cleanLibrary',
                 child: Text('Clean duplicate library entries'),
+              ),
+              PopupMenuItem(
+                value: 'libraryStats',
+                child: Text('Library statistics'),
               ),
               PopupMenuItem(
                 value: 'import',
