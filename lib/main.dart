@@ -5184,6 +5184,17 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _clearArtworkCache() async {
+    final support = await getApplicationSupportDirectory();
+    final cache = Directory('${support.path}${Platform.pathSeparator}artwork-cache');
+    if (await cache.exists()) await cache.delete(recursive: true);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Downloaded artwork cache cleared.')),
+      );
+    }
+  }
+
   Future<void> _showStorageMaintenance() async {
     Map<Object?, Object?>? stats;
     Map<Object?, Object?>? battery;
@@ -5268,6 +5279,13 @@ class _PlayerPageState extends State<PlayerPage>
               },
               child: const Text('Allow background playback'),
             ),
+          TextButton(
+            onPressed: () async {
+              await _clearArtworkCache();
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            },
+            child: const Text('Clear artwork cache'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Done'),
@@ -8499,6 +8517,99 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _downloadArtwork(Track track) async {
+    final artist = track.artist.trim();
+    final album = track.album.trim();
+    if (artist.isEmpty || album.isEmpty || album == 'Unknown album') {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Artist and album metadata are required.')),
+        );
+      }
+      return;
+    }
+    try {
+      final support = await getApplicationSupportDirectory();
+      final cache = Directory('${support.path}${Platform.pathSeparator}artwork-cache');
+      await cache.create(recursive: true);
+      final safeKey = base64UrlEncode(utf8.encode('$artist\u0000$album'))
+          .replaceAll('=', '');
+      final cached = File('${cache.path}${Platform.pathSeparator}$safeKey.jpg');
+      Uint8List artwork;
+      if (await cached.exists() && await cached.length() > 0) {
+        artwork = await cached.readAsBytes();
+      } else {
+        final client = HttpClient();
+        try {
+          final query = Uri(
+            queryParameters: {
+              'query': 'artist:"$artist" AND release:"$album"',
+              'fmt': 'json',
+              'limit': '1',
+            },
+          ).query;
+          final lookup = await client.getUrl(
+            Uri.parse('https://musicbrainz.org/ws/2/release/?$query'),
+          );
+          lookup.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/1.0 (album-art)');
+          final lookupResponse = await lookup.close();
+          if (lookupResponse.statusCode != HttpStatus.ok) {
+            throw HttpException('MusicBrainz lookup failed (${lookupResponse.statusCode})');
+          }
+          final lookupBody = await lookupResponse.transform(utf8.decoder).join();
+          final releases = (jsonDecode(lookupBody) as Map<String, dynamic>)['releases'];
+          if (releases is! List || releases.isEmpty || releases.first is! Map) {
+            throw const FormatException('No matching album artwork was found.');
+          }
+          final releaseId = (releases.first as Map)['id']?.toString();
+          if (releaseId == null || releaseId.isEmpty) {
+            throw const FormatException('The album has no artwork identifier.');
+          }
+          final imageRequest = await client.getUrl(
+            Uri.parse('https://coverartarchive.org/release/$releaseId/front-500'),
+          );
+          final imageResponse = await imageRequest.close();
+          if (imageResponse.statusCode != HttpStatus.ok) {
+            throw HttpException('Cover Art Archive failed (${imageResponse.statusCode})');
+          }
+          artwork = Uint8List.fromList(await imageResponse.fold<List<int>>(
+            <int>[],
+            (bytes, chunk) => bytes..addAll(chunk),
+          ));
+          if (artwork.isEmpty) throw const FormatException('The artwork was empty.');
+          await cached.writeAsBytes(artwork, flush: true);
+        } finally {
+          client.close(force: true);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        for (var i = 0; i < _library.length; i++) {
+          if (sameTrackPath(_library[i].path, track.path)) {
+            _library[i] = _library[i].copyWith(artwork: artwork);
+          }
+        }
+        for (var i = 0; i < _queue.length; i++) {
+          if (sameTrackPath(_queue[i].path, track.path)) {
+            _queue[i] = _queue[i].copyWith(artwork: artwork);
+          }
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Album artwork downloaded and cached.')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not download album artwork: $error')),
+        );
+      }
+    }
+  }
+
   Future<void> _createPlaylist() async {
     final controller = TextEditingController();
     final name = await showDialog<String>(
@@ -10811,6 +10922,15 @@ class _PlayerPageState extends State<PlayerPage>
                   color: Colors.white30,
                 ),
                 onPressed: () => _replaceArtwork(track),
+              ),
+              IconButton(
+                tooltip: 'Download album art',
+                icon: const Icon(
+                  Icons.cloud_download_outlined,
+                  size: 17,
+                  color: Colors.white30,
+                ),
+                onPressed: () => _downloadArtwork(track),
               ),
               if (!isUriMediaPath(track.path))
                 IconButton(
