@@ -2922,6 +2922,7 @@ class _PlayerPageState extends State<PlayerPage>
   String _libraryFilter = 'All';
   String _librarySort = 'Added';
   bool _librarySortDescending = false;
+  bool _backgroundScanEnabled = false;
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
   final Map<String, List<double>> _deviceEqPresets = {};
@@ -3150,6 +3151,9 @@ class _PlayerPageState extends State<PlayerPage>
                 .invokeMethod<bool>('consumeQueueShortcut') ??
             false;
         if (openQueue && mounted) setState(() => _activeView = 'queue');
+      }
+      if (_backgroundScanEnabled && _libraryFolders.isNotEmpty) {
+        _runAsyncSafely(_rescanFolders(), 'Background library scan');
       }
       _configureAndroidAutoBrowse();
     } on Object catch (error, stackTrace) {
@@ -4964,6 +4968,11 @@ class _PlayerPageState extends State<PlayerPage>
             'librarySortDescending',
             false,
           );
+          _backgroundScanEnabled = storedBool(
+            settings,
+            'backgroundScanEnabled',
+            false,
+          );
           final savedPlayerControls = settings['playerControls'];
           if (savedPlayerControls is List) {
             _playerControls = normalizePlayerControls(savedPlayerControls);
@@ -5201,6 +5210,7 @@ class _PlayerPageState extends State<PlayerPage>
       'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
       'librarySort': _librarySort,
       'librarySortDescending': _librarySortDescending,
+      'backgroundScanEnabled': _backgroundScanEnabled,
       'libraryRelativePaths': Map<String, String>.of(_libraryRelativePaths),
       'libraryFileSignatures': Map<String, String>.of(_libraryFileSignatures),
       if (_playerLayoutCustomized)
@@ -5845,6 +5855,19 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               if (Platform.isAndroid) ...[
                 const SizedBox(height: 16),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Rescan folders on startup'),
+                  subtitle: const Text(
+                    'Refresh saved folders in the background after NeonAmp opens.',
+                  ),
+                  value: _backgroundScanEnabled,
+                  onChanged: (value) {
+                    setState(() => _backgroundScanEnabled = value);
+                    setDialogState(() {});
+                    _saveQueueSafely();
+                  },
+                ),
                 Text('Provider cache limit: ${cacheLimitMb.round()} MB'),
                 Slider(
                   value: cacheLimitMb,
@@ -11753,6 +11776,35 @@ class _PlayerPageState extends State<PlayerPage>
         ),
       );
 
+  ({IconData icon, String label, Color color}) _trackAvailability(Track track) {
+    if (isRemoteMediaPath(track.path)) {
+      return (
+        icon: Icons.cloud_outlined,
+        label: 'Remote only; download before offline playback',
+        color: Colors.lightBlueAccent,
+      );
+    }
+    if (isContentMediaPath(track.path)) {
+      return (
+        icon: Icons.cloud_queue_outlined,
+        label: 'Provider-backed; cached when played',
+        color: Colors.amberAccent,
+      );
+    }
+    if (File(track.path).existsSync()) {
+      return (
+        icon: Icons.offline_pin_outlined,
+        label: 'Available offline',
+        color: Colors.lightGreenAccent,
+      );
+    }
+    return (
+      icon: Icons.warning_amber_outlined,
+      label: 'Missing local file',
+      color: Colors.orangeAccent,
+    );
+  }
+
   Widget _libraryView() {
     final tracks = _visibleLibrary;
     if (tracks.isEmpty) return _emptyQueue();
@@ -11761,12 +11813,17 @@ class _PlayerPageState extends State<PlayerPage>
       itemCount: tracks.length,
       itemBuilder: (_, index) {
         final track = tracks[index];
+        final availability = _trackAvailability(track);
         return ListTile(
           dense: true,
           leading: Checkbox(
             value: _selectedLibraryPaths.contains(track.identityKey),
             onChanged: (_) => _toggleLibrarySelection(track),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          secondary: Tooltip(
+            message: availability.label,
+            child: Icon(availability.icon, color: availability.color, size: 18),
           ),
           title: Text(
             track.name,
