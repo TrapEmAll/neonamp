@@ -20,6 +20,16 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
         updateAll(context, "NeonAmp", "Nothing queued", false, null)
     }
 
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        manager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle,
+    ) {
+        super.onAppWidgetOptionsChanged(context, manager, appWidgetId, newOptions)
+        updateAll(context, "NeonAmp", "Nothing queued", false, null)
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
         when (intent.action) {
@@ -67,7 +77,14 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
             val component = ComponentName(context, NeonAmpWidgetProvider::class.java)
             val ids = manager.getAppWidgetIds(component)
             if (ids.isEmpty()) return
-            val views = RemoteViews(context.packageName, R.layout.neonamp_widget)
+            val options = manager.getAppWidgetOptions(ids.first())
+            val minWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
+            val layout = if (minWidth in 0..299) {
+                R.layout.neonamp_widget_compact
+            } else {
+                R.layout.neonamp_widget
+            }
+            val views = RemoteViews(context.packageName, layout)
             views.setTextViewText(R.id.widget_title, title)
             views.setTextViewText(R.id.widget_artist, artist)
             views.setImageViewResource(
@@ -85,7 +102,38 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.widget_play_pause, pendingIntent(context, ACTION_PLAY_PAUSE))
             views.setOnClickPendingIntent(R.id.widget_previous, pendingIntent(context, ACTION_PREVIOUS))
             views.setOnClickPendingIntent(R.id.widget_next, pendingIntent(context, ACTION_NEXT))
-            manager.updateAppWidget(ids, views)
+            ids.forEach { id ->
+                val widgetOptions = manager.getAppWidgetOptions(id)
+                val width = widgetOptions.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
+                val widgetLayout = if (width in 0..299) {
+                    R.layout.neonamp_widget_compact
+                } else {
+                    R.layout.neonamp_widget
+                }
+                if (widgetLayout == layout) {
+                    manager.updateAppWidget(id, views)
+                } else {
+                    val resized = RemoteViews(context.packageName, widgetLayout)
+                    resized.setTextViewText(R.id.widget_title, title)
+                    resized.setTextViewText(R.id.widget_artist, artist)
+                    resized.setImageViewResource(
+                        R.id.widget_play_pause,
+                        if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                    )
+                    if (artwork != null) {
+                        BitmapFactory.decodeByteArray(artwork, 0, artwork.size)?.let {
+                            resized.setImageViewBitmap(R.id.widget_artwork, it)
+                        }
+                    } else {
+                        resized.setImageViewResource(R.id.widget_artwork, android.R.drawable.ic_media_play)
+                    }
+                    resized.setOnClickPendingIntent(R.id.widget_artwork, pendingIntent(context, ACTION_OPEN))
+                    resized.setOnClickPendingIntent(R.id.widget_play_pause, pendingIntent(context, ACTION_PLAY_PAUSE))
+                    resized.setOnClickPendingIntent(R.id.widget_previous, pendingIntent(context, ACTION_PREVIOUS))
+                    resized.setOnClickPendingIntent(R.id.widget_next, pendingIntent(context, ACTION_NEXT))
+                    manager.updateAppWidget(id, resized)
+                }
+            }
         }
 
         private fun pendingIntent(context: Context, action: String): PendingIntent =
