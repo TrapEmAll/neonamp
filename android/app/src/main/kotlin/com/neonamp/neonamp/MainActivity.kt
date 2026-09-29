@@ -770,10 +770,12 @@ class MainActivity : AudioServiceActivity() {
         }
         val activeDevice = devices.firstOrNull { device ->
             val type = device["type"] as? Int ?: return@firstOrNull false
+            val isBleHeadset = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                type == AudioDeviceInfo.TYPE_BLE_HEADSET
             type == AudioDeviceInfo.TYPE_USB_DEVICE ||
                 type == AudioDeviceInfo.TYPE_USB_HEADSET ||
                 type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                isBleHeadset ||
                 type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES
         } ?: devices.firstOrNull()
         val activeBitDepths = (activeDevice?.get("bitDepths") as? List<*>)
@@ -806,11 +808,12 @@ class MainActivity : AudioServiceActivity() {
         )
     }
 
-    private fun pcmBitDepth(encoding: Int): Int? = when (encoding) {
-        AudioFormat.ENCODING_PCM_8BIT -> 8
-        AudioFormat.ENCODING_PCM_16BIT -> 16
-        AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
-        AudioFormat.ENCODING_PCM_32BIT -> 32
+    private fun pcmBitDepth(encoding: Int): Int? = when {
+        encoding == AudioFormat.ENCODING_PCM_8BIT -> 8
+        encoding == AudioFormat.ENCODING_PCM_16BIT -> 16
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+            encoding == AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
+        encoding == AudioFormat.ENCODING_PCM_32BIT -> 32
         else -> null
     }
 
