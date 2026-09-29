@@ -9,6 +9,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:dynamic_color/dynamic_color.dart';
+import 'package:image/image.dart' as img;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8643,6 +8644,45 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<Uint8List> _prepareArtwork(Uint8List bytes) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('Prepare cover art'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'original'),
+            child: const Text('Use original image'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'square'),
+            child: const Text('Crop to square · 512 px'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'resize'),
+            child: const Text('Resize to fit · 1024 px'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || choice == 'original') return bytes;
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      throw const FormatException('The selected image could not be decoded.');
+    }
+    final prepared = choice == 'square'
+        ? img.copyResizeCropSquare(decoded, size: 512)
+        : img.copyResize(
+            decoded,
+            width: 1024,
+            height: 1024,
+            maintainAspect: true,
+            backgroundColor: img.ColorRgb8(0, 0, 0),
+            interpolation: img.Interpolation.average,
+          );
+    return Uint8List.fromList(img.encodeJpg(prepared, quality: 90));
+  }
+
   Future<void> _replaceArtwork(Track track) async {
     if (isUriMediaPath(track.path)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -8657,7 +8697,7 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       final imagePath = await _localPickedFilePath(result.first);
       final imageFile = File(imagePath);
-      final bytes = await imageFile.readAsBytes();
+      final bytes = await _prepareArtwork(await imageFile.readAsBytes());
       if (bytes.isEmpty) throw const FormatException('The image is empty.');
       final extension = imageFile.path.split('.').last.toLowerCase();
       final mimeType = switch (extension) {
