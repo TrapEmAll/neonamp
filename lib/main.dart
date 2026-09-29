@@ -2699,6 +2699,9 @@ class _PlayerPageState extends State<PlayerPage>
   bool _midiActive = false;
   double _playbackSpeed = 1.0;
   bool _replayGainEnabled = false;
+  Duration? _loopA;
+  Duration? _loopB;
+  bool _abLoopSeekInProgress = false;
   Timer? _sleepTimer;
   Timer? _resumeSaveTimer;
   bool _saveInProgress = false;
@@ -2890,6 +2893,7 @@ class _PlayerPageState extends State<PlayerPage>
         return;
       }
       final relative = _cueRelativePosition(track, value);
+      _maybeLoopBack(relative);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
       if (track?.cueStartMs == null &&
@@ -2970,6 +2974,7 @@ class _PlayerPageState extends State<PlayerPage>
         return;
       }
       final relative = _cueRelativePosition(track, value);
+      _maybeLoopBack(relative);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
       if (track?.cueStartMs == null &&
@@ -3050,6 +3055,7 @@ class _PlayerPageState extends State<PlayerPage>
           )) {
         return;
       }
+      _maybeLoopBack(value);
       setState(() => _position = value);
       _rememberResumePosition(value);
       _audioHandler?.syncExternalState(position: value, state: _playerState);
@@ -3431,6 +3437,94 @@ class _PlayerPageState extends State<PlayerPage>
     } else {
       await _player.seek(sourcePosition);
     }
+  }
+
+  void _maybeLoopBack(Duration position) {
+    final start = _loopA;
+    final end = _loopB;
+    if (start == null || end == null || end <= start ||
+        position < end || _abLoopSeekInProgress) {
+      return;
+    }
+    _abLoopSeekInProgress = true;
+    _runAsyncSafely(
+      _seekCurrent(start).whenComplete(() => _abLoopSeekInProgress = false),
+      'Returning to A/B loop start',
+    );
+  }
+
+  String _formatDuration(Duration value) =>
+      '${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+
+  Future<void> _showAbLoop() async {
+    var pointA = _loopA;
+    var pointB = _loopB;
+    final result = await showDialog<({Duration? a, Duration? b})>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('A/B loop'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(pointA == null ? 'A: not set' : 'A: ${_formatDuration(pointA!)}'),
+              Text(pointB == null ? 'B: not set' : 'B: ${_formatDuration(pointB!)}'),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: _current == null
+                        ? null
+                        : () => setDialogState(() => pointA = _position),
+                    child: const Text('Set A here'),
+                  ),
+                  OutlinedButton(
+                    onPressed: _current == null
+                        ? null
+                        : () => setDialogState(() => pointB = _position),
+                    child: const Text('Set B here'),
+                  ),
+                  TextButton(
+                    onPressed: () => setDialogState(() {
+                      pointA = null;
+                      pointB = null;
+                    }),
+                    child: const Text('Clear'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Playback returns to A when it reaches B. Set B after A.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, (a: pointA, b: pointB)),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    if (result.a != null && result.b != null && result.b! <= result.a!) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('B must be after A.')),
+      );
+      return;
+    }
+    setState(() {
+      _loopA = result.a;
+      _loopB = result.b;
+    });
   }
 
   Future<void> _skipBy(Duration offset) => _seekCurrent(
@@ -4006,6 +4100,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _showEqualizer();
       case 'speed':
         operation = _showPlaybackSpeed();
+      case 'abLoop':
+        operation = _showAbLoop();
       case 'layout':
         operation = _showPlayerLayout();
       case 'theme':
@@ -4938,6 +5034,8 @@ class _PlayerPageState extends State<PlayerPage>
         _selected = index;
         _position = Duration.zero;
         _cueTransitioning = false;
+        _loopA = null;
+        _loopB = null;
       });
       final track = _queue[index];
       _playbackTrackIdentity = track.identityKey;
@@ -8898,6 +8996,7 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'speed', child: Text('Playback speed')),
+              PopupMenuItem(value: 'abLoop', child: Text('A/B loop')),
               PopupMenuItem(
                 value: 'layout',
                 child: Text('Customize player controls'),
