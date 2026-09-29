@@ -83,7 +83,8 @@ jobs:
       - name: Build Android release
         run: |
           for attempt in 1 2 3; do
-            flutter build apk --release --target-platform android-arm,android-arm64 && exit 0
+            flutter build apk --release --target-platform android-arm,android-arm64 && \
+              flutter build appbundle --release --target-platform android-arm,android-arm64 && exit 0
             if [ "$attempt" -lt 3 ]; then
               echo "Android build attempt $attempt failed; retrying dependency resolution..."
               sleep 15
@@ -95,7 +96,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: android-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
 
   publish-release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -126,4 +129,5 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" \
             "NeonAmp-Windows-$GITHUB_REF_NAME.zip" \
             android/app-release.apk \
+            android/app-release.aab \
             --clobber
