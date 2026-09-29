@@ -2089,7 +2089,20 @@ FILE "disc image.flac" WAVE
     );
     expect(
       detectArtworkMimeType(
-        Uint8List.fromList([0, 0, 0, 0, 0x66, 0x74, 0x79, 0x70]),
+        Uint8List.fromList([
+          0,
+          0,
+          0,
+          0,
+          0x66,
+          0x74,
+          0x79,
+          0x70,
+          0x61,
+          0x76,
+          0x69,
+          0x66,
+        ]),
       ),
       'image/avif',
     );

@@ -109,7 +109,9 @@ String detectArtworkMimeType(Uint8List bytes) {
       matchesAt(8, const [0x57, 0x45, 0x42, 0x50])) {
     return 'image/webp';
   }
-  if (matchesAt(4, const [0x66, 0x74, 0x79, 0x70])) {
+  if (matchesAt(4, const [0x66, 0x74, 0x79, 0x70]) &&
+      (matchesAt(8, const [0x61, 0x76, 0x69, 0x66]) ||
+          matchesAt(8, const [0x61, 0x76, 0x69, 0x73]))) {
     return 'image/avif';
   }
   if (matchesAt(0, const [0x42, 0x4d])) return 'image/bmp';
