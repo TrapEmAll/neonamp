@@ -1175,6 +1175,19 @@ class MainActivity : AudioServiceActivity() {
             action == Intent.ACTION_SEND -> intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
             else -> null
         } ?: return null
+        if (uri.scheme.equals("content", ignoreCase = true)) {
+            val persistableFlags = intent.flags and
+                (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            if (persistableFlags != 0) {
+                try {
+                    contentResolver.takePersistableUriPermission(uri, persistableFlags)
+                } catch (_: SecurityException) {
+                    // Some senders grant only a temporary URI permission. The
+                    // current launch can still consume it, but it cannot be
+                    // made durable without a provider-issued persistable grant.
+                }
+            }
+        }
         val mimeType = intent.type.orEmpty()
         val isHttpStream = uri.scheme.equals("http", ignoreCase = true) ||
             uri.scheme.equals("https", ignoreCase = true)
