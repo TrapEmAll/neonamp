@@ -2857,6 +2857,7 @@ class _PlayerPageState extends State<PlayerPage>
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
   final Map<String, String> _libraryRelativePaths = {};
+  final Map<String, String> _libraryFileSignatures = {};
   bool _scrobblingEnabled = false;
   ScrobbleProtocol _scrobbleProtocol = ScrobbleProtocol.listenBrainz;
   String _scrobbleEndpoint = 'https://api.listenbrainz.org/1/submit-listens';
@@ -4857,6 +4858,14 @@ class _PlayerPageState extends State<PlayerPage>
           if (savedBands != null) {
             _eqBands.setAll(0, savedBands);
           }
+          final savedFileSignatures = settings['libraryFileSignatures'];
+          if (savedFileSignatures is Map) {
+            _libraryFileSignatures.addAll(
+              savedFileSignatures.map(
+                (key, value) => MapEntry(key.toString(), value.toString()),
+              ),
+            );
+          }
           final savedDevicePresets = settings['deviceEqPresets'];
           if (savedDevicePresets is Map) {
             for (final entry in savedDevicePresets.entries) {
@@ -5074,6 +5083,7 @@ class _PlayerPageState extends State<PlayerPage>
       'librarySort': _librarySort,
       'librarySortDescending': _librarySortDescending,
       'libraryRelativePaths': Map<String, String>.of(_libraryRelativePaths),
+      'libraryFileSignatures': Map<String, String>.of(_libraryFileSignatures),
       if (_playerLayoutCustomized)
         'playerControls': List<String>.of(_playerControls),
     };
@@ -5977,6 +5987,7 @@ class _PlayerPageState extends State<PlayerPage>
         _resumePositions.clear();
         _libraryFolders.clear();
         _libraryRelativePaths.clear();
+        _libraryFileSignatures.clear();
         _playlists.clear();
         _smartPlaylists.clear();
         _selected = 0;
@@ -6047,6 +6058,17 @@ class _PlayerPageState extends State<PlayerPage>
         .writeAsString(contents);
   }
 
+  Future<String?> _libraryFileSignature(String path) async {
+    if (isUriMediaPath(path)) return null;
+    try {
+      final stat = await File(path).stat();
+      if (stat.type != FileSystemEntityType.file) return null;
+      return '${stat.size}:${stat.modified.microsecondsSinceEpoch}';
+    } on Object {
+      return null;
+    }
+  }
+
   Future<int> _scanFolder(
     String directory, {
     int? operation,
@@ -6102,6 +6124,21 @@ class _PlayerPageState extends State<PlayerPage>
       discoveredFilesystemPaths?.add(
         discoveredPath,
       );
+      final signature = await _libraryFileSignature(file.path);
+      final existingIndex = _library.indexWhere(
+        (track) => trackPathKey(track.path) == discoveredPath,
+      );
+      if (signature != null &&
+          existingIndex >= 0 &&
+          _libraryFileSignatures[discoveredPath] == signature) {
+        if (mounted &&
+            (operation == null || operation == _libraryOperationGeneration)) {
+          setState(() {
+            _libraryRelativePaths[file.path] = file.relativePath;
+          });
+        }
+        continue;
+      }
       late final Track scannedTrack;
       try {
         scannedTrack = await _readTrack(file.path, file.name);
@@ -6118,6 +6155,9 @@ class _PlayerPageState extends State<PlayerPage>
         return 0;
       }
       setState(() {
+        if (signature != null) {
+          _libraryFileSignatures[discoveredPath] = signature;
+        }
         _libraryRelativePaths[file.path] = file.relativePath;
         final libraryIndexes = [
           for (var i = 0; i < _library.length; i++)
@@ -6193,6 +6233,9 @@ class _PlayerPageState extends State<PlayerPage>
       }
       _libraryRelativePaths.removeWhere(
         (path, _) => missingPathKeys.contains(trackPathKey(path)),
+      );
+      _libraryFileSignatures.removeWhere(
+        (path, _) => missingPathKeys.contains(path),
       );
       _selectedLibraryPaths.removeWhere(
         (identity) =>
