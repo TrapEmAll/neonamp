@@ -42,6 +42,13 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
                     launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     context.startActivity(launch)
                 }
+            ACTION_QUEUE -> context.packageManager
+                .getLaunchIntentForPackage(context.packageName)
+                ?.let { launch ->
+                    launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    launch.putExtra(EXTRA_OPEN_QUEUE, true)
+                    context.startActivity(launch)
+                }
         }
     }
 
@@ -65,6 +72,8 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
         const val ACTION_NEXT = "com.neonamp.neonamp.WIDGET_NEXT"
         const val ACTION_PREVIOUS = "com.neonamp.neonamp.WIDGET_PREVIOUS"
         const val ACTION_OPEN = "com.neonamp.neonamp.WIDGET_OPEN"
+        const val ACTION_QUEUE = "com.neonamp.neonamp.WIDGET_QUEUE"
+        const val EXTRA_OPEN_QUEUE = "com.neonamp.neonamp.OPEN_QUEUE"
 
         private fun updateFromStoredState(context: Context) {
             val state = context.getSharedPreferences("neonamp_widget", Context.MODE_PRIVATE)
@@ -126,6 +135,7 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
             views.setOnClickPendingIntent(R.id.widget_play_pause, pendingIntent(context, ACTION_PLAY_PAUSE))
             views.setOnClickPendingIntent(R.id.widget_previous, pendingIntent(context, ACTION_PREVIOUS))
             views.setOnClickPendingIntent(R.id.widget_next, pendingIntent(context, ACTION_NEXT))
+            views.setOnClickPendingIntent(R.id.widget_queue, pendingIntent(context, ACTION_QUEUE))
             ids.forEach { id ->
                 val widgetOptions = manager.getAppWidgetOptions(id)
                 val width = widgetOptions.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH)
@@ -155,6 +165,7 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
                     resized.setOnClickPendingIntent(R.id.widget_play_pause, pendingIntent(context, ACTION_PLAY_PAUSE))
                     resized.setOnClickPendingIntent(R.id.widget_previous, pendingIntent(context, ACTION_PREVIOUS))
                     resized.setOnClickPendingIntent(R.id.widget_next, pendingIntent(context, ACTION_NEXT))
+                    resized.setOnClickPendingIntent(R.id.widget_queue, pendingIntent(context, ACTION_QUEUE))
                     manager.updateAppWidget(id, resized)
                 }
             }

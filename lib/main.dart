@@ -3127,6 +3127,12 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       await _loadQueue();
       await _consumeIncomingMediaIntent();
+      if (Platform.isAndroid) {
+        final openQueue = await const MethodChannel('neonamp/intents')
+                .invokeMethod<bool>('consumeQueueShortcut') ??
+            false;
+        if (openQueue && mounted) setState(() => _activeView = 'queue');
+      }
       _configureAndroidAutoBrowse();
     } on Object catch (error, stackTrace) {
       debugPrint('Could not restore NeonAmp state: $error\n$stackTrace');

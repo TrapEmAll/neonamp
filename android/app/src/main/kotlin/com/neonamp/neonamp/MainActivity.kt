@@ -50,6 +50,7 @@ class MainActivity : AudioServiceActivity() {
     private var folderPickerResult: MethodChannel.Result? = null
     private var mediaStorePermissionResult: MethodChannel.Result? = null
     private var pendingMediaIntent: Map<String, String>? = null
+    private var pendingWidgetQueue = false
     private var castContext: CastContext? = null
     private var pendingCastMedia: Map<String, Any?>? = null
     private var gaplessPlayer: ExoPlayer? = null
@@ -162,6 +163,10 @@ class MainActivity : AudioServiceActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         pendingMediaIntent = mediaIntentPayload(intent)
+        pendingWidgetQueue = intent?.getBooleanExtra(
+            NeonAmpWidgetProvider.EXTRA_OPEN_QUEUE,
+            false,
+        ) == true
         try {
             castContext = CastContext.getSharedInstance(this)
             castContext?.sessionManager?.addSessionManagerListener(
@@ -178,6 +183,11 @@ class MainActivity : AudioServiceActivity() {
                         val payload = pendingMediaIntent
                         pendingMediaIntent = null
                         result.success(payload)
+                    }
+                    "consumeQueueShortcut" -> {
+                        val openQueue = pendingWidgetQueue
+                        pendingWidgetQueue = false
+                        result.success(openQueue)
                     }
                     else -> result.notImplemented()
                 }
@@ -1039,6 +1049,10 @@ class MainActivity : AudioServiceActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingMediaIntent = mediaIntentPayload(intent)
+        pendingWidgetQueue = intent.getBooleanExtra(
+            NeonAmpWidgetProvider.EXTRA_OPEN_QUEUE,
+            false,
+        )
     }
 
     override fun onRequestPermissionsResult(

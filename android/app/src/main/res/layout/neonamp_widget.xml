@@ -62,4 +62,11 @@
         android:background="@android:color/transparent"
         android:src="@android:drawable/ic_media_next"
         android:contentDescription="Next track" />
+    <ImageButton
+        android:id="@+id/widget_queue"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@android:color/transparent"
+        android:src="@android:drawable/ic_menu_agenda"
+        android:contentDescription="Open queue" />
 </LinearLayout>
