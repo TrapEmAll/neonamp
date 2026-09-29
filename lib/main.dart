@@ -170,21 +170,48 @@ class LrcLine {
 
 List<LrcLine> parseLrcLyrics(String source) {
   final lines = <LrcLine>[];
-  final pattern = RegExp(r'^\[(\d+):(\d{1,2}(?:\.\d{1,3})?)\](.*)$');
+  var offset = Duration.zero;
+  final timestampPattern = RegExp(
+    r'\[(\d+):(\d{1,2}(?:\.\d{1,3})?)\]',
+  );
   for (final rawLine in source.split(RegExp(r'\r?\n'))) {
-    final match = pattern.firstMatch(rawLine.trim());
-    if (match == null) continue;
-    final minutes = int.tryParse(match.group(1)!) ?? 0;
-    final seconds = double.tryParse(match.group(2)!) ?? 0;
-    lines.add(
-      LrcLine(
-        Duration(milliseconds: ((minutes * 60 + seconds) * 1000).round()),
-        match.group(3)!.trim(),
-      ),
-    );
+    final trimmed = rawLine.trim();
+    final offsetMatch = RegExp(r'^\[offset:([+-]?\d+)\]$', caseSensitive: false)
+        .firstMatch(trimmed);
+    if (offsetMatch != null) {
+      offset = Duration(milliseconds: int.tryParse(offsetMatch.group(1)!) ?? 0);
+      continue;
+    }
+    final matches = timestampPattern.allMatches(trimmed).toList();
+    if (matches.isEmpty) continue;
+    final text = trimmed.substring(matches.last.end).trim();
+    for (final match in matches) {
+      final minutes = int.tryParse(match.group(1)!) ?? 0;
+      final seconds = double.tryParse(match.group(2)!) ?? 0;
+      final timestamp = Duration(
+        milliseconds: ((minutes * 60 + seconds) * 1000).round(),
+      ) + offset;
+      lines.add(LrcLine(timestamp.isNegative ? Duration.zero : timestamp, text));
+    }
   }
   lines.sort((a, b) => a.timestamp.compareTo(b.timestamp));
   return lines;
+}
+
+Future<String?> readLrcSidecar(String mediaPath) async {
+  if (isUriMediaPath(mediaPath)) return null;
+  final extension = RegExp(r'\.[^.\\/]+$').firstMatch(mediaPath);
+  if (extension == null) return null;
+  final sidecarPath =
+      '${mediaPath.substring(0, extension.start)}.lrc';
+  final sidecar = File(sidecarPath);
+  if (!await sidecar.exists()) return null;
+  try {
+    final contents = await sidecar.readAsString();
+    return parseLrcLyrics(contents).isEmpty ? null : contents;
+  } on Object {
+    return null;
+  }
 }
 
 int currentLrcLineIndex(List<LrcLine> lines, Duration position) {
@@ -6512,6 +6539,9 @@ class _PlayerPageState extends State<PlayerPage>
       final containerId3 = hasContainerId3
           ? await File(path).readAsBytes()
           : null;
+      final sidecarLyrics = metadata.lyrics == null
+          ? await readLrcSidecar(path)
+          : null;
       final id3Numbers = containerId3 == null
           ? null
           : readContainerId3TrackDiscNumbers(containerId3);
@@ -6536,6 +6566,7 @@ class _PlayerPageState extends State<PlayerPage>
         discTotal: id3Numbers?.discTotal ?? metadata.totalDisc,
         lyrics:
             metadata.lyrics ??
+            sidecarLyrics ??
             (isAiffAudioPath(path)
                 ? readAiffId3Lyrics(containerId3!)
                 : isWavAudioPath(path)
@@ -9650,7 +9681,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (lyrics == null || lyrics.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This track has no embedded lyrics.')),
+        const SnackBar(content: Text('No embedded or sidecar lyrics were found.')),
       );
       return;
     }
