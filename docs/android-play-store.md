@@ -31,3 +31,8 @@ request builds remain usable with the local debug fallback.
 The workflow also publishes one ARMv7 APK and one ARM64 APK for users who need
 direct installation. Google Play should receive the App Bundle so it can handle
 device-specific split delivery.
+
+Tagged workflows fail if a release APK is debug-signed or contains x86/x86_64
+native libraries. The Gradle configuration also restricts Android native
+artifacts to `armeabi-v7a` and `arm64-v8a`, keeping direct APK downloads aligned
+with the supported device set.

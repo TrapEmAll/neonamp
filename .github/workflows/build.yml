@@ -112,6 +112,28 @@ jobs:
             fi
           done
           exit 1
+      - name: Verify tagged Android artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          apksigner="$build_tools/apksigner"
+          test -x "$apksigner" || { echo "Android apksigner was not found"; exit 1; }
+          mapfile -t apks < <(find build/app/outputs/flutter-apk -type f -name '*-release.apk' -print)
+          test "${#apks[@]}" -gt 0 || { echo "No split Android APKs were produced"; exit 1; }
+          for apk in "${apks[@]}"; do
+            "$apksigner" verify --verbose "$apk"
+            certs="$($apksigner verify --print-certs "$apk" 2>&1)"
+            if grep -qi 'Android Debug' <<<"$certs"; then
+              echo "Tagged release is signed with the Android debug key: $apk"
+              exit 1
+            fi
+            if unzip -l "$apk" | grep -Eq 'lib/(x86|x86_64)/'; then
+              echo "Unsupported x86 ABI found in $apk"
+              exit 1
+            fi
+          done
+          jarsigner -verify -strict build/app/outputs/bundle/release/app-release.aab
       - name: Upload Android release artifact
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v7
