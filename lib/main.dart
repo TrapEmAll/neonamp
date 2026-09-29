@@ -2997,12 +2997,15 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     if (kind == 'cue') {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('CUE files opened from another app require selecting their audio source in Import CUE.'),
-          ),
-        );
+      final cuePath = isContentMediaPath(path)
+          ? await const MethodChannel('neonamp/library')
+                .invokeMethod<String>('materializeUri', {
+                  'uri': path,
+                  'name': name ?? 'incoming.cue',
+                })
+          : normalizeLocalMediaPath(path);
+      if (cuePath != null && cuePath.isNotEmpty) {
+        await _importCueSheet(cuePath: cuePath);
       }
       return;
     }
@@ -5789,13 +5792,15 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
-  Future<void> _importCueSheet() async {
+  Future<void> _importCueSheet({String? cuePath}) async {
     final operation = ++_libraryOperationGeneration;
     final picked = await FilePicker.pickFiles(
       type: FileType.custom,
-      dialogTitle: 'Select a CUE sheet and its audio file(s)',
+      dialogTitle: cuePath == null
+          ? 'Select a CUE sheet and its audio file(s)'
+          : 'Select the audio file(s) referenced by this CUE sheet',
       allowedExtensions: [
-        'cue',
+        if (cuePath == null) 'cue',
         'mp3',
         'flac',
         'm4a',
@@ -5821,12 +5826,13 @@ class _PlayerPageState extends State<PlayerPage>
     final cueInfo = picked
         .where((file) => file.extension?.toLowerCase() == 'cue')
         .firstOrNull;
-    if (cueInfo == null || operation != _libraryOperationGeneration) {
+    if ((cuePath == null && cueInfo == null) ||
+        operation != _libraryOperationGeneration) {
       return;
     }
     try {
-      final cuePath = await _localPickedFilePath(cueInfo);
-      final cueFile = File(cuePath);
+      final resolvedCuePath = cuePath ?? await _localPickedFilePath(cueInfo!);
+      final cueFile = File(resolvedCuePath);
       final text = utf8.decode(
         await cueFile.readAsBytes(),
         allowMalformed: true,
