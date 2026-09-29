@@ -2773,9 +2773,40 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted) return;
     try {
       await _loadQueue();
+      await _consumeIncomingMediaIntent();
     } on Object catch (error, stackTrace) {
       debugPrint('Could not restore NeonAmp state: $error\n$stackTrace');
     }
+  }
+
+  Future<void> _consumeIncomingMediaIntent() async {
+    if (!Platform.isAndroid || !mounted) return;
+    final payload = await const MethodChannel('neonamp/intents')
+        .invokeMapMethod<String, dynamic>('consumeIncomingMedia');
+    if (!mounted || payload == null) return;
+    final path = payload['uri'] as String?;
+    if (path == null || path.trim().isEmpty) return;
+    final name = (payload['name'] as String?)?.trim();
+    final incoming = Track(
+      path: normalizeLocalMediaPath(path),
+      name: name == null || name.isEmpty ? 'Incoming audio' : name,
+    );
+    Track? libraryTrack;
+    for (final candidate in _library) {
+      if (sameTrackIdentity(candidate, incoming)) {
+        libraryTrack = candidate;
+        break;
+      }
+    }
+    final track = libraryTrack ?? incoming;
+    if (libraryTrack == null) _library.add(incoming);
+    final existingIndex = _queue.indexWhere(
+      (item) => sameTrackIdentity(item, track),
+    );
+    final queueIndex = existingIndex >= 0 ? existingIndex : _queue.length;
+    if (existingIndex < 0) _queue.add(track);
+    await _saveQueue();
+    if (mounted) await _select(queueIndex);
   }
 
   Future<void> _initializeWindowsMediaKeys() async {

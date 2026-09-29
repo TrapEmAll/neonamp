@@ -28,6 +28,7 @@ class MainActivity : AudioServiceActivity() {
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nearbyPermissionResult: MethodChannel.Result? = null
     private var folderPickerResult: MethodChannel.Result? = null
+    private var pendingMediaIntent: Map<String, String>? = null
 
     private external fun nativeReadTrackerInfo(inputPath: String): Array<String>?
     private external fun nativeRenderTrackerToWav(inputPath: String, outputPath: String): Boolean
@@ -40,6 +41,18 @@ class MainActivity : AudioServiceActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        pendingMediaIntent = mediaIntentPayload(intent)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/intents")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "consumeIncomingMedia" -> {
+                        val payload = pendingMediaIntent
+                        pendingMediaIntent = null
+                        result.success(payload)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, libraryChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -511,6 +524,45 @@ class MainActivity : AudioServiceActivity() {
         } catch (error: Throwable) {
             temporaryFile.delete()
             throw error
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingMediaIntent = mediaIntentPayload(intent)
+    }
+
+    private fun mediaIntentPayload(intent: Intent?): Map<String, String>? {
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val uri = intent.data ?: return null
+        val mimeType = intent.type.orEmpty()
+        if (!mimeType.startsWith("audio/", ignoreCase = true) &&
+            !isSupportedMediaUri(uri)
+        ) return null
+        val name = queryDisplayName(uri) ?: uri.lastPathSegment.orEmpty()
+        return mapOf(
+            "uri" to uri.toString(),
+            "name" to name.ifBlank { "Incoming audio" },
+        )
+    }
+
+    private fun isSupportedMediaUri(uri: Uri): Boolean {
+        val name = uri.lastPathSegment.orEmpty().lowercase(Locale.US)
+        return listOf(".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wav", ".wma", ".aiff", ".aif")
+            .any(name::endsWith)
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        if (uri.scheme != "content") return null
+        return contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
         }
     }
 
