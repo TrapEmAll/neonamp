@@ -2862,6 +2862,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _notificationSkipControls = true;
   bool _notificationSeekControls = false;
   bool _notificationArtwork = true;
+  final ValueNotifier<Map<Object?, Object?>?> _audioOutputNotifier =
+      ValueNotifier<Map<Object?, Object?>?>(null);
   Duration? _loopA;
   Duration? _loopB;
   bool _abLoopSeekInProgress = false;
@@ -2947,6 +2949,17 @@ class _PlayerPageState extends State<PlayerPage>
       );
     }
     _initializeGaplessPlayback();
+    if (Platform.isAndroid) {
+      const audioOutputChannel = MethodChannel('neonamp/audio_output');
+      audioOutputChannel.setMethodCallHandler((call) async {
+        if (call.method == 'stateChanged' && call.arguments is Map) {
+          _audioOutputNotifier.value = Map<Object?, Object?>.from(
+            call.arguments as Map,
+          );
+        }
+        return null;
+      });
+    }
     _bindPlayerStreams();
     _bindDspStreams();
     _bindMidiStreams();
@@ -5549,6 +5562,7 @@ class _PlayerPageState extends State<PlayerPage>
     final state = await const MethodChannel('neonamp/audio_output')
         .invokeMapMethod<Object?, Object?>('getState');
     if (!mounted) return;
+    _audioOutputNotifier.value = state;
     final devices = (state?['devices'] as List?)
             ?.whereType<Map>()
             .map((item) => item['name']?.toString())
@@ -5560,17 +5574,32 @@ class _PlayerPageState extends State<PlayerPage>
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Audio output'),
-        content: SingleChildScrollView(
-          child: ListBody(
-            children: [
-              Text('Sample rate: ${state?['sampleRate'] ?? 'unknown'} Hz'),
-              Text('Frames per buffer: ${state?['framesPerBuffer'] ?? 'unknown'}'),
-              Text('Bluetooth A2DP: ${state?['bluetoothA2dpOn'] == true ? 'connected' : 'not active'}'),
-              Text('Music volume: ${state?['musicVolume'] ?? '?'} / ${state?['musicMaxVolume'] ?? '?'}'),
-              const SizedBox(height: 12),
-              Text(devices.isEmpty ? 'No output devices reported.' : 'Outputs:\n${devices.join('\n')}'),
-            ],
-          ),
+        content: ValueListenableBuilder<Map<Object?, Object?>?>(
+          valueListenable: _audioOutputNotifier,
+          builder: (context, liveState, _) {
+            final current = liveState ?? state;
+            final liveDevices = (current?['devices'] as List?)
+                    ?.whereType<Map>()
+                    .map((item) => item['name']?.toString())
+                    .whereType<String>()
+                    .where((name) => name.isNotEmpty)
+                    .toList() ??
+                devices;
+            return SingleChildScrollView(
+              child: ListBody(
+                children: [
+                  Text('Sample rate: ${current?['sampleRate'] ?? 'unknown'} Hz'),
+                  Text('Frames per buffer: ${current?['framesPerBuffer'] ?? 'unknown'}'),
+                  Text('Bluetooth A2DP: ${current?['bluetoothA2dpOn'] == true ? 'connected' : 'not active'}'),
+                  Text('Music volume: ${current?['musicVolume'] ?? '?'} / ${current?['musicMaxVolume'] ?? '?'}'),
+                  const SizedBox(height: 12),
+                  Text(liveDevices.isEmpty ? 'No output devices reported.' : 'Outputs:\n${liveDevices.join('\n')}'),
+                  const SizedBox(height: 8),
+                  const Text('Updates automatically when a Bluetooth or USB output changes.'),
+                ],
+              ),
+            );
+          },
         ),
         actions: [
           TextButton(
@@ -10488,6 +10517,7 @@ class _PlayerPageState extends State<PlayerPage>
     _runAsyncSafely(_dlnaCast.dispose(), 'Disposing DLNA cast');
     _castPositionTimer?.cancel();
     _gaplessStateTimer?.cancel();
+    _audioOutputNotifier.dispose();
     _sleepTimer?.cancel();
     _resumeSaveTimer?.cancel();
     _positionSub?.cancel();

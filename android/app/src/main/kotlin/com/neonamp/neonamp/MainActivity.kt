@@ -9,6 +9,8 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.AudioManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.PowerManager
@@ -52,6 +54,17 @@ class MainActivity : AudioServiceActivity() {
     private var pendingCastMedia: Map<String, Any?>? = null
     private var gaplessPlayer: ExoPlayer? = null
     private var gaplessChannel: MethodChannel? = null
+    private var audioOutputChannel: MethodChannel? = null
+
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            audioOutputChannel?.invokeMethod("stateChanged", audioOutputState())
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            audioOutputChannel?.invokeMethod("stateChanged", audioOutputState())
+        }
+    }
 
     private val castSessionListener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarting(session: CastSession) = Unit
@@ -229,8 +242,11 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/audio_output")
-            .setMethodCallHandler { call, result ->
+        audioOutputChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "neonamp/audio_output",
+        )
+        audioOutputChannel?.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getState" -> result.success(audioOutputState())
                     "openBluetoothSettings" -> {
@@ -270,6 +286,10 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(AUDIO_SERVICE) as AudioManager
+            manager.registerAudioDeviceCallback(audioDeviceCallback, null)
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/cast")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -1203,6 +1223,11 @@ class MainActivity : AudioServiceActivity() {
     override fun onDestroy() {
         gaplessPlayer?.release()
         gaplessPlayer = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(AUDIO_SERVICE) as AudioManager
+            manager.unregisterAudioDeviceCallback(audioDeviceCallback)
+        }
+        audioOutputChannel = null
         folderPickerResult?.error("activity_destroyed", "The folder picker was closed.", null)
         folderPickerResult = null
         nearbyPermissionResult?.error("activity_destroyed", "The activity was closed.", null)
