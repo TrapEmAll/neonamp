@@ -2087,5 +2087,20 @@ FILE "disc image.flac" WAVE
       ),
       'image/webp',
     );
+    expect(
+      detectArtworkMimeType(
+        Uint8List.fromList([0, 0, 0, 0, 0x66, 0x74, 0x79, 0x70]),
+      ),
+      'image/avif',
+    );
+    expect(
+      detectArtworkMimeType(Uint8List.fromList([0x47, 0x49, 0x46, 0x38])),
+      'image/gif',
+    );
+    expect(
+      detectArtworkMimeType(Uint8List.fromList([0x42, 0x4d])),
+      'image/bmp',
+    );
+    expect(detectArtworkMimeType(Uint8List.fromList([1, 2, 3])), 'image/jpeg');
   });
 }
