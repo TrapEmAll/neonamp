@@ -1410,11 +1410,11 @@ class MainActivity : AudioServiceActivity() {
             val isHttpStream = uri.scheme.equals("http", ignoreCase = true) ||
                 uri.scheme.equals("https", ignoreCase = true)
             val kind = when {
+                isCueUri(uri, mimeType) -> "cue"
+                isSupportedPlaylistUri(uri, mimeType) -> "playlist"
                 mimeType.startsWith("audio/", ignoreCase = true) ||
                     isSupportedMediaUri(uri) ||
-                    isHttpStream -> "audio"
-                isSupportedPlaylistUri(uri, mimeType) -> "playlist"
-                isCueUri(uri, mimeType) -> "cue"
+                isHttpStream -> "audio"
                 else -> return@mapNotNull null
             }
             val name = queryDisplayName(uri) ?: uri.lastPathSegment.orEmpty()
