@@ -19,6 +19,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.content.ContentValues
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -886,7 +887,7 @@ class MainActivity : AudioServiceActivity() {
     }
 
     @Synchronized
-    private fun scanSafFolder(treeUri: Uri): List<Map<String, String>> {
+    private fun scanSafFolder(treeUri: Uri): List<Map<String, Any?>> {
         val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
         pruneCache(cacheDirectory)
         cacheDirectory.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach {
@@ -900,7 +901,7 @@ class MainActivity : AudioServiceActivity() {
             "med", "mod", "mtm", "okt", "psm", "pt36", "ptm", "s3m",
             "stm", "stp", "stx", "ult", "umx", "xm", "xmz", "itz", "s3z",
         )
-        val results = mutableListOf<Map<String, String>>()
+        val results = mutableListOf<Map<String, Any?>>()
         val visited = mutableSetOf<String>()
         val seenDocuments = mutableSetOf<String>()
         val rootDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
@@ -1097,6 +1098,20 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    private fun readBoundedBytes(input: java.io.InputStream, maxBytes: Int): ByteArray? {
+        val output = ByteArrayOutputStream(minOf(maxBytes, 8192))
+        val buffer = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            total += count
+            if (total > maxBytes) return null
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray().takeIf { it.isNotEmpty() }
+    }
+
     private fun readFolderArtwork(
         treeUri: Uri,
         parentDocumentId: String,
@@ -1131,7 +1146,7 @@ class MainActivity : AudioServiceActivity() {
                         cursor.getString(idColumn),
                     )
                     val bytes = contentResolver.openInputStream(documentUri)
-                        ?.use { stream -> stream.readBytes() }
+                        ?.use { stream -> readBoundedBytes(stream, 8 * 1024 * 1024) }
                     if (bytes != null && bytes.isNotEmpty() && bytes.size <= 8 * 1024 * 1024) {
                         return@use bytes
                     }
