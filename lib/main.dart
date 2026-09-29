@@ -1877,6 +1877,13 @@ bool sameTrackIdentity(Track first, Track second) {
   return trackIdentityKey(first) == trackIdentityKey(second);
 }
 
+String libraryMetadataDuplicateKey(Track track) => [
+      track.name.trim().toLowerCase(),
+      track.artist.trim().toLowerCase(),
+      track.album.trim().toLowerCase(),
+      track.year?.toString() ?? '',
+    ].join('\u0000');
+
 bool playbackEventMatchesTrack(String? eventIdentity, String? trackIdentity) =>
     eventIdentity != null && trackIdentity != null && eventIdentity == trackIdentity;
 
@@ -5646,8 +5653,14 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _showLibraryStatistics() async {
     final byFolder = <String, int>{};
+    final duplicateGroups = <String, int>{};
     var missing = 0;
     for (final track in _library) {
+      final duplicateKey = libraryMetadataDuplicateKey(track);
+      if (duplicateKey.replaceAll('\u0000', '').isNotEmpty) {
+        duplicateGroups[duplicateKey] =
+            (duplicateGroups[duplicateKey] ?? 0) + 1;
+      }
       final folder = _libraryRelativePaths[track.path]?.split('/').first ??
           track.path.split(RegExp(r'[/\\]')).skip(0).take(2).join('/');
       byFolder[folder.isEmpty ? 'Uncategorized' : folder] =
@@ -5657,6 +5670,8 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted) return;
     final largest = byFolder.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
+    final potentialDuplicates =
+        duplicateGroups.values.where((count) => count > 1).length;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -5669,6 +5684,7 @@ class _PlayerPageState extends State<PlayerPage>
               Text('Tracks: ${_library.length}'),
               Text('Folders: ${_libraryFolders.length}'),
               Text('Missing local files: $missing'),
+              Text('Potential metadata duplicates: $potentialDuplicates'),
               const Divider(),
               ...largest.map((entry) => ListTile(
                     dense: true,
