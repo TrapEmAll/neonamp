@@ -30,6 +30,7 @@ import 'equalizer_presets.dart';
 import 'playlist_library_resolution.dart';
 import 'webdav_library.dart';
 import 'scrobbling.dart';
+import 'google_cast.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -2674,6 +2675,7 @@ class _PlayerPageState extends State<PlayerPage>
     with SingleTickerProviderStateMixin {
   AudioPlayer _activePlayer = AudioPlayer();
   final DlnaCast _dlnaCast = DlnaCast();
+  final GoogleCast _googleCast = GoogleCast();
   DspLocalPlayer _dspPlayer = DspLocalPlayer();
   final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
   NeonAudioHandler? _audioHandler;
@@ -2760,6 +2762,7 @@ class _PlayerPageState extends State<PlayerPage>
   String? _playbackTrackIdentity;
 
   bool get _casting => _dlnaCast.isConnected;
+  bool _googleCasting = false;
 
   AudioPlayer get _player => _activePlayer;
 
@@ -2777,7 +2780,9 @@ class _PlayerPageState extends State<PlayerPage>
     final current = _current;
     if (current == null) return;
     final volume = _volumeFor(current);
-    if (_casting) {
+    if (_googleCasting) {
+      await _googleCast.setVolume(volume);
+    } else if (_casting) {
       await _dlnaCast.setVolume(volume);
     } else if (_dspActive) {
       await _dspPlayer.setVolume(volume);
@@ -3427,6 +3432,14 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _playCurrent() async {
     if (_current == null) return;
     final identity = _current!.identityKey;
+    if (_googleCasting) {
+      await _googleCast.resume();
+      if (mounted && identity == _current?.identityKey) {
+        setState(() => _playerState = PlayerState.playing);
+        unawaited(_syncAndroidWidget());
+      }
+      return;
+    }
     if (_casting) {
       await _dlnaCast.resume();
       if (mounted && identity == _current?.identityKey) {
@@ -3451,6 +3464,14 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _pauseCurrent() async {
     final identity = _current?.identityKey;
+    if (_googleCasting) {
+      await _googleCast.pause();
+      if (mounted && identity == _current?.identityKey) {
+        setState(() => _playerState = PlayerState.paused);
+        unawaited(_syncAndroidWidget());
+      }
+      return;
+    }
     if (_casting) {
       await _dlnaCast.pause();
       if (mounted && identity == _current?.identityKey) {
@@ -3471,6 +3492,18 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _stopCurrent() async {
     final identity = _current?.identityKey;
     _playbackTrackIdentity = null;
+    if (_googleCasting) {
+      await _googleCast.stop();
+      _googleCasting = false;
+      if (mounted && identity == _current?.identityKey) {
+        setState(() {
+          _playerState = PlayerState.stopped;
+          _position = Duration.zero;
+        });
+        unawaited(_syncAndroidWidget());
+      }
+      return;
+    }
     if (_casting) {
       _castPositionTimer?.cancel();
       await _dlnaCast.stop();
@@ -3509,6 +3542,13 @@ class _PlayerPageState extends State<PlayerPage>
       duration: _duration,
       offset: position,
     );
+    if (_googleCasting) {
+      await _googleCast.seek(clampedPosition);
+      if (mounted && identity == _current?.identityKey) {
+        setState(() => _position = clampedPosition);
+      }
+      return;
+    }
     if (_casting) {
       await _dlnaCast.seek(clampedPosition);
       if (mounted && identity == _current?.identityKey) {
@@ -3525,6 +3565,51 @@ class _PlayerPageState extends State<PlayerPage>
       await _dspPlayer.seek(sourcePosition);
     } else {
       await _player.seek(sourcePosition);
+    }
+  }
+
+  Future<void> _showGoogleCast() async {
+    final current = _current;
+    if (current == null) {
+      await _googleCast.showPicker();
+      return;
+    }
+    final uri = Uri.tryParse(current.path);
+    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Google Cast currently supports HTTP(S) streams. Use DLNA for local files.'),
+          ),
+        );
+      }
+      return;
+    }
+    try {
+      final accepted = await _googleCast.cast(
+        path: current.path,
+        title: current.name,
+        artist: current.artist,
+        album: current.album,
+        duration: _duration,
+      );
+      if (!accepted || !mounted) return;
+      await _stopCurrent();
+      setState(() {
+        _googleCasting = true;
+        _playerState = PlayerState.playing;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Casting with Google Cast.')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start Google Cast: $error')),
+        );
+      }
     }
   }
 
@@ -4203,6 +4288,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _showAudioOutputInfo();
       case 'snippet':
         operation = _exportSnippet();
+      case 'googleCast':
+        operation = _showGoogleCast();
       case 'visuals':
         operation = _showVisualizer();
       case 'settings':
@@ -9975,6 +10062,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'snippet',
                 child: Text('Export ringtone or snippet'),
+              ),
+              PopupMenuItem(
+                value: 'googleCast',
+                child: Text('Google Cast'),
               ),
               PopupMenuItem(
                 value: 'sync',

@@ -15,6 +15,9 @@
         android:name="${applicationName}"
         android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.neonamp.neonamp.CastOptionsProvider" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -51,6 +54,10 @@
                 <data android:mimeType="application/x-cue" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".CastPickerActivity"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:exported="false" />
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"

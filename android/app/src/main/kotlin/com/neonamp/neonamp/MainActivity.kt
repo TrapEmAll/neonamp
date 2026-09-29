@@ -24,6 +24,13 @@ import java.util.Locale
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import com.ryanheise.audioservice.AudioServiceActivity
+import com.google.android.gms.cast.MediaInfo
+import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.MediaLoadRequestData
+import com.google.android.gms.cast.MediaSeekOptions
+import com.google.android.gms.cast.framework.CastContext
+import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.SessionManagerListener
 
 class MainActivity : AudioServiceActivity() {
     private val converterChannel = "neonamp/converter"
@@ -36,6 +43,32 @@ class MainActivity : AudioServiceActivity() {
     private var folderPickerResult: MethodChannel.Result? = null
     private var mediaStorePermissionResult: MethodChannel.Result? = null
     private var pendingMediaIntent: Map<String, String>? = null
+    private var castContext: CastContext? = null
+    private var pendingCastMedia: Map<String, Any?>? = null
+
+    private val castSessionListener = object : SessionManagerListener<CastSession> {
+        override fun onSessionStarting(session: CastSession) = Unit
+        override fun onSessionStarted(session: CastSession, sessionId: String) {
+            pendingCastMedia?.let { media ->
+                pendingCastMedia = null
+                loadCastMedia(session, media)
+            }
+        }
+        override fun onSessionStartFailed(session: CastSession, errorCode: Int) {
+            pendingCastMedia = null
+        }
+        override fun onSessionEnding(session: CastSession) = Unit
+        override fun onSessionEnded(session: CastSession, error: Int) = Unit
+        override fun onSessionResuming(session: CastSession, sessionId: String) = Unit
+        override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
+            pendingCastMedia?.let { media ->
+                pendingCastMedia = null
+                loadCastMedia(session, media)
+            }
+        }
+        override fun onSessionResumeFailed(session: CastSession, errorCode: Int) = Unit
+        override fun onSessionSuspended(session: CastSession, reason: Int) = Unit
+    }
 
     private external fun nativeReadTrackerInfo(inputPath: String): Array<String>?
     private external fun nativeRenderTrackerToWav(inputPath: String, outputPath: String): Boolean
@@ -49,6 +82,15 @@ class MainActivity : AudioServiceActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         pendingMediaIntent = mediaIntentPayload(intent)
+        try {
+            castContext = CastContext.getSharedInstance(this)
+            castContext?.sessionManager?.addSessionManagerListener(
+                castSessionListener,
+                CastSession::class.java,
+            )
+        } catch (_: Throwable) {
+            castContext = null
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/intents")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -110,6 +152,61 @@ class MainActivity : AudioServiceActivity() {
                             result.success(true)
                         } catch (_: Throwable) {
                             result.success(false)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/cast")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "showPicker" -> {
+                        try {
+                            startActivity(Intent(this, CastPickerActivity::class.java))
+                            result.success(true)
+                        } catch (error: Throwable) {
+                            result.error("cast_picker_failed", error.message, null)
+                        }
+                    }
+                    "state" -> result.success(castState())
+                    "cast" -> {
+                        val media = call.arguments as? Map<String, Any?>
+                        if (media == null || media["url"] !is String) {
+                            result.error("invalid_arguments", "A media URL is required.", null)
+                        } else {
+                            val session = castContext?.sessionManager?.currentCastSession
+                            if (session == null) {
+                                pendingCastMedia = media
+                                try {
+                                    startActivity(Intent(this, CastPickerActivity::class.java))
+                                    result.success(true)
+                                } catch (error: Throwable) {
+                                    pendingCastMedia = null
+                                    result.error("cast_picker_failed", error.message, null)
+                                }
+                            } else {
+                                result.success(loadCastMedia(session, media))
+                            }
+                        }
+                    }
+                    "pause" -> result.success(castRemote()?.pause()?.isSuccessful == true)
+                    "resume" -> result.success(castRemote()?.play()?.isSuccessful == true)
+                    "stop" -> result.success(castRemote()?.stop()?.isSuccessful == true)
+                    "seek" -> {
+                        val position = call.argument<Number>("positionMs")?.toLong() ?: 0L
+                        result.success(
+                            castRemote()?.seek(
+                                MediaSeekOptions.Builder().setPosition(position.coerceAtLeast(0)).build(),
+                            )?.isSuccessful == true,
+                        )
+                    }
+                    "setVolume" -> {
+                        val volume = call.argument<Number>("volume")?.toDouble()?.coerceIn(0.0, 1.0)
+                        val session = castContext?.sessionManager?.currentCastSession
+                        if (volume == null || session == null) result.success(false)
+                        else {
+                            session.volume = volume
+                            result.success(true)
                         }
                     }
                     else -> result.notImplemented()
@@ -377,6 +474,43 @@ class MainActivity : AudioServiceActivity() {
             return
         }
         queryMediaStore(result)
+    }
+
+    private fun castRemote() = castContext?.sessionManager?.currentCastSession?.remoteMediaClient
+
+    private fun castState(): Map<String, Any?> {
+        val session = castContext?.sessionManager?.currentCastSession
+        val remote = session?.remoteMediaClient
+        return mapOf(
+            "connected" to (session != null),
+            "deviceName" to session?.castDevice?.friendlyName,
+            "playerState" to remote?.playerState,
+            "positionMs" to remote?.approximateStreamPosition,
+            "durationMs" to remote?.mediaInfo?.streamDuration,
+            "volume" to session?.volume,
+        )
+    }
+
+    private fun loadCastMedia(session: CastSession, media: Map<String, Any?>): Boolean {
+        val url = media["url"] as? String ?: return false
+        val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MUSIC_TRACK).apply {
+            putString(MediaMetadata.KEY_TITLE, media["title"] as? String ?: "NeonAmp")
+            putString(MediaMetadata.KEY_ARTIST, media["artist"] as? String ?: "")
+            putString(MediaMetadata.KEY_ALBUM_TITLE, media["album"] as? String ?: "")
+        }
+        val info = MediaInfo.Builder(url)
+            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+            .setContentType(media["contentType"] as? String ?: "audio/mpeg")
+            .setMetadata(metadata)
+            .apply {
+                (media["durationMs"] as? Number)?.toLong()?.takeIf { it > 0 }?.let {
+                    setStreamDuration(it)
+                }
+            }
+            .build()
+        return session.remoteMediaClient?.load(
+            MediaLoadRequestData.Builder().setMediaInfo(info).build(),
+        )?.isSuccessful == true
     }
 
     private fun audioOutputState(): Map<String, Any?> {
@@ -958,6 +1092,10 @@ class MainActivity : AudioServiceActivity() {
         folderPickerResult = null
         nearbyPermissionResult?.error("activity_destroyed", "The activity was closed.", null)
         nearbyPermissionResult = null
+        castContext?.sessionManager?.removeSessionManagerListener(
+            castSessionListener,
+            CastSession::class.java,
+        )
         releaseMulticastLock()
         super.onDestroy()
     }
