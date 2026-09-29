@@ -7,17 +7,16 @@
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <application
         android:label="NeonAmp"
         android:name="${applicationName}"
         android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher">
-        <meta-data
-            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
-            android:value="com.neonamp.neonamp.CastOptionsProvider" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -81,10 +80,6 @@
                 <data android:mimeType="application/x-cue" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".CastPickerActivity"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar"
-            android:exported="false" />
         <service
             android:name="com.ryanheise.audioservice.AudioService"
             android:foregroundServiceType="mediaPlayback"
@@ -130,3 +125,4 @@
         </intent>
     </queries>
 </manifest>
+

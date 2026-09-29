@@ -47,6 +47,8 @@ class FlutterWindow : public Win32Window {
       tracker_channel_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       midi_channel_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      output_channel_;
 
   winrt::Windows::Media::SystemMediaTransportControls system_media_controls_{
       nullptr};

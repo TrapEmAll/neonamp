@@ -1,0 +1,28 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:neonamp/visualizer_metrics.dart';
+
+void main() {
+  test('peak hold decays but never loses a newer transient', () {
+    final hold = SpectrumPeakHold(decay: .5);
+    expect(hold.update([.8, .2]), [.8, .2]);
+    expect(hold.update([.1, .1]), [.4, .1]);
+    expect(hold.update([.9, .05]), [.9, .05]);
+  });
+
+  test('stereo correlation identifies in-phase and out-of-phase signals', () {
+    expect(stereoCorrelation([1, .5, -1], [1, .5, -1]), closeTo(1, .001));
+    expect(stereoCorrelation([1, .5, -1], [-1, -.5, 1]), closeTo(-1, .001));
+  });
+
+  test('windowed dynamic range reports peak-to-RMS crest factor', () {
+    expect(visualizerDynamicRangeDb([1, -1, 1, -1]), closeTo(0, .001));
+    expect(visualizerDynamicRangeDb([1, 0, 0, 0]), closeTo(6.021, .001));
+    expect(visualizerDynamicRangeDb(const <double>[]), 0);
+  });
+
+  test('visualizer levels ignore invalid samples and clamp output', () {
+    expect(visualizerRms([0, .5, -.5, double.nan]), closeTo(.4082, .001));
+    expect(visualizerPeak([-.2, 1.5, double.infinity]), 1);
+    expect(visualizerPeak(const <double>[]), 0);
+  });
+}

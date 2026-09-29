@@ -1,0 +1,102 @@
+import 'dart:typed_data';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:neonamp/audio_format_info.dart';
+
+void main() {
+  test('parses WAV PCM format details', () {
+    final bytes = Uint8List(47)
+      ..setRange(0, 4, [0x52, 0x49, 0x46, 0x46])
+      ..setRange(8, 12, [0x57, 0x41, 0x56, 0x45])
+      ..setRange(12, 16, [0x66, 0x6d, 0x74, 0x20]);
+    final data = ByteData.sublistView(bytes);
+    data.setUint32(16, 16, Endian.little);
+    data.setUint16(20, 1, Endian.little);
+    data.setUint16(22, 2, Endian.little);
+    data.setUint32(24, 48000, Endian.little);
+    data.setUint16(34, 24, Endian.little);
+    bytes.setRange(36, 40, [0x64, 0x61, 0x74, 0x61]);
+    data.setUint32(40, 3, Endian.little);
+    bytes.setRange(44, 47, [0xff, 0xff, 0x7f]);
+    final info = parseAudioFormat(bytes)!;
+    expect(info.codec, 'WAV');
+    expect(info.sampleRate, 48000);
+    expect(info.bitDepth, 24);
+    expect(info.channels, 2);
+    expect(info.peakDb, greaterThan(-0.1));
+    expect(info.summary, contains('stereo'));
+  });
+
+  test('parses FLAC streaminfo details', () {
+    final bytes = Uint8List(42)
+      ..setRange(0, 4, [0x66, 0x4c, 0x61, 0x43]);
+    final streamInfo = ByteData.sublistView(bytes, 18, 26);
+    final packed = (96000 << 44) | (5 << 41) | (23 << 36);
+    streamInfo.setUint64(0, packed, Endian.big);
+    final info = parseAudioFormat(bytes)!;
+    expect(info.codec, 'FLAC');
+    expect(info.sampleRate, 96000);
+    expect(info.channels, 6);
+    expect(info.bitDepth, 24);
+  });
+
+  test('parses DSF DSD sample rate, channels, and one-bit depth', () {
+    final bytes = Uint8List(92)
+      ..setRange(0, 4, [0x44, 0x53, 0x44, 0x20])
+      ..setRange(28, 32, [0x66, 0x6d, 0x74, 0x20]);
+    final data = ByteData.sublistView(bytes);
+    data.setUint64(32, 52, Endian.little);
+    data.setUint32(40, 1, Endian.little);
+    data.setUint32(52, 2, Endian.little);
+    data.setUint32(56, 2822400, Endian.little);
+    data.setUint32(60, 1, Endian.little);
+    final info = parseAudioFormat(bytes, path: 'album.dsf')!;
+    expect(info.codec, 'DSD');
+    expect(info.sampleRate, 2822400);
+    expect(info.bitDepth, 1);
+    expect(info.channels, 2);
+    expect(info.summary, contains('stereo'));
+  });
+
+  test('parses DSDIFF sample rate and channel count', () {
+    final bytes = Uint8List(64)
+      ..setRange(0, 4, [0x46, 0x52, 0x4d, 0x38])
+      ..setRange(8, 12, [0x44, 0x53, 0x44, 0x20])
+      ..setRange(12, 16, [0x50, 0x52, 0x4f, 0x50])
+      ..setRange(24, 28, [0x53, 0x4e, 0x44, 0x20])
+      ..setRange(28, 32, [0x46, 0x53, 0x20, 0x20])
+      ..setRange(44, 48, [0x43, 0x48, 0x4e, 0x4c]);
+    final data = ByteData.sublistView(bytes);
+    data.setUint64(16, 34, Endian.big);
+    data.setUint64(32, 4, Endian.big);
+    data.setUint32(40, 2822400, Endian.big);
+    data.setUint64(48, 2, Endian.big);
+    data.setUint16(56, 2, Endian.big);
+    final info = parseAudioFormat(bytes, path: 'album.dff')!;
+    expect(info.codec, 'DSD');
+    expect(info.sampleRate, 2822400);
+    expect(info.bitDepth, 1);
+    expect(info.channels, 2);
+  });
+
+  test('output status distinguishes requested mode from hardware knowledge', () {
+    final status = AudioOutputStatus(
+      backend: 'Native audio backend',
+      bitPerfectRequested: true,
+      softwareDspActive: false,
+      sourceFormat: const AudioFormatInfo(
+        codec: 'FLAC',
+        sampleRate: 96000,
+        bitDepth: 24,
+        channels: 2,
+      ),
+    );
+    expect(status.hardwareFormatKnown, isFalse);
+    expect(status.summary, contains('bit-perfect best effort requested'));
+    expect(status.summary, contains('hardware rate unavailable'));
+  });
+
+  test('returns null for unknown formats', () {
+    expect(parseAudioFormat(Uint8List.fromList([1, 2, 3]), path: 'x.bin'), isNull);
+  });
+}

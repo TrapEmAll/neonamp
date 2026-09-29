@@ -1,0 +1,35 @@
+{
+  "id": "community.lofi-tape",
+  "name": "Lo-fi Tape",
+  "version": "1.0.0",
+  "description": "Warm reduced highs with a restrained echo.",
+  "capabilities": [
+    "equalizer-presets",
+    "audio-effects"
+  ],
+  "equalizerPresets": {
+    "Lo-fi Tape": [
+      3,
+      2,
+      1,
+      0,
+      -1,
+      -2,
+      -3,
+      -4,
+      -5,
+      -5
+    ]
+  },
+  "audioEffects": [
+    {
+      "type": "echo",
+      "parameters": {
+        "wet": 0.12,
+        "delay": 0.18,
+        "decay": 0.3,
+        "filter": 0.35
+      }
+    }
+  ]
+}

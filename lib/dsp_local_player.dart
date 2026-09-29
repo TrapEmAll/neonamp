@@ -3,14 +3,18 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:flutter_soloud/flutter_soloud.dart' as soloud;
 
 import 'tracker_modules.dart';
+import 'audio_effects.dart';
+import 'audio_loudness.dart';
+import 'parametric_eq.dart';
+import 'convolution.dart';
 
-double dspGainForDb(double decibels) {
-  if (!decibels.isFinite) return 1.0;
-  return math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
-}
+double dspGainForDb(double decibels) =>
+    math.pow(10, decibels / 20).toDouble().clamp(0.0, 4.0);
 
 /// Native local-file playback with a real parametric EQ filter.
 ///
@@ -25,33 +29,33 @@ class DspLocalPlayer {
 
   soloud.AudioSource? _source;
   soloud.SoundHandle? _handle;
-  String? _renderedModulePath;
+  String? _temporaryAudioPath;
   Timer? _pollTimer;
-  Future<void>? _initialization;
   bool _completionSent = false;
   bool _disposed = false;
-  int _generation = 0;
+  Duration _duration = Duration.zero;
+  double _volume = 1;
+  double _preamp = 0;
 
   Stream<Duration> get onPositionChanged => _positionController.stream;
   Stream<Duration> get onDurationChanged => _durationController.stream;
   Stream<PlayerState> get onPlayerStateChanged => _stateController.stream;
   Stream<void> get onPlayerComplete => _completeController.stream;
+  Duration get duration => _duration;
   PlayerState get state {
-    final handle = _validHandle(_handle);
-    if (handle == null) return PlayerState.stopped;
+    final handle = _handle;
+    if (handle == null ||
+        !soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      return PlayerState.stopped;
+    }
     return soloud.SoLoud.instance.getPause(handle)
         ? PlayerState.paused
         : PlayerState.playing;
   }
 
   Future<void> _ensureInitialized() async {
-    if (_disposed) throw StateError('The DSP player has been disposed.');
-    if (soloud.SoLoud.instance.isInitialized) return;
-    _initialization ??= soloud.SoLoud.instance.init();
-    try {
-      await _initialization;
-    } finally {
-      _initialization = null;
+    if (!soloud.SoLoud.instance.isInitialized) {
+      await soloud.SoLoud.instance.init();
     }
   }
 
@@ -61,16 +65,26 @@ class DspLocalPlayer {
     required double playbackSpeed,
     required bool equalizerEnabled,
     required List<double> bands,
+    List<double> frequencies = const [],
+    double q = 1,
+    double preamp = 0,
+    bool truePeakLimiterEnabled = true,
+    List<PortableAudioEffect> effects = const [],
     double balance = 0,
+    bool deleteSourceOnStop = false,
+    String? convolutionImpulsePath,
   }) async {
-    if (_disposed) throw StateError('The DSP player has been disposed.');
-    final generation = ++_generation;
     await _ensureInitialized();
-    if (_disposed || generation != _generation) return;
-    await stop(invalidate: false, expectedGeneration: generation);
-    if (_disposed || generation != _generation) return;
+    await stop();
     final isTrackerModule = isTrackerModulePath(path);
     var sourcePath = path;
+    final hasConvolution = convolutionImpulsePath != null &&
+        isSupportedImpulseResponsePath(convolutionImpulsePath) &&
+        File(convolutionImpulsePath).existsSync();
+    final customFrequencyEq = equalizerEnabled &&
+        !isTrackerModule &&
+        bands.length == frequencies.length &&
+        (hasCustomFrequencyLayout(frequencies) || (q - 1).abs() > 0.001);
     if (isTrackerModule) {
       sourcePath =
           '${Directory.systemTemp.path}${Platform.pathSeparator}'
@@ -82,71 +96,186 @@ class DspLocalPlayer {
         if (await output.exists()) await output.delete();
         rethrow;
       }
-      if (_disposed || generation != _generation) {
-        final output = File(sourcePath);
-        if (await output.exists()) await output.delete();
-        return;
+    }
+    String? transcodedAudioPath;
+    if (customFrequencyEq || hasConvolution) {
+      try {
+        transcodedAudioPath = await _transcodeWithProcessing(
+          path,
+          frequencies: customFrequencyEq ? frequencies : const [],
+          gains: customFrequencyEq ? bands : const [],
+          q: q,
+          impulseResponsePath: hasConvolution ? convolutionImpulsePath : null,
+        );
+        sourcePath = transcodedAudioPath;
+      } on Object {
+        transcodedAudioPath = null;
+        sourcePath = path;
       }
     }
     late final soloud.AudioSource source;
     try {
-      source = await soloud.SoLoud.instance.loadFile(
-        sourcePath,
-        mode: isTrackerModule ? soloud.LoadMode.disk : soloud.LoadMode.memory,
-      );
+      try {
+        source = await soloud.SoLoud.instance.loadFile(
+          sourcePath,
+          mode: isTrackerModule || deleteSourceOnStop || transcodedAudioPath != null
+              ? soloud.LoadMode.disk
+              : soloud.LoadMode.memory,
+        );
+      } on Object {
+        if (isTrackerModule || deleteSourceOnStop) rethrow;
+        if (transcodedAudioPath != null) {
+          final previous = File(transcodedAudioPath);
+          if (await previous.exists()) await previous.delete();
+          transcodedAudioPath = null;
+        }
+        transcodedAudioPath = await _transcodeToWav(path);
+        source = await soloud.SoLoud.instance.loadFile(
+          transcodedAudioPath,
+          mode: soloud.LoadMode.disk,
+        );
+        sourcePath = transcodedAudioPath;
+      }
     } on Object {
-      if (isTrackerModule) {
-        final output = File(sourcePath);
+      if (isTrackerModule || transcodedAudioPath != null) {
+        final output = File(transcodedAudioPath ?? sourcePath);
         if (await output.exists()) await output.delete();
       }
       rethrow;
     }
-    if (_disposed || generation != _generation) {
-      await _disposeSourceSafely(source);
-      if (isTrackerModule) await _deleteRenderedModule(sourcePath);
-      return;
+    final equalizer = source.filters.parametricEqFilter..activate();
+    final limiter = source.filters.limiterFilter;
+    _volume = volume.clamp(0.0, 1.0).toDouble();
+    _preamp = preamp.clamp(-12.0, 12.0).toDouble();
+    final handle = soloud.SoLoud.instance.play(
+      source,
+      volume: _effectiveVolume,
+      pan: balance.clamp(-1.0, 1.0),
+    );
+    if (truePeakLimiterEnabled) {
+      limiter.activate();
+      limiter.wet(soundHandle: handle).value = 1.0;
+      limiter.threshold(soundHandle: handle).value = -3.0;
+      limiter.outputCeiling(soundHandle: handle).value = defaultTruePeakCeilingDb;
+      limiter.attackTime(soundHandle: handle).value = 1.0;
+      limiter.releaseTime(soundHandle: handle).value = 100.0;
+      limiter.kneeWidth(soundHandle: handle).value = 2.0;
     }
-    soloud.SoundHandle? handle;
+    equalizer.numBands(soundHandle: handle).value = bands.length.toDouble();
+    for (var index = 0; index < bands.length; index++) {
+      final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
+      equalizer.bandGain(index, soundHandle: handle).value = gain;
+    }
+    _applyPortableEffects(source, handle, effects);
+    soloud.SoLoud.instance.setRelativePlaySpeed(handle, playbackSpeed);
+    _source = source;
+    _temporaryAudioPath = isTrackerModule || transcodedAudioPath != null
+        ? sourcePath
+        : deleteSourceOnStop
+        ? sourcePath
+        : null;
+    _handle = handle;
+    _completionSent = false;
+    _duration = soloud.SoLoud.instance.getLength(source);
+    _durationController.add(_duration);
+    _stateController.add(PlayerState.playing);
+    _startPolling();
+  }
+
+  Future<String> _transcodeWithProcessing(
+    String inputPath, {
+    required List<double> frequencies,
+    required List<double> gains,
+    double q = 1,
+    String? impulseResponsePath,
+  }) async {
+    final outputPath = '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'neonamp-autoeq-${DateTime.now().microsecondsSinceEpoch}.wav';
     try {
-      final equalizer = source.filters.parametricEqFilter;
-      equalizer.activate();
-      equalizer.numBands().value = bands.length.toDouble();
-      for (var index = 0; index < bands.length; index++) {
-        final gain = equalizerEnabled ? dspGainForDb(bands[index]) : 1.0;
-        equalizer.bandGain(index).value = gain;
+      final equalizerFilter = frequencies.isEmpty
+          ? null
+          : buildFfmpegParametricEqFilter(
+              frequencies: frequencies,
+              gains: gains,
+              q: q,
+            );
+      final arguments = <String>[
+        '-nostdin', '-hide_banner', '-loglevel', 'error', '-y', '-i', inputPath,
+      ];
+      if (impulseResponsePath != null) {
+        arguments.addAll(['-i', impulseResponsePath]);
+        arguments.addAll([
+          '-filter_complex',
+          buildConvolutionFilter(equalizerFilter: equalizerFilter),
+          '-map',
+          '[out]',
+        ]);
+      } else {
+        arguments.addAll(['-map', '0:a:0', '-vn', '-af', equalizerFilter ?? 'anull']);
       }
-      handle = soloud.SoLoud.instance.play(
-        source,
-        volume: volume.clamp(0.0, 1.0).toDouble(),
-        pan: balance.clamp(-1.0, 1.0),
-      );
-      soloud.SoLoud.instance.setRelativePlaySpeed(
-        handle,
-        playbackSpeed.isFinite ? playbackSpeed.clamp(0.5, 2.0).toDouble() : 1,
-      );
-      _source = source;
-      _renderedModulePath = isTrackerModule ? sourcePath : null;
-      _handle = handle;
-      _completionSent = false;
-      _durationController.add(soloud.SoLoud.instance.getLength(source));
-      _stateController.add(PlayerState.playing);
-      _startPolling();
+      arguments.addAll([
+        '-c:a', 'pcm_s16le', '-ar', '44100', '-ac', '2', '-f', 'wav', outputPath,
+      ]);
+      final session = await FFmpegKit.executeWithArguments(arguments);
+      final returnCode = await session.getReturnCode();
+      final output = File(outputPath);
+      if (!ReturnCode.isSuccess(returnCode) || !await output.exists() || await output.length() <= 44) {
+        throw StateError('FFmpeg AutoEQ preprocessing failed.');
+      }
+      return outputPath;
     } on Object {
-      // If playback started before a later setup step failed, stop that voice
-      // before releasing its source.
-      if (handle != null &&
-          soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
-        try {
-          await soloud.SoLoud.instance.stop(handle);
-        } on Object {
-          // Continue releasing the source and temporary file.
-        }
+      final output = File(outputPath);
+      if (await output.exists()) await output.delete();
+      rethrow;
+    }
+  }
+
+  Future<String> _transcodeToWav(String inputPath) async {
+    final outputPath =
+        '${Directory.systemTemp.path}${Platform.pathSeparator}'
+        'neonamp-decoded-${DateTime.now().microsecondsSinceEpoch}.wav';
+    try {
+      final session = await FFmpegKit.executeWithArguments([
+        '-nostdin',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        inputPath,
+        '-map',
+        '0:a:0',
+        '-vn',
+        '-c:a',
+        'pcm_s16le',
+        '-ar',
+        '44100',
+        '-ac',
+        '2',
+        '-f',
+        'wav',
+        outputPath,
+      ]);
+      final returnCode = await session.getReturnCode();
+      final output = File(outputPath);
+      if (!ReturnCode.isSuccess(returnCode) ||
+          !await output.exists() ||
+          await output.length() <= 44) {
+        final outputText = (await session.getOutput())?.trim();
+        final logs = outputText == null
+            ? null
+            : outputText.length > 500
+            ? outputText.substring(outputText.length - 500)
+            : outputText;
+        throw StateError(
+          'Could not decode this audio file with the bundled fallback decoder'
+          '${logs == null || logs.isEmpty ? '.' : ': $logs'}',
+        );
       }
-      await _disposeSourceSafely(source);
-      if (isTrackerModule) {
-        final output = File(sourcePath);
-        if (await output.exists()) await output.delete();
-      }
+      return outputPath;
+    } on Object {
+      final output = File(outputPath);
+      if (await output.exists()) await output.delete();
       rethrow;
     }
   }
@@ -154,22 +283,11 @@ class DspLocalPlayer {
   void _startPolling() {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (_disposed || !soloud.SoLoud.instance.isInitialized) return;
       final handle = _handle;
       if (handle == null) return;
       if (!soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
         _pollTimer?.cancel();
         _handle = null;
-        final source = _source;
-        _source = null;
-        final renderedModulePath = _renderedModulePath;
-        _renderedModulePath = null;
-        if (source != null) {
-          unawaited(_disposeSourceSafely(source));
-        }
-        if (renderedModulePath != null) {
-          unawaited(_deleteRenderedModule(renderedModulePath));
-        }
         _stateController.add(PlayerState.completed);
         if (!_completionSent) {
           _completionSent = true;
@@ -182,85 +300,91 @@ class DspLocalPlayer {
     });
   }
 
-  Future<void> _deleteRenderedModule(String path) async {
-    try {
-      final file = File(path);
-      if (await file.exists()) await file.delete();
-    } on Object {
-      // Temporary tracker output is best-effort cleanup.
-    }
-  }
-
-  Future<void> _disposeSourceSafely(soloud.AudioSource source) async {
-    try {
-      await soloud.SoLoud.instance.disposeSource(source);
-    } on Object {
-      // SoLoud may already have released a source after voice completion.
-    }
-  }
-
   Future<void> pause() async {
-    if (_disposed) return;
-    final handle = _validHandle(_handle);
+    final handle = _handle;
     if (handle == null) return;
     soloud.SoLoud.instance.setPause(handle, true);
     _stateController.add(PlayerState.paused);
   }
 
   Future<void> resume() async {
-    if (_disposed) return;
-    final handle = _validHandle(_handle);
+    final handle = _handle;
     if (handle == null) return;
     soloud.SoLoud.instance.setPause(handle, false);
     _stateController.add(PlayerState.playing);
   }
 
   Future<void> seek(Duration position) async {
-    if (_disposed) return;
-    final handle = _validHandle(_handle);
+    final handle = _handle;
     if (handle == null) return;
-    final duration = _source == null
-        ? Duration.zero
-        : soloud.SoLoud.instance.getLength(_source!);
-    final target = position.isNegative
-        ? Duration.zero
-        : duration > Duration.zero && position > duration
-        ? duration
-        : position;
-    soloud.SoLoud.instance.seek(handle, target);
-    _positionController.add(target);
+    soloud.SoLoud.instance.seek(handle, position);
+    _positionController.add(position);
   }
 
+  double get _effectiveVolume =>
+      (_volume * dspGainForDb(_preamp)).clamp(0.0, 1.0).toDouble();
+
   Future<void> setVolume(double volume) async {
-    if (_disposed) return;
-    final handle = _validHandle(_handle);
-    if (handle != null) {
-      final safeVolume = volume.isFinite ? volume.clamp(0.0, 1.0) : 0.0;
-      soloud.SoLoud.instance.setVolume(handle, safeVolume);
+    _volume = volume.clamp(0.0, 1.0).toDouble();
+    final handle = _handle;
+    if (handle != null &&
+        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      soloud.SoLoud.instance.setVolume(handle, _effectiveVolume);
     }
   }
 
+  void setPreamp(double preamp) {
+    _preamp = preamp.clamp(-12.0, 12.0).toDouble();
+    final handle = _handle;
+    if (handle != null &&
+        soloud.SoLoud.instance.isInitialized &&
+        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      soloud.SoLoud.instance.setVolume(handle, _effectiveVolume);
+    }
+  }
+
+  void setTruePeakLimiter(bool enabled) {
+    final source = _source;
+    final handle = _handle;
+    if (source == null ||
+        handle == null ||
+        !soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      return;
+    }
+    final limiter = source.filters.limiterFilter;
+    if (!enabled) {
+      limiter.deactivate();
+      return;
+    }
+    limiter
+      ..activate()
+      ..wet(soundHandle: handle).value = 1.0
+      ..threshold(soundHandle: handle).value = -3.0
+      ..outputCeiling(soundHandle: handle).value = defaultTruePeakCeilingDb
+      ..attackTime(soundHandle: handle).value = 1.0
+      ..releaseTime(soundHandle: handle).value = 100.0
+      ..kneeWidth(soundHandle: handle).value = 2.0;
+  }
+
   void setBalance(double balance) {
-    if (_disposed) return;
-    final handle = _validHandle(_handle);
-    if (handle != null) {
+    final handle = _handle;
+    if (handle != null &&
+        soloud.SoLoud.instance.isInitialized &&
+        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
       soloud.SoLoud.instance.setPan(handle, balance.clamp(-1.0, 1.0));
     }
   }
 
   Future<void> setPlaybackSpeed(double speed) async {
-    if (_disposed) return;
-    final handle = _validHandle(_handle);
-    if (handle != null) {
-      soloud.SoLoud.instance.setRelativePlaySpeed(
-        handle,
-        (speed.isFinite ? speed.clamp(0.5, 2.0) : 1.0).toDouble(),
-      );
+    final handle = _handle;
+    if (handle != null &&
+        soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      soloud.SoLoud.instance.setRelativePlaySpeed(handle, speed);
     }
   }
 
   void setVisualizationEnabled(bool enabled) {
-    if (_disposed || !soloud.SoLoud.instance.isInitialized) return;
+    if (!soloud.SoLoud.instance.isInitialized) return;
     soloud.SoLoud.instance.setVisualizationEnabled(
       enabled,
       windowSize: 512,
@@ -268,64 +392,83 @@ class DspLocalPlayer {
     );
   }
 
-  void applyEqualizer({required bool enabled, required List<double> bands}) {
-    if (_disposed) return;
+  void applyEqualizer({
+    required bool enabled,
+    required List<double> bands,
+    List<double> frequencies = const [],
+  }) {
     final source = _source;
-    if (source == null) return;
+    final handle = _handle;
+    if (source == null ||
+        handle == null ||
+        !soloud.SoLoud.instance.getIsValidVoiceHandle(handle)) {
+      return;
+    }
     final equalizer = source.filters.parametricEqFilter;
     equalizer.activate();
-    equalizer.numBands().value = bands.length.toDouble();
+    equalizer.numBands(soundHandle: handle).value = bands.length.toDouble();
     for (var index = 0; index < bands.length; index++) {
       final gain = enabled ? dspGainForDb(bands[index]) : 1.0;
-      equalizer.bandGain(index).value = gain;
+      equalizer.bandGain(index, soundHandle: handle).value = gain;
     }
   }
 
-  Future<void> stop({bool invalidate = true, int? expectedGeneration}) async {
-    if (expectedGeneration != null && expectedGeneration != _generation) {
-      return;
+  void _applyPortableEffects(
+    soloud.AudioSource source,
+    soloud.SoundHandle handle,
+    List<PortableAudioEffect> effects,
+  ) {
+    for (final effect in effects) {
+      switch (effect.type) {
+        case 'bassBoost':
+          final filter = source.filters.bassBoostFilter..activate();
+          filter.wet(soundHandle: handle).value = effect.value('wet');
+          filter.boost(soundHandle: handle).value = effect.value('boost');
+        case 'echo':
+          final filter = source.filters.echoFilter..activate();
+          filter.wet(soundHandle: handle).value = effect.value('wet');
+          filter.delay(soundHandle: handle).value = effect.value('delay');
+          filter.decay(soundHandle: handle).value = effect.value('decay');
+          filter.filter(soundHandle: handle).value = effect.value('filter');
+        case 'reverb':
+          final filter = source.filters.freeverbFilter..activate();
+          filter.wet(soundHandle: handle).value = effect.value('wet');
+          filter.freeze(soundHandle: handle).value = effect.value('freeze');
+          filter.roomSize(soundHandle: handle).value = effect.value('roomSize');
+          filter.damp(soundHandle: handle).value = effect.value('damp');
+          filter.width(soundHandle: handle).value = effect.value('width');
+      }
     }
-    final generation = invalidate ? ++_generation : _generation;
+  }
+
+  Future<void> stop() async {
     _pollTimer?.cancel();
     final handle = _handle;
-    try {
-      final validHandle = _validHandle(handle);
-      if (validHandle != null) {
-        await soloud.SoLoud.instance.stop(validHandle);
-      }
-    } finally {
-      if (generation == _generation) {
-        _handle = null;
-        final source = _source;
-        _source = null;
-        if (source != null && soloud.SoLoud.instance.isInitialized) {
-          await _disposeSourceSafely(source);
-        }
-        final renderedModulePath = _renderedModulePath;
-        _renderedModulePath = null;
-        if (renderedModulePath != null) {
-          await _deleteRenderedModule(renderedModulePath);
-        }
-      }
+    if (handle != null && soloud.SoLoud.instance.isInitialized) {
+      await soloud.SoLoud.instance.stop(handle);
     }
-    if (!_disposed && generation == _generation) {
-      _stateController.add(PlayerState.stopped);
+    _handle = null;
+    final source = _source;
+    _source = null;
+    if (source != null && soloud.SoLoud.instance.isInitialized) {
+      await soloud.SoLoud.instance.disposeSource(source);
     }
+    final temporaryAudioPath = _temporaryAudioPath;
+    _temporaryAudioPath = null;
+    if (temporaryAudioPath != null) {
+      final temporaryAudio = File(temporaryAudioPath);
+      if (await temporaryAudio.exists()) await temporaryAudio.delete();
+    }
+    if (!_disposed) _stateController.add(PlayerState.stopped);
   }
 
   Future<void> dispose() async {
-    if (_disposed) return;
     _disposed = true;
-    _generation++;
     await stop();
     await _positionController.close();
     await _durationController.close();
     await _stateController.close();
     await _completeController.close();
   }
-
-  soloud.SoundHandle? _validHandle(soloud.SoundHandle? handle) {
-    if (handle == null || !soloud.SoLoud.instance.isInitialized) return null;
-    return soloud.SoLoud.instance.getIsValidVoiceHandle(handle) ? handle : null;
-  }
 }
+

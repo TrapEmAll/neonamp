@@ -1,0 +1,36 @@
+{
+  "id": "community.podcast-voice",
+  "name": "Podcast Voice",
+  "version": "1.0.0",
+  "description": "Forward midrange with a subtle room effect.",
+  "capabilities": [
+    "equalizer-presets",
+    "audio-effects"
+  ],
+  "equalizerPresets": {
+    "Podcast Voice": [
+      -4,
+      -3,
+      -1,
+      3,
+      5,
+      3,
+      1,
+      0,
+      -1,
+      -2
+    ]
+  },
+  "audioEffects": [
+    {
+      "type": "reverb",
+      "parameters": {
+        "wet": 0.12,
+        "freeze": 0,
+        "roomSize": 0.2,
+        "damp": 0.8,
+        "width": 0.8
+      }
+    }
+  ]
+}
