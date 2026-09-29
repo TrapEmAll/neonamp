@@ -15,6 +15,7 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
+import android.content.ContentValues
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -125,6 +126,22 @@ class MainActivity : AudioServiceActivity() {
                             .count { it.delete() }
                         result.success(removed)
                     }
+                    "publishRingtone" -> {
+                        val sourcePath = call.argument<String>("sourcePath")
+                        val displayName = call.argument<String>("name")
+                        if (sourcePath.isNullOrBlank() || displayName.isNullOrBlank()) {
+                            result.error("invalid_arguments", "A snippet path and name are required.", null)
+                        } else {
+                            Thread {
+                                try {
+                                    val uri = publishRingtone(File(sourcePath), displayName)
+                                    runOnUiThread { result.success(uri.toString()) }
+                                } catch (error: Throwable) {
+                                    runOnUiThread { result.error("ringtone_export_failed", error.message, null) }
+                                }
+                            }.start()
+                        }
+                    }
                     "materializeUri" -> {
                         val sourceUri = call.argument<String>("uri")
                         val displayName = call.argument<String>("name").orEmpty()
@@ -202,13 +219,15 @@ class MainActivity : AudioServiceActivity() {
                 }
                 val inputPath = call.argument<String>("inputPath")
                 val outputPath = call.argument<String>("outputPath")
+                val startMs = call.argument<Number>("startMs")?.toLong() ?: 0L
+                val endMs = call.argument<Number>("endMs")?.toLong()
                 if (inputPath == null || outputPath == null) {
                     result.success(false)
                     return@setMethodCallHandler
                 }
                 Thread {
                     val converted = try {
-                        transcodeToM4a(inputPath, outputPath)
+                        transcodeToM4a(inputPath, outputPath, startMs, endMs)
                     } catch (_: Throwable) {
                         false
                     }
@@ -887,7 +906,44 @@ class MainActivity : AudioServiceActivity() {
         super.onDestroy()
     }
 
-    private fun transcodeToM4a(inputPath: String, outputPath: String): Boolean {
+    private fun publishRingtone(source: File, displayName: String): Uri {
+        if (!source.isFile) throw IllegalArgumentException("The snippet file does not exist.")
+        val safeName = displayName.replace(Regex("[<>:\"/\\\\|?*]"), "_")
+            .trim().ifEmpty { "neonamp-ringtone.m4a" }
+        val resolver = contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, safeName)
+            put(MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
+            put(MediaStore.Audio.Media.IS_RINGTONE, 1)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Audio.Media.RELATIVE_PATH, "Ringtones/")
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+        }
+        val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IllegalStateException("Android could not create a ringtone entry.")
+        try {
+            resolver.openOutputStream(uri, "w")?.use { output ->
+                source.inputStream().use { input -> input.copyTo(output) }
+            } ?: throw IllegalStateException("Android could not write the ringtone.")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                resolver.update(uri, ContentValues().apply {
+                    put(MediaStore.Audio.Media.IS_PENDING, 0)
+                }, null, null)
+            }
+            return uri
+        } catch (error: Throwable) {
+            resolver.delete(uri, null, null)
+            throw error
+        }
+    }
+
+    private fun transcodeToM4a(
+        inputPath: String,
+        outputPath: String,
+        startMs: Long = 0,
+        endMs: Long? = null,
+    ): Boolean {
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
         var encoder: MediaCodec? = null
@@ -906,6 +962,9 @@ class MainActivity : AudioServiceActivity() {
             }
             if (audioTrack < 0) return false
             extractor.selectTrack(audioTrack)
+            val startUs = startMs.coerceAtLeast(0) * 1000
+            val endUs = endMs?.takeIf { it > startMs }?.times(1000)
+            if (startUs > 0) extractor.seekTo(startUs, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
             val sourceFormat = extractor.getTrackFormat(audioTrack)
             val mime = sourceFormat.getString(MediaFormat.KEY_MIME) ?: return false
             val sampleRate = sourceFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
@@ -945,7 +1004,8 @@ class MainActivity : AudioServiceActivity() {
                     if (inputIndex >= 0) {
                         val inputBuffer = decoder.getInputBuffer(inputIndex) ?: return false
                         val sampleSize = extractor.readSampleData(inputBuffer, 0)
-                        if (sampleSize < 0) {
+                        val sampleTime = extractor.sampleTime
+                        if (sampleSize < 0 || (endUs != null && sampleTime >= endUs)) {
                             decoder.queueInputBuffer(
                                 inputIndex,
                                 0,
@@ -957,9 +1017,9 @@ class MainActivity : AudioServiceActivity() {
                         } else {
                             decoder.queueInputBuffer(
                                 inputIndex,
-                                0,
-                                sampleSize,
-                                extractor.sampleTime,
+                                    0,
+                                    sampleSize,
+                                    sampleTime,
                                 0,
                             )
                             extractor.advance()
@@ -982,11 +1042,12 @@ class MainActivity : AudioServiceActivity() {
                                 decoded.limit(decoderInfo.offset + decoderInfo.size)
                                 if (encoderInput.remaining() < decoderInfo.size) return false
                                 encoderInput.put(decoded)
+                                val outputTime = (decoderInfo.presentationTimeUs - startUs).coerceAtLeast(0)
                                 encoder.queueInputBuffer(
                                     encoderIndex,
                                     0,
                                     decoderInfo.size,
-                                    decoderInfo.presentationTimeUs,
+                                    outputTime,
                                     if ((decoderInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                                         MediaCodec.BUFFER_FLAG_END_OF_STREAM
                                     } else {

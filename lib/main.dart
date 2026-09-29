@@ -4201,6 +4201,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _showScrobblingSettings();
       case 'audioOutput':
         operation = _showAudioOutputInfo();
+      case 'snippet':
+        operation = _exportSnippet();
       case 'visuals':
         operation = _showVisualizer();
       case 'settings':
@@ -4705,6 +4707,104 @@ class _PlayerPageState extends State<PlayerPage>
       type: FileType.custom,
       allowedExtensions: ['json'],
     );
+  }
+
+  Future<void> _exportSnippet() async {
+    final track = _current;
+    if (track == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Select a track before exporting a snippet.')),
+        );
+      }
+      return;
+    }
+    final maxMs = math.max(_duration.inMilliseconds, 1000);
+    var range = RangeValues(0, maxMs / 1000);
+    var ringtone = false;
+    final selected = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Export snippet'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${_formatDuration(Duration(milliseconds: (range.start * 1000).round()))} – ${_formatDuration(Duration(milliseconds: (range.end * 1000).round()))}'),
+                RangeSlider(
+                  values: range,
+                  min: 0,
+                  max: maxMs / 1000,
+                  labels: RangeLabels(
+                    _formatDuration(Duration(milliseconds: (range.start * 1000).round())),
+                    _formatDuration(Duration(milliseconds: (range.end * 1000).round())),
+                  ),
+                  onChanged: (value) => setDialogState(() => range = value),
+                ),
+                if (Platform.isAndroid)
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Publish to Android Ringtones'),
+                    value: ringtone,
+                    onChanged: (value) => setDialogState(() => ringtone = value),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Export')),
+          ],
+        ),
+      ),
+    );
+    if (selected != true || !mounted) return;
+    final sourcePath = await _playbackSourcePath(track);
+    final support = await getApplicationSupportDirectory();
+    final snippetDirectory = Directory('${support.path}${Platform.pathSeparator}snippets');
+    await snippetDirectory.create(recursive: true);
+    final safeBaseValue = track.name
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        .trim();
+    final safeBase = safeBaseValue.isEmpty ? 'neonamp-snippet' : safeBaseValue;
+    final outputPath = '${snippetDirectory.path}${Platform.pathSeparator}$safeBase.m4a';
+    final converted = await const MethodChannel('neonamp/converter')
+        .invokeMethod<bool>('convertToM4a', {
+          'inputPath': sourcePath,
+          'outputPath': outputPath,
+          'startMs': (range.start * 1000).round(),
+          'endMs': (range.end * 1000).round(),
+        });
+    if (converted != true) {
+      throw StateError('The audio converter could not export this range.');
+    }
+    try {
+      if (ringtone && Platform.isAndroid) {
+        await const MethodChannel('neonamp/library').invokeMethod<String>(
+          'publishRingtone',
+          {'sourcePath': outputPath, 'name': '$safeBase.m4a'},
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Snippet published to Android Ringtones.')),
+          );
+        }
+      } else {
+        final destination = await _pickFolderLocation('Choose an export folder');
+        if (destination == null) return;
+        await _copyFileToFolder(destination, outputPath, '$safeBase.m4a');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Snippet exported.')),
+          );
+        }
+      }
+    } finally {
+      final file = File(outputPath);
+      if (await file.exists()) await file.delete();
+    }
   }
 
   Future<void> _showStorageMaintenance() async {
@@ -9858,6 +9958,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'audioOutput',
                 child: Text('Audio output and DAC info'),
+              ),
+              PopupMenuItem(
+                value: 'snippet',
+                child: Text('Export ringtone or snippet'),
               ),
               PopupMenuItem(
                 value: 'sync',
