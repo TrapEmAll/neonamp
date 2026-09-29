@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:dynamic_color/dynamic_color.dart';
 import 'package:image/image.dart' as img;
@@ -7312,6 +7313,16 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<String> _playbackSourcePath(Track track) async {
     if (!Platform.isAndroid || !isContentMediaPath(track.path)) {
+      final source = Uri.tryParse(track.path);
+      final credentials = source == null
+          ? null
+          : _webDavCredentials[webDavCredentialKey(source)];
+      if (Platform.isAndroid &&
+          credentials != null &&
+          source != null &&
+          isHttpUri(source)) {
+        return _authenticatedRemotePlaybackPath(source, credentials);
+      }
       return normalizeLocalMediaPath(track.path);
     }
     final path = await const MethodChannel('neonamp/library')
@@ -7323,6 +7334,63 @@ class _PlayerPageState extends State<PlayerPage>
       throw StateError('Android could not prepare this media provider file.');
     }
     return path;
+  }
+
+  Future<String> _authenticatedRemotePlaybackPath(
+    Uri source,
+    ({String username, String password}) credentials,
+  ) async {
+    final support = await getApplicationSupportDirectory();
+    final cacheDirectory = Directory(
+      '${support.path}${Platform.pathSeparator}neonamp-library-cache',
+    );
+    await cacheDirectory.create(recursive: true);
+    final extension = source.path.split('.').last.toLowerCase();
+    final safeExtension = RegExp(r'^[a-z0-9]{1,8}$').hasMatch(extension)
+        ? extension
+        : 'audio';
+    final key = sha256.convert(utf8.encode(source.toString())).toString();
+    final target = File(
+      '${cacheDirectory.path}${Platform.pathSeparator}remote-$key.$safeExtension',
+    );
+    if (await target.exists() && await target.length() > 0) return target.path;
+
+    final temporary = File('${target.path}.tmp');
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20)
+      ..idleTimeout = const Duration(seconds: 30);
+    try {
+      client.addCredentials(
+        source,
+        '',
+        HttpClientBasicCredentials(credentials.username, credentials.password),
+      );
+      final request = await client.getUrl(source);
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/1.0');
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException(
+          'Authenticated remote track returned ${response.statusCode}',
+          uri: source,
+        );
+      }
+      await response.pipe(temporary.openWrite());
+      if (!await temporary.exists() || await temporary.length() == 0) {
+        throw const FormatException('The remote track was empty.');
+      }
+      if (await target.exists()) await target.delete();
+      await temporary.rename(target.path);
+      return target.path;
+    } finally {
+      client.close(force: true);
+      if (await temporary.exists()) {
+        try {
+          await temporary.delete();
+        } on Object {
+          // A failed cleanup must not hide the playback error.
+        }
+      }
+    }
   }
 
   Future<void> _select(int index, {bool recordPlay = true}) async {
