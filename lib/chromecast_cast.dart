@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:dart_cast/src/core/cast_device.dart';
+import 'package:dart_cast/src/core/cast_media.dart';
 import 'package:dart_cast/src/core/cast_service.dart';
 import 'package:dart_cast/src/core/cast_session.dart';
 import 'package:dart_cast/src/protocols/chromecast/chromecast_discovery_provider.dart';
