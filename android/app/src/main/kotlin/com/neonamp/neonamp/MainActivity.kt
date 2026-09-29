@@ -1093,9 +1093,10 @@ class MainActivity : AudioServiceActivity() {
                         treeUri,
                         cursor.getString(idColumn),
                     )
-                    return@use contentResolver.openInputStream(documentUri)
-                        ?.bufferedReader()
-                        ?.use { reader -> reader.readText() }
+                    val bytes = contentResolver.openInputStream(documentUri)
+                        ?.use { stream -> readBoundedBytes(stream, 1 * 1024 * 1024) }
+                    return@use bytes
+                        ?.toString(Charsets.UTF_8)
                         ?.takeIf { it.isNotBlank() }
                 }
                 null
