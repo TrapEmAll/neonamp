@@ -383,6 +383,10 @@ class MainActivity : AudioServiceActivity() {
                         ).addOnSuccessListener { response ->
                             result.success(response.token())
                         }.addOnFailureListener { error ->
+                            // Providers can expire. Force the next caller to
+                            // warm a fresh provider instead of retrying a
+                            // permanently invalid one.
+                            integrityTokenProvider = null
                             result.error(
                                 "request_failed",
                                 error.message ?: "Could not request Play Integrity.",
