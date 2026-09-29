@@ -104,7 +104,7 @@ jobs:
       - name: Build Android release
         run: |
           for attempt in 1 2 3; do
-            flutter build apk --release --target-platform android-arm,android-arm64 && \
+            flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 && \
               flutter build appbundle --release --target-platform android-arm,android-arm64 && exit 0
             if [ "$attempt" -lt 3 ]; then
               echo "Android build attempt $attempt failed; retrying dependency resolution..."
@@ -118,7 +118,7 @@ jobs:
         with:
           name: android-release
           path: |
-            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/*-release.apk
             build/app/outputs/bundle/release/app-release.aab
 
   publish-release:
@@ -147,8 +147,12 @@ jobs:
               --title "NeonAmp $GITHUB_REF_NAME" \
               --generate-notes
           fi
+          android_assets=()
+          while IFS= read -r asset; do
+            android_assets+=("$asset")
+          done < <(find android -type f \( -name '*-release.apk' -o -name 'app-release.aab' \) -print)
+          test "${#android_assets[@]}" -gt 0 || { echo "No Android release assets were downloaded"; exit 1; }
           gh release upload "$GITHUB_REF_NAME" \
             "NeonAmp-Windows-$GITHUB_REF_NAME.zip" \
-            android/app-release.apk \
-            android/app-release.aab \
+            "${android_assets[@]}" \
             --clobber
