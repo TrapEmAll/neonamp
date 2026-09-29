@@ -3310,8 +3310,8 @@ class _PlayerPageState extends State<PlayerPage>
     await _select(index);
   }
 
-  MediaItem _androidAutoTrack(Track track) => MediaItem(
-    id: track.identityKey,
+  MediaItem _androidAutoTrack(Track track, {String? idOverride}) => MediaItem(
+    id: idOverride ?? track.identityKey,
     title: track.name,
     artist: track.artist,
     album: track.album,
@@ -3350,7 +3350,9 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (id == 'resume') {
       final current = _current;
-      return current == null ? const <MediaItem>[] : [_androidAutoTrack(current)];
+      return current == null
+          ? const <MediaItem>[]
+          : [_androidAutoTrack(current, idOverride: 'resume:${current.identityKey}')];
     }
     if (id == 'all') return _library.map(_androidAutoTrack).toList();
     if (id == 'favorites') {
@@ -3407,15 +3409,23 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playAndroidAutoMedia(String mediaId) async {
+    final isResumeRequest = mediaId.startsWith('resume:');
+    final trackId = isResumeRequest ? mediaId.substring('resume:'.length) : mediaId;
     final track = _library
-        .where((item) => item.identityKey == mediaId)
+        .where((item) => item.identityKey == trackId)
         .firstOrNull;
     if (track == null || !mounted) return;
+    final resumePosition = isResumeRequest ? _resumePositions[track.identityKey] : null;
     final existing = _queue.indexWhere((item) => sameTrackIdentity(item, track));
     final index = existing >= 0 ? existing : _queue.length;
     if (existing < 0) _queue.add(track);
     await _saveQueue();
-    if (mounted) await _select(index);
+    if (mounted) {
+      await _select(index, recordPlay: false, preserveResumePosition: isResumeRequest);
+      if (isResumeRequest && resumePosition != null && mounted) {
+        await _seekCurrent(Duration(milliseconds: resumePosition));
+      }
+    }
   }
 
   Future<List<MediaItem>> _searchAndroidAutoMedia(String query) async {
@@ -7419,7 +7429,11 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _select(int index, {bool recordPlay = true}) async {
+  Future<void> _select(
+    int index, {
+    bool recordPlay = true,
+    bool preserveResumePosition = false,
+  }) async {
     if (index < 0 ||
         index >= _queue.length ||
         _selectionInProgress ||
@@ -7464,7 +7478,7 @@ class _PlayerPageState extends State<PlayerPage>
       // Selecting a track explicitly is a user request to start that track.
       // Persisted positions are only playback bookkeeping and must not make a
       // later manual selection unexpectedly resume in the middle.
-      _resumePositions.remove(track.identityKey);
+      if (!preserveResumePosition) _resumePositions.remove(track.identityKey);
       final trackVolume = _volumeFor(track);
       // Provider-backed Android media is stored as content:// so the library
       // can be restored, but the DSP engine requires a local file path.
