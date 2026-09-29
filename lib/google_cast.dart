@@ -32,9 +32,39 @@ class GoogleCast {
         false;
   }
 
+  Future<bool> castQueue({
+    required List<Map<String, dynamic>> items,
+    required int startIndex,
+  }) async {
+    if (items.isEmpty || startIndex < 0 || startIndex >= items.length) {
+      return false;
+    }
+    for (final item in items) {
+      final uri = Uri.tryParse(item['url']?.toString() ?? '');
+      if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
+        throw StateError('Google Cast requires HTTP(S) media URLs for the entire queue.');
+      }
+    }
+    final normalizedItems = items
+        .map(
+          (item) => <String, dynamic>{
+            ...item,
+            'contentType': item['contentType'] ?? _contentType(item['url'].toString()),
+          },
+        )
+        .toList();
+    return await _channel.invokeMethod<bool>('castQueue', {
+          'items': normalizedItems,
+          'startIndex': startIndex,
+        }) ??
+        false;
+  }
+
   Future<void> pause() => _channel.invokeMethod<void>('pause');
   Future<void> resume() => _channel.invokeMethod<void>('resume');
   Future<void> stop() => _channel.invokeMethod<void>('stop');
+  Future<void> next() => _channel.invokeMethod<void>('next');
+  Future<void> previous() => _channel.invokeMethod<void>('previous');
   Future<void> seek(Duration position) => _channel.invokeMethod<void>('seek', {
         'positionMs': position.inMilliseconds,
       });

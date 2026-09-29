@@ -3997,6 +3997,7 @@ class _PlayerPageState extends State<PlayerPage>
     final identity = _current?.identityKey;
     _playbackTrackIdentity = null;
     if (_googleCasting) {
+      _castPositionTimer?.cancel();
       await _googleCast.stop();
       _googleCasting = false;
       if (mounted && identity == _current?.identityKey) {
@@ -4111,12 +4112,19 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     try {
-      final accepted = await _googleCast.cast(
-        path: current.path,
-        title: current.name,
-        artist: current.artist,
-        album: current.album,
-        duration: _duration,
+      final castItems = _queue
+          .map(
+            (track) => <String, dynamic>{
+              'url': track.path,
+              'title': track.name,
+              'artist': track.artist,
+              'album': track.album,
+            },
+          )
+          .toList();
+      final accepted = await _googleCast.castQueue(
+        items: castItems,
+        startIndex: _selected,
       );
       if (!accepted || !mounted) return;
       await _stopCurrent();
@@ -4124,6 +4132,7 @@ class _PlayerPageState extends State<PlayerPage>
         _googleCasting = true;
         _playerState = PlayerState.playing;
       });
+      _startCastPositionPolling();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Casting with Google Cast.')),
@@ -4475,12 +4484,59 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _syncCastPosition() async {
-    if (!_casting || _castPositionPollInProgress || _selectionInProgress) {
+    if ((!_casting && !_googleCasting) ||
+        _castPositionPollInProgress ||
+        _selectionInProgress) {
       return;
     }
     _castPositionPollInProgress = true;
     final identity = _current?.identityKey;
     try {
+      if (_googleCasting) {
+        final state = await _googleCast.state();
+        if (!mounted || !_googleCasting || identity != _current?.identityKey) {
+          return;
+        }
+        final itemId = (state?['currentItemId'] as num?)?.toInt();
+        final remoteIndex = itemId == null || itemId <= 0 ? null : itemId - 1;
+        Track? remoteTrack;
+        if (remoteIndex != null &&
+            remoteIndex >= 0 &&
+            remoteIndex < _queue.length &&
+            remoteIndex != _selected) {
+          remoteTrack = _queue[remoteIndex];
+          setState(() {
+            _selected = remoteIndex;
+            _position = Duration.zero;
+            _duration = Duration.zero;
+          });
+        }
+        if (remoteTrack != null) _audioHandler?.publishTrack(remoteTrack);
+        final positionMs = (state?['positionMs'] as num?)?.toInt();
+        final durationMs = (state?['durationMs'] as num?)?.toInt();
+        if (positionMs != null || durationMs != null) {
+          setState(() {
+            if (positionMs != null) {
+              _position = Duration(
+                milliseconds: positionMs.clamp(0, 1 << 31).toInt(),
+              );
+            }
+            if (durationMs != null && durationMs > 0) {
+              _duration = Duration(milliseconds: durationMs);
+            }
+            _playerState = (state?['playerState'] as num?)?.toInt() == 2
+                ? PlayerState.playing
+                : PlayerState.paused;
+          });
+          _rememberResumePosition(_position);
+          _audioHandler?.syncExternalState(
+            position: _position,
+            duration: _duration,
+            state: _playerState,
+          );
+        }
+        return;
+      }
       final position = await _dlnaCast.getPosition();
       if (position == null ||
           !mounted ||
@@ -6921,6 +6977,10 @@ class _PlayerPageState extends State<PlayerPage>
     _selectionInProgress = true;
     try {
       _castPositionTimer?.cancel();
+      if (_googleCasting) {
+        await _googleCast.stop();
+        _googleCasting = false;
+      }
       if (_casting) await _dlnaCast.stop();
     } on Object catch (error) {
       if (mounted && operation == _queueOperationGeneration) {
@@ -7166,6 +7226,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _next({bool useCrossfade = true}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_googleCasting) {
+      await _googleCast.next();
+      return;
+    }
     if (_gaplessQueueActive) {
       await const MethodChannel('neonamp/gapless').invokeMethod<void>('next');
       return;
@@ -7416,6 +7480,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _previous() async {
     if (_queue.isEmpty) return;
+    if (_googleCasting) {
+      await _googleCast.previous();
+      return;
+    }
     if (_position.inSeconds > 3) return _seekCurrent(Duration.zero);
     if (_gaplessQueueActive) {
       await const MethodChannel('neonamp/gapless').invokeMethod<void>('previous');

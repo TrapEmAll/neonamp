@@ -27,9 +27,11 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import com.ryanheise.audioservice.AudioServiceActivity
 import com.google.android.gms.cast.MediaInfo
+import com.google.android.gms.cast.MediaQueueItem
 import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaSeekOptions
+import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
@@ -53,6 +55,7 @@ class MainActivity : AudioServiceActivity() {
     private var pendingWidgetQueue = false
     private var castContext: CastContext? = null
     private var pendingCastMedia: Map<String, Any?>? = null
+    private var pendingCastQueue: Map<*, *>? = null
     private var gaplessPlayer: ExoPlayer? = null
     private var gaplessChannel: MethodChannel? = null
     private var audioOutputChannel: MethodChannel? = null
@@ -74,17 +77,40 @@ class MainActivity : AudioServiceActivity() {
                 pendingCastMedia = null
                 loadCastMedia(session, media)
             }
+            pendingCastQueue?.let { queue ->
+                pendingCastQueue = null
+                loadCastQueue(
+                    session,
+                    queue["items"] as? List<*>,
+                    (queue["startIndex"] as? Number)?.toInt() ?: 0,
+                )
+            }
         }
         override fun onSessionStartFailed(session: CastSession, errorCode: Int) {
             pendingCastMedia = null
+            pendingCastQueue = null
         }
-        override fun onSessionEnding(session: CastSession) = Unit
-        override fun onSessionEnded(session: CastSession, error: Int) = Unit
+        override fun onSessionEnding(session: CastSession) {
+            pendingCastMedia = null
+            pendingCastQueue = null
+        }
+        override fun onSessionEnded(session: CastSession, error: Int) {
+            pendingCastMedia = null
+            pendingCastQueue = null
+        }
         override fun onSessionResuming(session: CastSession, sessionId: String) = Unit
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
             pendingCastMedia?.let { media ->
                 pendingCastMedia = null
                 loadCastMedia(session, media)
+            }
+            pendingCastQueue?.let { queue ->
+                pendingCastQueue = null
+                loadCastQueue(
+                    session,
+                    queue["items"] as? List<*>,
+                    (queue["startIndex"] as? Number)?.toInt() ?: 0,
+                )
             }
         }
         override fun onSessionResumeFailed(session: CastSession, errorCode: Int) = Unit
@@ -332,9 +358,32 @@ class MainActivity : AudioServiceActivity() {
                             }
                         }
                     }
+                    "castQueue" -> {
+                        val arguments = call.arguments as? Map<*, *>
+                        val session = castContext?.sessionManager?.currentCastSession
+                        val items = arguments?.get("items") as? List<*>
+                        val startIndex = (arguments?.get("startIndex") as? Number)?.toInt() ?: 0
+                        if (items.isNullOrEmpty()) {
+                            result.success(false)
+                        } else if (session == null) {
+                            pendingCastMedia = null
+                            pendingCastQueue = arguments
+                            try {
+                                startActivity(Intent(this, CastPickerActivity::class.java))
+                                result.success(true)
+                            } catch (error: Throwable) {
+                                pendingCastQueue = null
+                                result.error("cast_picker_failed", error.message, null)
+                            }
+                        } else {
+                            result.success(loadCastQueue(session, items, startIndex))
+                        }
+                    }
                     "pause" -> result.success(castRemote()?.pause()?.isSuccessful == true)
                     "resume" -> result.success(castRemote()?.play()?.isSuccessful == true)
                     "stop" -> result.success(castRemote()?.stop()?.isSuccessful == true)
+                    "next" -> result.success(castRemote()?.queueNext(null)?.isSuccessful == true)
+                    "previous" -> result.success(castRemote()?.queuePrev(null)?.isSuccessful == true)
                     "seek" -> {
                         val position = call.argument<Number>("positionMs")?.toLong() ?: 0L
                         result.success(
@@ -630,18 +679,19 @@ class MainActivity : AudioServiceActivity() {
             "playerState" to remote?.playerState,
             "positionMs" to remote?.approximateStreamPosition,
             "durationMs" to remote?.mediaInfo?.streamDuration,
+            "currentItemId" to remote?.mediaStatus?.currentItemId,
             "volume" to session?.volume,
         )
     }
 
-    private fun loadCastMedia(session: CastSession, media: Map<String, Any?>): Boolean {
-        val url = media["url"] as? String ?: return false
+    private fun buildCastMediaInfo(media: Map<*, *>): MediaInfo? {
+        val url = media["url"] as? String ?: return null
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MUSIC_TRACK).apply {
             putString(MediaMetadata.KEY_TITLE, media["title"] as? String ?: "NeonAmp")
             putString(MediaMetadata.KEY_ARTIST, media["artist"] as? String ?: "")
             putString(MediaMetadata.KEY_ALBUM_TITLE, media["album"] as? String ?: "")
         }
-        val info = MediaInfo.Builder(url)
+        return MediaInfo.Builder(url)
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
             .setContentType(media["contentType"] as? String ?: "audio/mpeg")
             .setMetadata(metadata)
@@ -651,8 +701,35 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
             .build()
+    }
+
+    private fun loadCastMedia(session: CastSession, media: Map<String, Any?>): Boolean {
+        val info = buildCastMediaInfo(media) ?: return false
         return session.remoteMediaClient?.load(
             MediaLoadRequestData.Builder().setMediaInfo(info).build(),
+        )?.isSuccessful == true
+    }
+
+    private fun loadCastQueue(
+        session: CastSession,
+        rawItems: List<*>?,
+        startIndex: Int,
+    ): Boolean {
+        val items = rawItems.orEmpty().mapIndexedNotNull { index, value ->
+            val media = value as? Map<*, *> ?: return@mapIndexedNotNull null
+            val info = buildCastMediaInfo(media) ?: return@mapIndexedNotNull null
+            MediaQueueItem.Builder(info)
+                .setItemId(index + 1)
+                .setAutoplay(true)
+                .build()
+        }
+        if (items.isEmpty()) return false
+        val safeIndex = startIndex.coerceIn(0, items.lastIndex)
+        return session.remoteMediaClient?.queueLoad(
+            items.toTypedArray(),
+            safeIndex,
+            MediaStatus.REPEAT_MODE_REPEAT_OFF,
+            null,
         )?.isSuccessful == true
     }
 
