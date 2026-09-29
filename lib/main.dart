@@ -2535,9 +2535,16 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           title: track.name,
           artist: track.artist,
           album: track.album,
+          artUri: track.artwork == null
+              ? null
+              : Uri.dataFromBytes(track.artwork!, mimeType: 'image/jpeg'),
           duration: track.cueEnd == null
               ? null
               : track.cueEnd! - track.cueStart,
+          extras: <String, dynamic>{
+            'genre': track.genre,
+            'path': track.path,
+          },
         ),
     ]);
   }
@@ -3218,11 +3225,18 @@ class _PlayerPageState extends State<PlayerPage>
     title: track.name,
     artist: track.artist,
     album: track.album,
+    artUri: track.artwork == null
+        ? null
+        : Uri.dataFromBytes(track.artwork!, mimeType: 'image/jpeg'),
     playable: true,
     duration: track.cueEnd == null
         ? null
         : track.cueEnd! - track.cueStart,
-    extras: <String, dynamic>{'path': track.path},
+    extras: <String, dynamic>{
+      'genre': track.genre,
+      'path': track.path,
+      'favorite': track.favorite,
+    },
   );
 
   MediaItem _androidAutoFolder(String id, String title) => MediaItem(
