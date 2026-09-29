@@ -189,6 +189,11 @@ bool isHttpUri(Uri? uri) {
   return scheme == 'http' || scheme == 'https';
 }
 
+String webDavCredentialKey(Uri uri) => uri
+    .replace(path: '', query: '', fragment: '')
+    .toString()
+    .toLowerCase();
+
 class LrcLine {
   const LrcLine(this.timestamp, this.text);
 
@@ -2929,6 +2934,7 @@ class _PlayerPageState extends State<PlayerPage>
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
   final List<QueueSnapshot> _queueHistory = [];
+  final Map<String, ({String username, String password})> _webDavCredentials = {};
   bool _gaplessEnabled = true;
   Timer? _gaplessStateTimer;
   bool _gaplessQueueActive = false;
@@ -5693,11 +5699,19 @@ class _PlayerPageState extends State<PlayerPage>
     }
     final client = WebDavLibraryClient();
     try {
+      final username = values.length > 1 ? values[1].trim() : '';
+      final password = values.length > 2 ? values[2] : '';
       final entries = await client.listRecursive(
         folder,
-        username: values.length > 1 ? values[1] : null,
-        password: values.length > 2 ? values[2] : null,
+        username: username,
+        password: password,
       );
+      if (username.isNotEmpty) {
+        _webDavCredentials[webDavCredentialKey(folder)] = (
+          username: username,
+          password: password,
+        );
+      }
       final audio = entries.where((entry) {
         if (entry.isDirectory) return false;
         return isSupportedLibraryAudioPath(entry.name) ||
@@ -8621,6 +8635,14 @@ class _PlayerPageState extends State<PlayerPage>
     final client = HttpClient();
     File? temporary;
     try {
+      final credentials = _webDavCredentials[webDavCredentialKey(source)];
+      if (credentials != null) {
+        client.addCredentials(
+          source,
+          '',
+          HttpClientBasicCredentials(credentials.username, credentials.password),
+        );
+      }
       final request = await client.getUrl(source);
       final response = await request.close();
       if (response.statusCode < 200 || response.statusCode >= 300) {
