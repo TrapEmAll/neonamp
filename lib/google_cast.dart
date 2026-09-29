@@ -48,7 +48,7 @@ class GoogleCastArtworkServer {
       _server = server;
       unawaited(
         server.forEach((request) async {
-          final match = RegExp('^/$token/(art|media)/(\\d+)$')
+          final match = RegExp('^/$token/(art|media)/(\\d+)\$')
               .firstMatch(request.uri.path);
           final kind = match?.group(1);
           final index = match == null ? null : int.tryParse(match.group(2)!);

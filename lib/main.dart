@@ -205,6 +205,20 @@ String normalizeLocalMediaPath(String path) {
   final uri = Uri.tryParse(path);
   if (uri?.scheme.toLowerCase() == 'file') {
     try {
+      // Keep URI-style root paths portable while still converting drive-letter
+      // file URIs to native paths on Windows.
+      if (Platform.isWindows &&
+          uri!.host.isEmpty &&
+          !RegExp(r'^/[A-Za-z]:(?:/|$)').hasMatch(uri.path)) {
+        return uri.path;
+      }
+      if (Platform.isWindows && uri!.host.isEmpty) {
+        final separator = path.indexOf('://');
+        final rawPath = separator < 0 ? '' : path.substring(separator + 3);
+        if (RegExp(r'^/[A-Za-z]:').hasMatch(rawPath)) {
+          return Uri.decodeComponent(rawPath.substring(1)).replaceAll('/', '\\');
+        }
+      }
       return uri!.toFilePath();
     } on Object {
       // Keep the original value so callers can report the provider error.
@@ -228,17 +242,11 @@ String webDavCredentialKey(Uri uri) {
           (scheme == 'https' && uri.port == 443)
       ? 0
       : uri.port;
-  return uri
-      .replace(
-        scheme: scheme,
-        userInfo: '',
-        host: uri.host.toLowerCase(),
-        port: port,
-        path: '',
-        query: '',
-        fragment: '',
-      )
-      .toString();
+  return Uri(
+    scheme: scheme,
+    host: uri.host.toLowerCase(),
+    port: port == 0 ? null : port,
+  ).toString();
 }
 
 class LrcLine {
@@ -6425,15 +6433,11 @@ class _PlayerPageState extends State<PlayerPage>
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json'],
-      withData: true,
     );
     if (result.isEmpty) return;
     try {
-      final picked = result.files.single;
-      final pickedPath = picked.path == null
-          ? await _localPickedFilePath(picked)
-          : normalizeLocalMediaPath(picked.path!);
-      final bytes = picked.bytes ?? await File(pickedPath).readAsBytes();
+      final picked = result.single;
+      final bytes = await picked.readAsBytes();
       final decoded = jsonDecode(utf8.decode(bytes));
       if (decoded is! Map || decoded['format'] != 'neonamp-backup') {
         throw const FormatException('This is not a NeonAmp backup file.');
@@ -12045,6 +12049,17 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
               PopupMenuItem(value: 'queueHistory', child: Text('Queue history')),
+              PopupMenuItem(value: 'eq', child: Text('Equalizer')),
+              PopupMenuItem(value: 'speed', child: Text('Playback speed')),
+              PopupMenuItem(value: 'abLoop', child: Text('A/B loop')),
+              PopupMenuItem(
+                value: 'saveBookmark',
+                child: Text('Save playback bookmark'),
+              ),
+              PopupMenuItem(
+                value: 'positionBookmarks',
+                child: Text('Playback bookmarks'),
+              ),
               PopupMenuItem(
                 value: 'folder',
                 child: Text(
@@ -12111,17 +12126,6 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'managePodcasts',
                 child: Text('Manage podcast subscriptions'),
-              ),
-              PopupMenuItem(value: 'eq', child: Text('Equalizer')),
-              PopupMenuItem(value: 'speed', child: Text('Playback speed')),
-              PopupMenuItem(value: 'abLoop', child: Text('A/B loop')),
-              PopupMenuItem(
-                value: 'saveBookmark',
-                child: Text('Save playback bookmark'),
-              ),
-              PopupMenuItem(
-                value: 'positionBookmarks',
-                child: Text('Playback bookmarks'),
               ),
               PopupMenuItem(
                 value: 'layout',
@@ -12477,10 +12481,6 @@ class _PlayerPageState extends State<PlayerPage>
             onChanged: (_) => _toggleLibrarySelection(track),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
-          secondary: Tooltip(
-            message: availability.label,
-            child: Icon(availability.icon, color: availability.color, size: 18),
-          ),
           title: Text(
             track.name,
             maxLines: 1,
@@ -12496,6 +12496,17 @@ class _PlayerPageState extends State<PlayerPage>
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Tooltip(
+                message: availability.label,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Icon(
+                    availability.icon,
+                    color: availability.color,
+                    size: 18,
+                  ),
+                ),
+              ),
               IconButton(
                 tooltip: _isBookmarked(track)
                     ? 'Remove bookmark'

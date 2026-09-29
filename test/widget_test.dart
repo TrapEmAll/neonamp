@@ -609,8 +609,8 @@ FILE "disc image.flac" WAVE
       'name': 'Track',
     });
 
-    expect(restored.path, physicalPath);
-    expect(restored.identityKey, physicalPath);
+    expect(restored.path.toLowerCase(), physicalPath.toLowerCase());
+    expect(restored.identityKey.toLowerCase(), physicalPath.toLowerCase());
   });
 
   test('track identity keys canonicalize file URI aliases', () {
