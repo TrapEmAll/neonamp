@@ -2982,6 +2982,7 @@ class _PlayerPageState extends State<PlayerPage>
     final id = parentId.isEmpty ? AudioService.browsableRootId : parentId;
     if (id == AudioService.browsableRootId) {
       return [
+        if (_current != null) _androidAutoFolder('resume', 'Resume playback'),
         _androidAutoFolder('all', 'All music'),
         _androidAutoFolder('artists', 'Artists'),
         _androidAutoFolder('albums', 'Albums'),
@@ -2990,6 +2991,10 @@ class _PlayerPageState extends State<PlayerPage>
         _androidAutoFolder('podcasts', 'Podcasts'),
         _androidAutoFolder('recent', 'Recently played'),
       ];
+    }
+    if (id == 'resume') {
+      final current = _current;
+      return current == null ? const <MediaItem>[] : [_androidAutoTrack(current)];
     }
     if (id == 'all') return _library.map(_androidAutoTrack).toList();
     if (id == 'favorites') {
