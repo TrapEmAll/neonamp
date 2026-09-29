@@ -11,6 +11,7 @@ import android.media.MediaMuxer
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import java.io.File
 import java.io.FileOutputStream
@@ -25,9 +26,11 @@ class MainActivity : AudioServiceActivity() {
     private val libraryChannel = "neonamp/library"
     private val nearbyPermissionRequest = 4021
     private val folderPickerRequest = 4022
+    private val mediaStorePermissionRequest = 4023
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nearbyPermissionResult: MethodChannel.Result? = null
     private var folderPickerResult: MethodChannel.Result? = null
+    private var mediaStorePermissionResult: MethodChannel.Result? = null
     private var pendingMediaIntent: Map<String, String>? = null
 
     private external fun nativeReadTrackerInfo(inputPath: String): Array<String>?
@@ -53,6 +56,20 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/widget")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "update" -> {
+                        val title = call.argument<String>("title") ?: "NeonAmp"
+                        val artist = call.argument<String>("artist") ?: "Nothing queued"
+                        val playing = call.argument<Boolean>("playing") ?: false
+                        val artwork = call.argument<ByteArray>("artwork")
+                        NeonAmpWidgetProvider.updateAll(this, title, artist, playing, artwork)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, libraryChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -74,6 +91,7 @@ class MainActivity : AudioServiceActivity() {
                             }.start()
                         }
                     }
+                    "scanMediaStore" -> scanMediaStore(result)
                     "materializeUri" -> {
                         val sourceUri = call.argument<String>("uri")
                         val displayName = call.argument<String>("name").orEmpty()
@@ -248,6 +266,85 @@ class MainActivity : AudioServiceActivity() {
             folderPickerResult = null
             result.error("folder_picker_failed", error.message, null)
         }
+    }
+
+    private fun scanMediaStore(result: MethodChannel.Result) {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
+        ) {
+            if (mediaStorePermissionResult != null) {
+                result.error("permission_busy", "A music permission request is already open.", null)
+                return
+            }
+            mediaStorePermissionResult = result
+            requestPermissions(arrayOf(permission), mediaStorePermissionRequest)
+            return
+        }
+        queryMediaStore(result)
+    }
+
+    private fun queryMediaStore(result: MethodChannel.Result) {
+        Thread {
+            try {
+                val projection = arrayOf(
+                    MediaStore.Audio.Media._ID,
+                    MediaStore.Audio.Media.DISPLAY_NAME,
+                    MediaStore.Audio.Media.TITLE,
+                    MediaStore.Audio.Media.ARTIST,
+                    MediaStore.Audio.Media.ALBUM,
+                    MediaStore.Audio.Media.DURATION,
+                    MediaStore.Audio.Media.SIZE,
+                    MediaStore.Audio.Media.MIME_TYPE,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                        MediaStore.Audio.Media.RELATIVE_PATH else MediaStore.Audio.Media.DATA,
+                )
+                val results = mutableListOf<Map<String, Any?>>()
+                contentResolver.query(
+                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                    projection,
+                    "${MediaStore.Audio.Media.IS_MUSIC} != 0 OR ${MediaStore.Audio.Media.MIME_TYPE} LIKE ?",
+                    arrayOf("audio/%"),
+                    "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC",
+                )?.use { cursor ->
+                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                    val nameColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
+                    val titleColumn = cursor.getColumnIndex(MediaStore.Audio.Media.TITLE)
+                    val artistColumn = cursor.getColumnIndex(MediaStore.Audio.Media.ARTIST)
+                    val albumColumn = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM)
+                    val durationColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DURATION)
+                    val sizeColumn = cursor.getColumnIndex(MediaStore.Audio.Media.SIZE)
+                    val mimeColumn = cursor.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
+                    val locationColumn = cursor.getColumnIndex(projection.last())
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idColumn)
+                        val uri = Uri.withAppendedPath(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id.toString())
+                        val name = if (nameColumn >= 0) cursor.getString(nameColumn).orEmpty() else ""
+                        val title = if (titleColumn >= 0) cursor.getString(titleColumn).orEmpty() else ""
+                        results.add(
+                            mapOf(
+                                "path" to uri.toString(),
+                                "name" to name.ifBlank { title.ifBlank { "Unknown audio" } },
+                                "title" to title,
+                                "artist" to (if (artistColumn >= 0) cursor.getString(artistColumn).orEmpty() else ""),
+                                "album" to (if (albumColumn >= 0) cursor.getString(albumColumn).orEmpty() else ""),
+                                "durationMs" to (if (durationColumn >= 0 && !cursor.isNull(durationColumn)) cursor.getLong(durationColumn) else 0L),
+                                "size" to (if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) cursor.getLong(sizeColumn) else 0L),
+                                "mimeType" to (if (mimeColumn >= 0) cursor.getString(mimeColumn).orEmpty() else ""),
+                                "relativePath" to (if (locationColumn >= 0) cursor.getString(locationColumn).orEmpty() else ""),
+                            ),
+                        )
+                    }
+                }
+                runOnUiThread { result.success(results) }
+            } catch (error: Throwable) {
+                runOnUiThread { result.error("media_store_scan_failed", error.message, null) }
+            }
+        }.start()
     }
 
     private fun isTreeUri(uri: Uri): Boolean =
@@ -531,6 +628,22 @@ class MainActivity : AudioServiceActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingMediaIntent = mediaIntentPayload(intent)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != mediaStorePermissionRequest) return
+        val pending = mediaStorePermissionResult ?: return
+        mediaStorePermissionResult = null
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            queryMediaStore(pending)
+        } else {
+            pending.error("permission_denied", "Music access is required to scan device audio.", null)
+        }
     }
 
     private fun mediaIntentPayload(intent: Intent?): Map<String, String>? {

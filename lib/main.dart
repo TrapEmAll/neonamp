@@ -138,6 +138,41 @@ bool isHttpUri(Uri? uri) {
   return scheme == 'http' || scheme == 'https';
 }
 
+class LrcLine {
+  const LrcLine(this.timestamp, this.text);
+
+  final Duration timestamp;
+  final String text;
+}
+
+List<LrcLine> parseLrcLyrics(String source) {
+  final lines = <LrcLine>[];
+  final pattern = RegExp(r'^\[(\d+):(\d{1,2}(?:\.\d{1,3})?)\](.*)$');
+  for (final rawLine in source.split(RegExp(r'\r?\n'))) {
+    final match = pattern.firstMatch(rawLine.trim());
+    if (match == null) continue;
+    final minutes = int.tryParse(match.group(1)!) ?? 0;
+    final seconds = double.tryParse(match.group(2)!) ?? 0;
+    lines.add(
+      LrcLine(
+        Duration(milliseconds: ((minutes * 60 + seconds) * 1000).round()),
+        match.group(3)!.trim(),
+      ),
+    );
+  }
+  lines.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+  return lines;
+}
+
+int currentLrcLineIndex(List<LrcLine> lines, Duration position) {
+  var current = -1;
+  for (var index = 0; index < lines.length; index++) {
+    if (lines[index].timestamp > position) break;
+    current = index;
+  }
+  return current;
+}
+
 int nextQueueIndex({
   required int selected,
   required int length,
@@ -3144,6 +3179,22 @@ class _PlayerPageState extends State<PlayerPage>
     _audioHandler!.onPauseRequested = _pauseCurrent;
     _audioHandler!.onStopRequested = _stopCurrent;
     _audioHandler!.onSeekRequested = _seekCurrent;
+    _syncAndroidWidget();
+  }
+
+  Future<void> _syncAndroidWidget() async {
+    if (!Platform.isAndroid) return;
+    final current = _current;
+    try {
+      await const MethodChannel('neonamp/widget').invokeMethod('update', {
+        'title': current?.name ?? 'NeonAmp',
+        'artist': current?.artist ?? 'Nothing queued',
+        'playing': _isPlaying,
+        if (current?.artwork != null) 'artwork': current!.artwork,
+      });
+    } on Object catch (error) {
+      debugPrint('Could not update Android widget: $error');
+    }
   }
 
   Future<void> _showCastDevices() async {
@@ -3346,6 +3397,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _dlnaCast.resume();
       if (mounted && identity == _current?.identityKey) {
         setState(() => _playerState = PlayerState.playing);
+        unawaited(_syncAndroidWidget());
       }
       return;
     }
@@ -3369,6 +3421,7 @@ class _PlayerPageState extends State<PlayerPage>
       await _dlnaCast.pause();
       if (mounted && identity == _current?.identityKey) {
         setState(() => _playerState = PlayerState.paused);
+        unawaited(_syncAndroidWidget());
       }
       return;
     }
@@ -3398,6 +3451,7 @@ class _PlayerPageState extends State<PlayerPage>
           position: Duration.zero,
           state: PlayerState.stopped,
         );
+        unawaited(_syncAndroidWidget());
       }
       return;
     }
@@ -3410,6 +3464,7 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (mounted && identity == _current?.identityKey) {
       setState(() => _position = Duration.zero);
+      unawaited(_syncAndroidWidget());
     }
   }
 
@@ -4068,6 +4123,14 @@ class _PlayerPageState extends State<PlayerPage>
     switch (value) {
       case 'folder':
         operation = _addFolder();
+      case 'deviceLibrary':
+        operation = _scanDeviceLibrary();
+      case 'cleanLibrary':
+        operation = _cleanLibraryEntries();
+      case 'exportBackup':
+        operation = _exportBackup();
+      case 'importBackup':
+        operation = _importBackup();
       case 'visuals':
         operation = _showVisualizer();
       case 'settings':
@@ -4309,6 +4372,174 @@ class _PlayerPageState extends State<PlayerPage>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not add music folder: $error')),
       );
+    }
+  }
+
+  Future<void> _scanDeviceLibrary() async {
+    if (!Platform.isAndroid) {
+      await _addFolder();
+      return;
+    }
+    final operation = ++_libraryOperationGeneration;
+    try {
+      final results = await const MethodChannel('neonamp/library')
+          .invokeListMethod<Map<Object?, Object?>>('scanMediaStore');
+      if (!mounted || operation != _libraryOperationGeneration) return;
+      String valueOr(String? value, String fallback) {
+        final trimmed = value?.trim();
+        return trimmed == null || trimmed.isEmpty ? fallback : trimmed;
+      }
+
+      var added = 0;
+      for (final item in results ?? const <Map<Object?, Object?>>[]) {
+        final path = item['path'] as String?;
+        if (path == null || path.isEmpty) continue;
+        if (_library.any((existing) => sameTrackPath(existing.path, path))) {
+          continue;
+        }
+        final title = item['title'] as String?;
+        final name = item['name'] as String?;
+        _library.add(
+          Track(
+            path: path,
+            name: valueOr(name, valueOr(title, 'Unknown audio')),
+            artist: valueOr(item['artist'] as String?, 'Local library'),
+            album: valueOr(item['album'] as String?, 'Unknown album'),
+          ),
+        );
+        added++;
+      }
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added $added device track(s) to the library.')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted && operation == _libraryOperationGeneration) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not scan device music: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _cleanLibraryEntries() async {
+    final seen = <String>{};
+    var removed = 0;
+    if (!mounted) return;
+    setState(() {
+      _library.removeWhere((track) {
+        final identity = track.identityKey;
+        final path = trackPathKey(track.path);
+        final key = '$identity\u0000$path';
+        if (seen.add(key)) return false;
+        removed++;
+        return true;
+      });
+      _libraryFolders.removeWhere((folder) {
+        final normalized = folder.trim();
+        return normalized.isEmpty || _libraryFolders.indexOf(folder) !=
+            _libraryFolders.indexWhere((item) => item.trim() == normalized);
+      });
+    });
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(removed == 0
+            ? 'No duplicate library entries found.'
+            : 'Removed $removed duplicate library entr${removed == 1 ? 'y' : 'ies'}.')),
+      );
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    final prefs = await SharedPreferences.getInstance();
+    final values = <String, dynamic>{};
+    for (final key in prefs.getKeys()) {
+      values[key] = prefs.get(key);
+    }
+    final payload = <String, dynamic>{
+      'format': 'neonamp-backup',
+      'version': 1,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+      'preferences': values,
+    };
+    await FilePicker.saveFile(
+      fileName: 'neonamp-backup.json',
+      bytes: Uint8List.fromList(
+        utf8.encode(const JsonEncoder.withIndent('  ').convert(payload)),
+      ),
+      mimeType: 'application/json',
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+  }
+
+  Future<void> _importBackup() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+    if (result.isEmpty) return;
+    try {
+      final picked = result.files.single;
+      final pickedPath = picked.path == null
+          ? await _localPickedFilePath(picked)
+          : normalizeLocalMediaPath(picked.path!);
+      final bytes = picked.bytes ?? await File(pickedPath).readAsBytes();
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map || decoded['format'] != 'neonamp-backup') {
+        throw const FormatException('This is not a NeonAmp backup file.');
+      }
+      final values = decoded['preferences'];
+      if (values is! Map) {
+        throw const FormatException('Backup preferences are missing.');
+      }
+      final prefs = await SharedPreferences.getInstance();
+      for (final entry in values.entries) {
+        final key = entry.key;
+        final value = entry.value;
+        if (key is! String) continue;
+        if (value is String) {
+          await prefs.setString(key, value);
+        } else if (value is bool) {
+          await prefs.setBool(key, value);
+        } else if (value is int) {
+          await prefs.setInt(key, value);
+        } else if (value is double) {
+          await prefs.setDouble(key, value);
+        } else if (value is List && value.every((item) => item is String)) {
+          await prefs.setStringList(key, value.cast<String>());
+        }
+      }
+      await _stopCurrent();
+      if (!mounted) return;
+      setState(() {
+        _queue.clear();
+        _library.clear();
+        _bookmarks.clear();
+        _playHistory.clear();
+        _resumePositions.clear();
+        _libraryFolders.clear();
+        _libraryRelativePaths.clear();
+        _playlists.clear();
+        _smartPlaylists.clear();
+        _selected = 0;
+      });
+      await _loadQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Backup restored.')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not restore backup: $error')),
+        );
+      }
     }
   }
 
@@ -5129,6 +5360,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       await _saveQueue();
       if (!mounted || operation != _queueOperationGeneration) return;
+      unawaited(_syncAndroidWidget());
     } on Object catch (error) {
       if (!mounted || operation != _queueOperationGeneration) return;
       _playbackTrackIdentity = null;
@@ -7847,22 +8079,75 @@ class _PlayerPageState extends State<PlayerPage>
       );
       return;
     }
+    final lrcLines = parseLrcLyrics(lyrics);
+    Timer? refreshTimer;
+    var dialogAlive = true;
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(track.name),
-        content: SizedBox(
-          width: 560,
-          child: SingleChildScrollView(child: SelectableText(lyrics)),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Done'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        if (lrcLines.isEmpty) {
+          return AlertDialog(
+            title: Text(track.name),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(child: SelectableText(lyrics)),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Done'),
+              ),
+            ],
+          );
+        }
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            refreshTimer ??= Timer.periodic(const Duration(milliseconds: 250), (
+              _,
+            ) {
+              if (dialogAlive) setDialogState(() {});
+            });
+            final activeLine = currentLrcLineIndex(lrcLines, _position);
+            return AlertDialog(
+              title: Text('${track.name} · Synced lyrics'),
+              content: SizedBox(
+                width: 560,
+                height: 360,
+                child: ListView.builder(
+                  itemCount: lrcLines.length,
+                  itemBuilder: (_, index) => InkWell(
+                    onTap: () => _seekCurrent(lrcLines[index].timestamp),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 7),
+                      child: Text(
+                        lrcLines[index].text,
+                        style: TextStyle(
+                          color: index == activeLine
+                              ? const Color(0xffef4bff)
+                              : Colors.white70,
+                          fontWeight: index == activeLine
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          fontSize: index == activeLine ? 17 : 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Done'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
+    dialogAlive = false;
+    refreshTimer?.cancel();
   }
 
   Future<void> _showVisualizer() async {
@@ -8952,9 +9237,18 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
               PopupMenuItem(value: 'folder', child: Text('Add folder')),
+              if (Platform.isAndroid)
+                PopupMenuItem(
+                  value: 'deviceLibrary',
+                  child: Text('Scan all device music'),
+                ),
               PopupMenuItem(
                 value: 'rescan',
                 child: Text('Rescan library folders'),
+              ),
+              PopupMenuItem(
+                value: 'cleanLibrary',
+                child: Text('Clean duplicate library entries'),
               ),
               PopupMenuItem(
                 value: 'import',
@@ -9015,6 +9309,8 @@ class _PlayerPageState extends State<PlayerPage>
                 value: 'export',
                 child: Text('Export M3U playlist'),
               ),
+              PopupMenuItem(value: 'exportBackup', child: Text('Export backup')),
+              PopupMenuItem(value: 'importBackup', child: Text('Import backup')),
               PopupMenuItem(
                 value: 'sync',
                 child: Text('Sync music to device folder'),

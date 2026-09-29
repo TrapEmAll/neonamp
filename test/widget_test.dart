@@ -881,6 +881,15 @@ FILE "disc image.flac" WAVE
     expect(isHttpUri(null), isFalse);
   });
 
+  test('parses and selects synchronized LRC lyric lines', () {
+    final lines = parseLrcLyrics('[00:02.50]First line\n[00:00.10]Intro\n[bad]ignored');
+    expect(lines.map((line) => line.text).toList(), ['Intro', 'First line']);
+    expect(lines[1].timestamp, const Duration(milliseconds: 2500));
+    expect(currentLrcLineIndex(lines, const Duration(milliseconds: 100)), 0);
+    expect(currentLrcLineIndex(lines, const Duration(seconds: 3)), 1);
+    expect(currentLrcLineIndex(lines, Duration.zero), -1);
+  });
+
   test('video queue wraps in both directions and filters extensions', () {
     expect(wrappedVideoIndex(3, 3), 0);
     expect(wrappedVideoIndex(-1, 3), 2);
