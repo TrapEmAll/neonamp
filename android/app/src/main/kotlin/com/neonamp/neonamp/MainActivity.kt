@@ -193,6 +193,15 @@ class MainActivity : AudioServiceActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                4024,
+            )
+        }
         pendingMediaIntent = mediaIntentPayloads(intent)
         pendingWidgetQueue = intent?.getBooleanExtra(
             NeonAmpWidgetProvider.EXTRA_OPEN_QUEUE,
@@ -1053,12 +1062,14 @@ class MainActivity : AudioServiceActivity() {
             it.delete()
         }
         val audioExtensions = setOf(
-            "mp3", "flac", "wav", "wave", "ogg", "oga", "m4a", "m4b", "mp4", "aac", "wma",
-            "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
-            "mka", "mid", "midi", "kar", "669", "amf", "ams", "dbm",
-            "dmf", "dsm", "far", "gdm", "gtk", "it", "j2b", "m15",
-            "med", "mod", "mtm", "okt", "psm", "pt36", "ptm", "s3m",
-            "stm", "stp", "stx", "ult", "umx", "xm", "xmz", "itz", "s3z",
+            "3gp", "ac3", "aac", "aif", "aiff", "aifc", "amr", "ape", "au", "awb",
+            "caf", "dts", "dff", "dsf", "dsdiff", "flac", "m4a", "m4b", "mka", "mkv",
+            "mov", "mp1", "mp2", "mp3", "mp4", "oga", "ogg", "ogx", "opus", "spx",
+            "snd", "tak", "tta", "voc", "wav", "webm", "wma",
+            "mid", "midi", "kar", "669", "amf", "ams", "dbm", "dmf", "dsm", "far",
+            "gdm", "gtk", "it", "j2b", "m15", "med", "mod", "mtm", "okt", "psm",
+            "pt36", "ptm", "s3m", "stm", "stp", "stx", "ult", "umx", "xm", "xmz",
+            "itz", "s3z",
         )
         val results = mutableListOf<Map<String, Any?>>()
         val visited = mutableSetOf<String>()
