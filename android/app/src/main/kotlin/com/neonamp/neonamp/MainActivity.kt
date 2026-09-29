@@ -648,6 +648,12 @@ class MainActivity : AudioServiceActivity() {
 
     private fun audioOutputState(): Map<String, Any?> {
         val manager = getSystemService(AUDIO_SERVICE) as AudioManager
+        val sampleRate = manager
+            .getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)
+            ?.toIntOrNull()
+        val framesPerBuffer = manager
+            .getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)
+            ?.toIntOrNull()
         val devices = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { device ->
                 mapOf(
@@ -661,8 +667,15 @@ class MainActivity : AudioServiceActivity() {
         }
         return mapOf(
             "devices" to devices,
-            "sampleRate" to manager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE),
-            "framesPerBuffer" to manager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER),
+            "sampleRate" to sampleRate,
+            "framesPerBuffer" to framesPerBuffer,
+            "bufferLatencyMs" to if (sampleRate != null && sampleRate > 0 && framesPerBuffer != null) {
+                framesPerBuffer * 1000.0 / sampleRate
+            } else {
+                null
+            },
+            "bitDepth" to "OS-managed",
+            "codec" to if (manager.isBluetoothA2dpOn) "Bluetooth codec managed by Android" else "PCM",
             "bluetoothA2dpOn" to manager.isBluetoothA2dpOn,
             "musicVolume" to manager.getStreamVolume(AudioManager.STREAM_MUSIC),
             "musicMaxVolume" to manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),

@@ -3020,6 +3020,10 @@ class _PlayerPageState extends State<PlayerPage>
             _applyDeviceEqPreset(_audioOutputNotifier.value),
             'Applying output EQ preset',
           );
+          _runAsyncSafely(
+            _applyCurrentVolume(),
+            'Restoring output volume',
+          );
         }
         return null;
       });
@@ -5884,6 +5888,10 @@ class _PlayerPageState extends State<PlayerPage>
           valueListenable: _audioOutputNotifier,
           builder: (context, liveState, _) {
             final current = liveState ?? state;
+            final latency = current?['bufferLatencyMs'];
+            final latencyLabel = latency is num
+                ? '${latency.toStringAsFixed(1)} ms'
+                : 'unknown';
             final liveDevices = (current?['devices'] as List?)
                     ?.whereType<Map>()
                     .map((item) => item['name']?.toString())
@@ -5896,6 +5904,9 @@ class _PlayerPageState extends State<PlayerPage>
                 children: [
                   Text('Sample rate: ${current?['sampleRate'] ?? 'unknown'} Hz'),
                   Text('Frames per buffer: ${current?['framesPerBuffer'] ?? 'unknown'}'),
+                  Text('Estimated buffer latency: $latencyLabel'),
+                  Text('Bit depth: ${current?['bitDepth'] ?? 'unknown'}'),
+                  Text('Codec: ${current?['codec'] ?? 'unknown'}'),
                   Text('Bluetooth A2DP: ${current?['bluetoothA2dpOn'] == true ? 'connected' : 'not active'}'),
                   Text('Music volume: ${current?['musicVolume'] ?? '?'} / ${current?['musicMaxVolume'] ?? '?'}'),
                   const SizedBox(height: 12),
