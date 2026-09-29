@@ -1,12 +1,12 @@
 /// Hand-written protobuf bindings for the CASTV2 CastMessage.
 ///
-/// These classes mirror the Chromium `cast_channel.proto` definition without
-/// requiring the `protoc` compiler.  They use the `protobuf` package's
+/// These classes mirror the Chromium [?25lcast_channel.proto definition without
+/// requiring the protoc compiler.  They use the protobuf packages
 /// [GeneratedMessage] / [ProtobufEnum] API directly.
 ///
-/// The `CastMessage_*` nested-enum type names match the identifiers that
-/// `protoc --dart_out` would emit for the underlying `.proto`, so the file
-/// intentionally opts out of `camel_case_types`.
+/// The CastMessage_* nested-enum type names match the identifiers that
+/// protoc --dart_out would emit for the underlying .proto, so the file
+/// intentionally opts out of camel_case_types.
 // ignore_for_file: camel_case_types
 library;
 
@@ -16,7 +16,7 @@ import 'package:protobuf/protobuf.dart';
 // Enums
 // ---------------------------------------------------------------------------
 
-/// `CastMessage.ProtocolVersion` enum.
+/// CastMessage.ProtocolVersion enum.
 class CastMessage_ProtocolVersion extends ProtobufEnum {
   // ignore: constant_identifier_names
   static const CastMessage_ProtocolVersion CASTV2_1_0 =
@@ -32,7 +32,7 @@ class CastMessage_ProtocolVersion extends ProtobufEnum {
   const CastMessage_ProtocolVersion._(super.v, super.n);
 }
 
-/// `CastMessage.PayloadType` enum.
+/// CastMessage.PayloadType enum.
 class CastMessage_PayloadType extends ProtobufEnum {
   // ignore: constant_identifier_names
   static const CastMessage_PayloadType STRING = CastMessage_PayloadType._(
@@ -59,24 +59,11 @@ class CastMessage_PayloadType extends ProtobufEnum {
 // CastMessage
 // ---------------------------------------------------------------------------
 
-/// A manually-coded protobuf [GeneratedMessage] matching `CastMessage` from
-/// `cast_channel.proto`.
-///
-/// Field layout:
-/// ```
-/// required ProtocolVersion protocol_version = 1;
-/// required string          source_id        = 2;
-/// required string          destination_id   = 3;
-/// required string          namespace        = 4;
-/// required PayloadType     payload_type     = 5;
-/// optional string          payload_utf8     = 6;
-/// optional bytes           payload_binary   = 7;
-/// ```
+/// A manually-coded protobuf GeneratedMessage matching CastMessage from
+/// cast_channel.proto.
 class CastMessage extends GeneratedMessage {
-  /// Creates an empty [CastMessage].
   factory CastMessage() => CastMessage._();
 
-  /// Deserialise from protobuf bytes.
   factory CastMessage.fromBuffer(
     List<int> bytes, [
     ExtensionRegistry registry = ExtensionRegistry.EMPTY,
@@ -121,34 +108,33 @@ class CastMessage extends GeneratedMessage {
   @override
   BuilderInfo get info_ => _i;
 
-  // -- Typed accessors -------------------------------------------------------
-
   CastMessage_ProtocolVersion get protocolVersion =>
-      $_getN<CastMessage_ProtocolVersion>(0);
+      getField(1) as CastMessage_ProtocolVersion;
   set protocolVersion(CastMessage_ProtocolVersion v) => setField(1, v);
-  bool hasProtocolVersion() => $_has(0);
+  bool hasProtocolVersion() => hasField(1);
 
-  String get sourceId => $_getSZ(1);
-  set sourceId(String v) => $_setString(1, v);
-  bool hasSourceId() => $_has(1);
+  String get sourceId => getField(2) as String;
+  set sourceId(String v) => setField(2, v);
+  bool hasSourceId() => hasField(2);
 
-  String get destinationId => $_getSZ(2);
-  set destinationId(String v) => $_setString(2, v);
-  bool hasDestinationId() => $_has(2);
+  String get destinationId => getField(3) as String;
+  set destinationId(String v) => setField(3, v);
+  bool hasDestinationId() => hasField(3);
 
-  String get namespace_ => $_getSZ(3);
-  set namespace_(String v) => $_setString(3, v);
-  bool hasNamespace_() => $_has(3);
+  String get namespace_ => getField(4) as String;
+  set namespace_(String v) => setField(4, v);
+  bool hasNamespace_() => hasField(4);
 
-  CastMessage_PayloadType get payloadType => $_getN<CastMessage_PayloadType>(4);
+  CastMessage_PayloadType get payloadType =>
+      getField(5) as CastMessage_PayloadType;
   set payloadType(CastMessage_PayloadType v) => setField(5, v);
-  bool hasPayloadType() => $_has(4);
+  bool hasPayloadType() => hasField(5);
 
-  String get payloadUtf8 => $_getSZ(5);
-  set payloadUtf8(String v) => $_setString(5, v);
-  bool hasPayloadUtf8() => $_has(5);
+  String get payloadUtf8 => getField(6) as String;
+  set payloadUtf8(String v) => setField(6, v);
+  bool hasPayloadUtf8() => hasField(6);
 
-  List<int> get payloadBinary => $_getN<List<int>>(6);
+  List<int> get payloadBinary => getField(7) as List<int>;
   set payloadBinary(List<int> v) => setField(7, v);
-  bool hasPayloadBinary() => $_has(6);
+  bool hasPayloadBinary() => hasField(7);
 }
