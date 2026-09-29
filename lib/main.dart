@@ -29,6 +29,7 @@ import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
 import 'playlist_library_resolution.dart';
 import 'webdav_library.dart';
+import 'scrobbling.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -2683,6 +2684,12 @@ class _PlayerPageState extends State<PlayerPage>
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
   final Map<String, String> _libraryRelativePaths = {};
+  bool _scrobblingEnabled = false;
+  ScrobbleProtocol _scrobbleProtocol = ScrobbleProtocol.listenBrainz;
+  String _scrobbleEndpoint = 'https://api.listenbrainz.org/1/submit-listens';
+  String _scrobbleToken = '';
+  DateTime? _trackStartedAt;
+  String? _submittedScrobbleIdentity;
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
   final List<SmartPlaylist> _smartPlaylists = [];
@@ -3708,6 +3715,14 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _handleComplete() async {
     if (_crossfadeInProgress) return;
+    final completedTrack = _current;
+    final startedAt = _trackStartedAt;
+    if (completedTrack != null &&
+        startedAt != null &&
+        _submittedScrobbleIdentity != completedTrack.identityKey) {
+      _submittedScrobbleIdentity = completedTrack.identityKey;
+      unawaited(_submitScrobble(completedTrack, startedAt));
+    }
     final identity = _current?.identityKey;
     if (identity != null) {
       _resumePositions.remove(identity);
@@ -4079,6 +4094,22 @@ class _PlayerPageState extends State<PlayerPage>
             'replayGainEnabled',
             false,
           );
+          _scrobblingEnabled = storedBool(settings, 'scrobblingEnabled', false);
+          _scrobbleToken = storedString(settings, 'scrobbleToken', '');
+          _scrobbleEndpoint = storedString(
+            settings,
+            'scrobbleEndpoint',
+            'https://api.listenbrainz.org/1/submit-listens',
+          );
+          final savedProtocol = storedString(
+            settings,
+            'scrobbleProtocol',
+            ScrobbleProtocol.listenBrainz.name,
+          );
+          _scrobbleProtocol = ScrobbleProtocol.values.firstWhere(
+            (protocol) => protocol.name == savedProtocol,
+            orElse: () => ScrobbleProtocol.listenBrainz,
+          );
           final sleepTimerEnd = settings['sleepTimerEndMs'] is num
               ? (settings['sleepTimerEndMs'] as num).toInt()
               : null;
@@ -4164,6 +4195,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _exportListeningHistory();
       case 'storage':
         operation = _showStorageMaintenance();
+      case 'scrobbling':
+        operation = _showScrobblingSettings();
       case 'visuals':
         operation = _showVisualizer();
       case 'settings':
@@ -4269,6 +4302,10 @@ class _PlayerPageState extends State<PlayerPage>
       'eqBands': List<double>.of(_eqBands),
       'playbackSpeed': _playbackSpeed,
       'replayGainEnabled': _replayGainEnabled,
+      'scrobblingEnabled': _scrobblingEnabled,
+      'scrobbleToken': _scrobbleToken,
+      'scrobbleEndpoint': _scrobbleEndpoint,
+      'scrobbleProtocol': _scrobbleProtocol.name,
       'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
       'librarySort': _librarySort,
       'librarySortDescending': _librarySortDescending,
@@ -5531,6 +5568,8 @@ class _PlayerPageState extends State<PlayerPage>
       });
       final track = _queue[index];
       _playbackTrackIdentity = track.identityKey;
+      _trackStartedAt = DateTime.now();
+      _submittedScrobbleIdentity = null;
       // Selecting a track explicitly is a user request to start that track.
       // Persisted positions are only playback bookkeeping and must not make a
       // later manual selection unexpectedly resume in the middle.
@@ -8550,6 +8589,115 @@ class _PlayerPageState extends State<PlayerPage>
     await _select(0);
   }
 
+  Future<void> _showScrobblingSettings() async {
+    final endpoint = TextEditingController(text: _scrobbleEndpoint);
+    final token = TextEditingController(text: _scrobbleToken);
+    var enabled = _scrobblingEnabled;
+    var protocol = _scrobbleProtocol;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Scrobbling'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Submit listening history'),
+                  value: enabled,
+                  onChanged: (value) => setDialogState(() => enabled = value),
+                ),
+                DropdownButtonFormField<ScrobbleProtocol>(
+                  initialValue: protocol,
+                  decoration: const InputDecoration(labelText: 'Protocol'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: ScrobbleProtocol.listenBrainz,
+                      child: Text('ListenBrainz'),
+                    ),
+                    DropdownMenuItem(
+                      value: ScrobbleProtocol.lastFmCompatible,
+                      child: Text('Libre.fm / Last.fm-compatible'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setDialogState(() => protocol = value);
+                  },
+                ),
+                TextField(
+                  controller: endpoint,
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'Submission endpoint',
+                    helperText: 'ListenBrainz works out of the box; compatible services may require their own session token.',
+                  ),
+                ),
+                TextField(
+                  controller: token,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: protocol == ScrobbleProtocol.listenBrainz
+                        ? 'ListenBrainz user token'
+                        : 'Session token',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+    if (result != true || !mounted) {
+      endpoint.dispose();
+      token.dispose();
+      return;
+    }
+    setState(() {
+      _scrobblingEnabled = enabled;
+      _scrobbleProtocol = protocol;
+      _scrobbleEndpoint = endpoint.text.trim();
+      _scrobbleToken = token.text.trim();
+    });
+    endpoint.dispose();
+    token.dispose();
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(enabled ? 'Scrobbling enabled.' : 'Scrobbling disabled.')),
+      );
+    }
+  }
+
+  Future<void> _submitScrobble(Track track, DateTime startedAt) async {
+    if (!_scrobblingEnabled || _scrobbleToken.trim().isEmpty) return;
+    final endpoint = Uri.tryParse(_scrobbleEndpoint);
+    if (endpoint == null || !endpoint.hasScheme) return;
+    final client = ScrobbleClient();
+    try {
+      await client.submit(
+        endpoint: endpoint,
+        token: _scrobbleToken,
+        protocol: _scrobbleProtocol,
+        track: ScrobbleTrack(
+          title: track.name,
+          artist: track.artist,
+          album: track.album,
+        ),
+        startedAt: startedAt,
+      );
+    } on Object catch (error) {
+      debugPrint('Scrobble submission failed: $error');
+    } finally {
+      client.close();
+    }
+  }
+
   Future<void> _addTrackToPlaylist(Track track) async {
     if (_playlists.isEmpty) {
       await _createPlaylist();
@@ -9583,6 +9731,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'storage',
                 child: Text('Storage and battery'),
+              ),
+              PopupMenuItem(
+                value: 'scrobbling',
+                child: Text('Scrobbling settings'),
               ),
               PopupMenuItem(
                 value: 'sync',
