@@ -76,6 +76,9 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="audio/*" />
                 <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="audio/x-mpegurl" />
+                <data android:mimeType="application/x-mpegurl" />
+                <data android:mimeType="application/x-cue" />
             </intent-filter>
         </activity>
         <activity
