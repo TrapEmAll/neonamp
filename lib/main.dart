@@ -8660,6 +8660,16 @@ class _PlayerPageState extends State<PlayerPage>
             )
           : Directory(directory);
       await targetDirectory.create(recursive: true);
+      for (final stale in targetDirectory
+          .listSync()
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.part'))) {
+        try {
+          await stale.delete();
+        } on Object {
+          // A stale partial file should not prevent a fresh download.
+        }
+      }
       final usedNames = targetDirectory
           .listSync()
           .whereType<File>()
