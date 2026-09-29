@@ -2116,4 +2116,15 @@ FILE "disc image.flac" WAVE
     );
     expect(detectArtworkMimeType(Uint8List.fromList([1, 2, 3])), 'image/jpeg');
   });
+
+  test('scopes WebDAV credentials to the server origin', () {
+    expect(
+      webDavCredentialKey(Uri.parse('HTTPS://NAS.example:443/music/album/a.flac')),
+      'https://nas.example:443',
+    );
+    expect(
+      webDavCredentialKey(Uri.parse('https://nas.example/music/album/b.flac')),
+      webDavCredentialKey(Uri.parse('https://nas.example/music/album/a.flac')),
+    );
+  });
 }
