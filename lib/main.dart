@@ -2849,6 +2849,9 @@ class _PlayerPageState extends State<PlayerPage>
   bool _librarySortDescending = false;
   final Set<String> _selectedLibraryPaths = <String>{};
   final List<double> _eqBands = List<double>.filled(10, 0);
+  final Map<String, List<double>> _deviceEqPresets = {};
+  String? _activeAudioOutputKey;
+  bool _applyingDeviceEqPreset = false;
   String _eqPreset = 'Flat';
   bool _crossfadeInProgress = false;
   bool _cueTransitioning = false;
@@ -2955,6 +2958,10 @@ class _PlayerPageState extends State<PlayerPage>
         if (call.method == 'stateChanged' && call.arguments is Map) {
           _audioOutputNotifier.value = Map<Object?, Object?>.from(
             call.arguments as Map,
+          );
+          _runAsyncSafely(
+            _applyDeviceEqPreset(_audioOutputNotifier.value),
+            'Applying output EQ preset',
           );
         }
         return null;
@@ -4659,6 +4666,21 @@ class _PlayerPageState extends State<PlayerPage>
           if (savedBands != null) {
             _eqBands.setAll(0, savedBands);
           }
+          final savedDevicePresets = settings['deviceEqPresets'];
+          if (savedDevicePresets is Map) {
+            for (final entry in savedDevicePresets.entries) {
+              final values = entry.value;
+              if (values is! List || values.length != _eqBands.length) continue;
+              final bands = values
+                  .whereType<num>()
+                  .map((value) => value.toDouble())
+                  .toList();
+              if (bands.length != _eqBands.length) continue;
+              if (bands.every((value) => value >= -12 && value <= 12)) {
+                _deviceEqPresets[entry.key.toString()] = bands;
+              }
+            }
+          }
         } on Object catch (error) {
           debugPrint('Ignoring invalid saved settings: $error');
         }
@@ -4837,6 +4859,9 @@ class _PlayerPageState extends State<PlayerPage>
       'equalizerEnabled': _equalizerEnabled,
       'eqPreset': _eqPreset,
       'eqBands': List<double>.of(_eqBands),
+      'deviceEqPresets': _deviceEqPresets.map(
+        (key, bands) => MapEntry(key, List<double>.of(bands)),
+      ),
       'playbackSpeed': _playbackSpeed,
       'replayGainEnabled': _replayGainEnabled,
       'gaplessEnabled': _gaplessEnabled,
@@ -5550,6 +5575,77 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  String? _audioOutputKey(Map<Object?, Object?>? state) {
+    final devices = state?['devices'];
+    if (devices is! List) return null;
+    final outputDevices = devices.whereType<Map>().toList();
+    final preferred = outputDevices.where((value) {
+      final type = value['type'];
+      return type is num && const {7, 8, 11, 22}.contains(type.toInt());
+    });
+    for (final value in [...preferred, ...outputDevices]) {
+      if (value is! Map) continue;
+      final name = value['name']?.toString().trim() ?? '';
+      final address = value['address']?.toString().trim() ?? '';
+      if (name.isNotEmpty || address.isNotEmpty) return '$address|$name';
+    }
+    return null;
+  }
+
+  Future<void> _applyDeviceEqPreset(Map<Object?, Object?>? state) async {
+    if (_applyingDeviceEqPreset) return;
+    final key = _audioOutputKey(state);
+    if (key == null || key == _activeAudioOutputKey) return;
+    _activeAudioOutputKey = key;
+    final bands = _deviceEqPresets[key];
+    if (bands == null || !mounted) return;
+    _applyingDeviceEqPreset = true;
+    try {
+      setState(() {
+        _eqBands.setAll(0, bands);
+        _eqPreset = 'Device preset';
+      });
+      if (_equalizerEnabled) {
+        _dspPlayer.applyEqualizer(enabled: true, bands: _eqBands);
+      }
+      await _saveQueue();
+    } finally {
+      _applyingDeviceEqPreset = false;
+    }
+  }
+
+  Future<void> _saveDeviceEqPreset(Map<Object?, Object?>? state) async {
+    final key = _audioOutputKey(state);
+    if (key == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No Bluetooth or USB output is active.')),
+        );
+      }
+      return;
+    }
+    _deviceEqPresets[key] = List<double>.of(_eqBands);
+    _activeAudioOutputKey = key;
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('EQ preset saved for this output.')),
+      );
+    }
+  }
+
+  Future<void> _clearDeviceEqPreset(Map<Object?, Object?>? state) async {
+    final key = _audioOutputKey(state);
+    if (key == null) return;
+    _deviceEqPresets.remove(key);
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Saved output EQ preset cleared.')),
+      );
+    }
+  }
+
   Future<void> _showAudioOutputInfo() async {
     if (!Platform.isAndroid) {
       if (mounted) {
@@ -5563,6 +5659,7 @@ class _PlayerPageState extends State<PlayerPage>
         .invokeMapMethod<Object?, Object?>('getState');
     if (!mounted) return;
     _audioOutputNotifier.value = state;
+    _runAsyncSafely(_applyDeviceEqPreset(state), 'Applying output EQ preset');
     final devices = (state?['devices'] as List?)
             ?.whereType<Map>()
             .map((item) => item['name']?.toString())
@@ -5608,6 +5705,20 @@ class _PlayerPageState extends State<PlayerPage>
                   .invokeMethod<bool>('openBluetoothSettings');
             },
             child: const Text('Bluetooth settings'),
+          ),
+          TextButton(
+            onPressed: () => _runAsyncSafely(
+              _saveDeviceEqPreset(_audioOutputNotifier.value ?? state),
+              'Saving output EQ preset',
+            ),
+            child: const Text('Save EQ for output'),
+          ),
+          TextButton(
+            onPressed: () => _runAsyncSafely(
+              _clearDeviceEqPreset(_audioOutputNotifier.value ?? state),
+              'Clearing output EQ preset',
+            ),
+            child: const Text('Clear output EQ'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
