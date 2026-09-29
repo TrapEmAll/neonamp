@@ -1025,6 +1025,7 @@ class MainActivity : AudioServiceActivity() {
                     } else {
                         name
                     }
+                    val sidecarLyrics = readSidecarLyrics(treeUri, parentId, name)
                     results.add(
                         mapOf(
                             // Keep the provider URI as the durable library identity.
@@ -1037,12 +1038,61 @@ class MainActivity : AudioServiceActivity() {
                             "relativePath" to relativePath,
                             "size" to sourceSize,
                             "modified" to sourceModified,
+                            "sidecarLyrics" to sidecarLyrics,
                         ),
                     )
                 }
             } ?: throw IllegalStateException("Android could not read this folder. Re-add it to restore access.")
         }
         return results
+    }
+
+    private fun readSidecarLyrics(
+        treeUri: Uri,
+        parentDocumentId: String,
+        audioName: String,
+    ): String? {
+        val dot = audioName.lastIndexOf('.')
+        if (dot <= 0) return null
+        val sidecarName = audioName.substring(0, dot) + ".lrc"
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+            treeUri,
+            parentDocumentId,
+        )
+        return try {
+            contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                )
+                val nameColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                )
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(nameColumn) ?: continue
+                    if (!name.equals(sidecarName, ignoreCase = true)) continue
+                    val documentUri = DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        cursor.getString(idColumn),
+                    )
+                    return@use contentResolver.openInputStream(documentUri)
+                        ?.bufferedReader()
+                        ?.use { reader -> reader.readText() }
+                        ?.takeIf { it.isNotBlank() }
+                }
+                null
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun cacheLimitBytes(): Long = getSharedPreferences("neonamp_storage", MODE_PRIVATE)

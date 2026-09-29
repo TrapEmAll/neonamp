@@ -6305,6 +6305,7 @@ class _PlayerPageState extends State<PlayerPage>
       String relativePath,
       String? signature,
       String? legacyPath,
+      String? sidecarLyrics,
     })> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
@@ -6323,6 +6324,7 @@ class _PlayerPageState extends State<PlayerPage>
             final size = (item['size'] as num?)?.toInt() ?? -1;
             final modified = (item['modified'] as num?)?.toInt() ?? -1;
             final legacyPath = item['legacyCachePath'] as String?;
+            final sidecarLyrics = item['sidecarLyrics'] as String?;
             return (
               path: path,
               readPath: readPath,
@@ -6330,6 +6332,7 @@ class _PlayerPageState extends State<PlayerPage>
               relativePath: item['relativePath'] as String? ?? name,
               signature: size >= 0 || modified > 0 ? '$size:$modified' : null,
               legacyPath: legacyPath,
+              sidecarLyrics: sidecarLyrics,
             );
           })
           .whereType<({
@@ -6339,6 +6342,7 @@ class _PlayerPageState extends State<PlayerPage>
             String relativePath,
             String? signature,
             String? legacyPath,
+            String? sidecarLyrics,
           })>()
           .toList();
     } else {
@@ -6357,6 +6361,7 @@ class _PlayerPageState extends State<PlayerPage>
                   .replaceAll('\\', '/'),
               signature: null,
               legacyPath: null,
+              sidecarLyrics: null,
             ),
           )
           .toList();
@@ -6414,6 +6419,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       final track = scannedTrack.copyWith(
         path: file.path,
+        lyrics: scannedTrack.lyrics ?? file.sidecarLyrics,
         rating: 0,
         playCount: 0,
         favorite: false,
