@@ -92,6 +92,22 @@ class MainActivity : AudioServiceActivity() {
                         }
                     }
                     "scanMediaStore" -> scanMediaStore(result)
+                    "cacheStats" -> {
+                        val directory = File(filesDir, "neonamp-library-cache")
+                        val files = directory.listFiles().orEmpty().filter { it.isFile }
+                        result.success(
+                            mapOf(
+                                "files" to files.size,
+                                "bytes" to files.sumOf { it.length() },
+                            ),
+                        )
+                    }
+                    "clearCache" -> {
+                        val directory = File(filesDir, "neonamp-library-cache")
+                        val removed = directory.listFiles().orEmpty()
+                            .count { it.delete() }
+                        result.success(removed)
+                    }
                     "materializeUri" -> {
                         val sourceUri = call.argument<String>("uri")
                         val displayName = call.argument<String>("name").orEmpty()

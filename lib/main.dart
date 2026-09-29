@@ -4137,6 +4137,10 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _exportBackup();
       case 'importBackup':
         operation = _importBackup();
+      case 'exportHistory':
+        operation = _exportListeningHistory();
+      case 'storage':
+        operation = _showStorageMaintenance();
       case 'visuals':
         operation = _showVisualizer();
       case 'settings':
@@ -4572,6 +4576,78 @@ class _PlayerPageState extends State<PlayerPage>
       mimeType: 'application/json',
       type: FileType.custom,
       allowedExtensions: ['json'],
+    );
+  }
+
+  Future<void> _exportListeningHistory() async {
+    final rows = <Map<String, dynamic>>[];
+    for (final key in _playHistory) {
+      final track = trackForStoredKey(_library, key);
+      rows.add({
+        'identity': key,
+        'title': track.name,
+        'artist': track.artist,
+        'album': track.album,
+        'path': track.path,
+      });
+    }
+    await FilePicker.saveFile(
+      fileName: 'neonamp-listening-history.json',
+      bytes: Uint8List.fromList(
+        utf8.encode(const JsonEncoder.withIndent('  ').convert(rows)),
+      ),
+      mimeType: 'application/json',
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+  }
+
+  Future<void> _showStorageMaintenance() async {
+    Map<Object?, Object?>? stats;
+    if (Platform.isAndroid) {
+      stats = await const MethodChannel('neonamp/library')
+          .invokeMapMethod<Object?, Object?>('cacheStats');
+    }
+    if (!mounted) return;
+    final bytes = (stats?['bytes'] as num?)?.toInt() ?? 0;
+    final files = (stats?['files'] as num?)?.toInt() ?? 0;
+    String formatBytes(int value) {
+      if (value < 1024) return '$value B';
+      if (value < 1024 * 1024) return '${(value / 1024).toStringAsFixed(1)} KB';
+      return '${(value / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Storage and battery'),
+        content: Text(
+          Platform.isAndroid
+              ? 'Provider cache: $files file(s), ${formatBytes(bytes)}.\n\n'
+                  'The cache is rebuilt when a provider-backed track is played. '
+                  'Clearing it can free storage without removing your library entries.'
+              : 'Local files are played directly. No NeonAmp provider cache is active.',
+        ),
+        actions: [
+          if (Platform.isAndroid)
+            TextButton(
+              onPressed: () async {
+                await const MethodChannel('neonamp/library')
+                    .invokeMethod<int>('clearCache');
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Provider cache cleared.')),
+                  );
+                }
+              },
+              child: const Text('Clear cache'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -9414,6 +9490,14 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(value: 'exportBackup', child: Text('Export backup')),
               PopupMenuItem(value: 'importBackup', child: Text('Import backup')),
+              PopupMenuItem(
+                value: 'exportHistory',
+                child: Text('Export listening history'),
+              ),
+              PopupMenuItem(
+                value: 'storage',
+                child: Text('Storage and battery'),
+              ),
               PopupMenuItem(
                 value: 'sync',
                 child: Text('Sync music to device folder'),
