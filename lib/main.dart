@@ -2140,6 +2140,34 @@ class Track {
   );
 }
 
+class PlaybackBookmark {
+  const PlaybackBookmark({
+    required this.track,
+    required this.position,
+    required this.label,
+  });
+
+  final Track track;
+  final Duration position;
+  final String label;
+
+  Map<String, dynamic> toJson() => {
+    'track': track.toJson(),
+    'positionMs': position.inMilliseconds,
+    'label': label,
+  };
+
+  static PlaybackBookmark fromJson(Map<String, dynamic> json) {
+    final value = json['track'];
+    if (value is! Map) throw const FormatException('Invalid bookmark track.');
+    return PlaybackBookmark(
+      track: Track.fromJson(Map<String, dynamic>.from(value)),
+      position: Duration(milliseconds: (json['positionMs'] as num).toInt()),
+      label: json['label'] as String? ?? 'Saved position',
+    );
+  }
+}
+
 Duration _cueRelativePosition(Track? track, Duration sourcePosition) {
   return cueRelativePosition(sourcePosition, track?.cueStart ?? Duration.zero);
 }
@@ -2824,6 +2852,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _gaplessQueueActive = false;
   final List<Track> _library = [];
   final List<Track> _bookmarks = [];
+  final List<PlaybackBookmark> _positionBookmarks = [];
   final List<String> _playHistory = [];
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
@@ -4059,6 +4088,119 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _savePositionBookmark() async {
+    final track = _current;
+    if (track == null) return;
+    final labelController = TextEditingController(
+      text: '${track.name} · ${_formatDuration(_position)}',
+    );
+    final label = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Save playback bookmark'),
+        content: TextField(
+          controller: labelController,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Bookmark name'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, labelController.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    labelController.dispose();
+    if (!mounted || label == null || label.isEmpty) return;
+    final bookmark = PlaybackBookmark(
+      track: track,
+      position: _position,
+      label: label,
+    );
+    setState(() {
+      _positionBookmarks.removeWhere(
+        (item) =>
+            sameTrackIdentity(item.track, track) && item.position == _position,
+      );
+      _positionBookmarks.insert(0, bookmark);
+      if (_positionBookmarks.length > 100) {
+        _positionBookmarks.removeRange(100, _positionBookmarks.length);
+      }
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _showPositionBookmarks() async {
+    if (_positionBookmarks.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No playback bookmarks saved yet.')),
+        );
+      }
+      return;
+    }
+    final selected = await showDialog<PlaybackBookmark>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Playback bookmarks'),
+        content: SizedBox(
+          width: 560,
+          height: 360,
+          child: ListView.builder(
+            itemCount: _positionBookmarks.length,
+            itemBuilder: (context, index) {
+              final bookmark = _positionBookmarks[index];
+              return ListTile(
+                dense: true,
+                leading: const Icon(Icons.bookmark_added_outlined),
+                title: Text(bookmark.label),
+                subtitle: Text(
+                  '${bookmark.track.artist} · ${_formatDuration(bookmark.position)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: IconButton(
+                  tooltip: 'Delete bookmark',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () async {
+                    setState(() => _positionBookmarks.removeAt(index));
+                    await _saveQueue();
+                    if (mounted && _positionBookmarks.isEmpty) {
+                      Navigator.pop(dialogContext);
+                    }
+                  },
+                ),
+                onTap: () => Navigator.pop(dialogContext, bookmark),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null) return;
+    final index = _queue.indexWhere(
+      (item) => sameTrackIdentity(item, selected.track),
+    );
+    final queueIndex = index >= 0 ? index : _queue.length;
+    if (index < 0) {
+      setState(() => _queue.add(selected.track));
+    }
+    await _select(queueIndex);
+    if (mounted) await _seekCurrent(selected.position);
+  }
+
   String _formatDuration(Duration value) =>
       '${value.inMinutes.remainder(60).toString().padLeft(2, '0')}:${value.inSeconds.remainder(60).toString().padLeft(2, '0')}';
 
@@ -4394,6 +4536,7 @@ class _PlayerPageState extends State<PlayerPage>
     final savedQueueHistory = prefs.getString('queueHistory');
     final savedLibrary = prefs.getStringList('library') ?? [];
     final savedBookmarks = prefs.getString('bookmarks');
+    final savedPositionBookmarks = prefs.getString('positionBookmarks');
     final savedPlayHistory = prefs.getStringList('playHistory') ?? [];
     final savedResumePositions = prefs.getString('resumePositions');
     final savedFolders = prefs.getStringList('libraryFolders') ?? [];
@@ -4479,6 +4622,27 @@ class _PlayerPageState extends State<PlayerPage>
             );
           }),
         );
+      }
+      if (savedPositionBookmarks != null) {
+        try {
+          final decoded = jsonDecode(savedPositionBookmarks);
+          if (decoded is List) {
+            for (final value in decoded) {
+              try {
+                if (value is! Map) continue;
+                final bookmark = PlaybackBookmark.fromJson(
+                  Map<String, dynamic>.from(value),
+                );
+                if (bookmark.position.isNegative) continue;
+                _positionBookmarks.add(bookmark);
+              } on Object catch (error) {
+                debugPrint('Skipping invalid position bookmark: $error');
+              }
+            }
+          }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid position bookmarks: $error');
+        }
       }
       if (savedQueueHistory != null) {
         try {
@@ -4814,6 +4978,10 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _showPlaybackSpeed();
       case 'abLoop':
         operation = _showAbLoop();
+      case 'saveBookmark':
+        operation = _savePositionBookmark();
+      case 'positionBookmarks':
+        operation = _showPositionBookmarks();
       case 'layout':
         operation = _showPlayerLayout();
       case 'theme':
@@ -4862,6 +5030,9 @@ class _PlayerPageState extends State<PlayerPage>
         .map((track) => jsonEncode(track.toJson()))
         .toList();
     final bookmarks = _bookmarks.map((track) => track.toJson()).toList();
+    final positionBookmarks = _positionBookmarks
+        .map((bookmark) => bookmark.toJson())
+        .toList();
     final playHistory = List<String>.of(_playHistory);
     final resumePositions = Map<String, int>.of(_resumePositions);
     final libraryFolders = List<String>.of(_libraryFolders);
@@ -4913,6 +5084,7 @@ class _PlayerPageState extends State<PlayerPage>
       prefs.setString('queueHistory', jsonEncode(queueHistory)),
       prefs.setStringList('library', libraryTracks),
       prefs.setString('bookmarks', jsonEncode(bookmarks)),
+      prefs.setString('positionBookmarks', jsonEncode(positionBookmarks)),
       prefs.setStringList('playHistory', playHistory),
       prefs.setString('resumePositions', jsonEncode(resumePositions)),
       prefs.setStringList('libraryFolders', libraryFolders),
@@ -5800,6 +5972,7 @@ class _PlayerPageState extends State<PlayerPage>
         _queue.clear();
         _library.clear();
         _bookmarks.clear();
+        _positionBookmarks.clear();
         _playHistory.clear();
         _resumePositions.clear();
         _libraryFolders.clear();
@@ -11089,6 +11262,14 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'eq', child: Text('Equalizer')),
               PopupMenuItem(value: 'speed', child: Text('Playback speed')),
               PopupMenuItem(value: 'abLoop', child: Text('A/B loop')),
+              PopupMenuItem(
+                value: 'saveBookmark',
+                child: Text('Save playback bookmark'),
+              ),
+              PopupMenuItem(
+                value: 'positionBookmarks',
+                child: Text('Playback bookmarks'),
+              ),
               PopupMenuItem(
                 value: 'layout',
                 child: Text('Customize player controls'),

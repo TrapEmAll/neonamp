@@ -1727,6 +1727,18 @@ FILE "disc image.flac" WAVE
     expect(restored.cueEndMs, 422000);
   });
 
+  test('playback bookmarks round-trip track and resume position', () {
+    final bookmark = PlaybackBookmark(
+      track: Track(path: 'song.flac', name: 'Song', artist: 'Artist'),
+      position: Duration(seconds: 42),
+      label: 'Chorus',
+    );
+    final restored = PlaybackBookmark.fromJson(bookmark.toJson());
+    expect(restored.track.identityKey, bookmark.track.identityKey);
+    expect(restored.position, const Duration(seconds: 42));
+    expect(restored.label, 'Chorus');
+  });
+
   test('skin packages round-trip through JSON', () {
     const original = ThemeSkin(
       name: 'Midnight Citrus',
