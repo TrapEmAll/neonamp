@@ -2705,6 +2705,9 @@ class _PlayerPageState extends State<PlayerPage>
   final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
+  bool _gaplessEnabled = true;
+  Timer? _gaplessStateTimer;
+  bool _gaplessQueueActive = false;
   final List<Track> _library = [];
   final List<Track> _bookmarks = [];
   final List<String> _playHistory = [];
@@ -2812,6 +2815,10 @@ class _PlayerPageState extends State<PlayerPage>
       await _dlnaCast.setVolume(volume);
     } else if (_dspActive) {
       await _dspPlayer.setVolume(volume);
+    } else if (_gaplessQueueActive) {
+      await const MethodChannel('neonamp/gapless').invokeMethod<void>('setVolume', {
+        'volume': volume,
+      });
     } else if (!_midiActive) {
       await _player.setVolume(volume);
     }
@@ -2838,11 +2845,98 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void initState() {
     super.initState();
+    _initializeGaplessPlayback();
     _bindPlayerStreams();
     _bindDspStreams();
     _bindMidiStreams();
     _initializeWindowsMediaKeys();
     _initializeAppState();
+  }
+
+  void _initializeGaplessPlayback() {
+    if (!Platform.isAndroid) return;
+    const channel = MethodChannel('neonamp/gapless');
+    channel.setMethodCallHandler((call) async {
+      if (call.method == 'stateChanged' && call.arguments is Map) {
+        await _handleGaplessState(
+          Map<Object?, Object?>.from(call.arguments as Map),
+        );
+      }
+      return null;
+    });
+    _gaplessStateTimer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (_gaplessQueueActive) {
+        _runAsyncSafely(_pollGaplessState(), 'Updating gapless playback state');
+      }
+    });
+  }
+
+  Future<void> _pollGaplessState() async {
+    if (!Platform.isAndroid || !_gaplessQueueActive) return;
+    final state = await const MethodChannel('neonamp/gapless')
+        .invokeMapMethod<Object?, Object?>('state');
+    if (state != null) await _handleGaplessState(state);
+  }
+
+  Future<void> _handleGaplessState(Map<Object?, Object?> state) async {
+    if (!mounted || !_gaplessQueueActive) return;
+    final index = (state['index'] as num?)?.toInt() ?? -1;
+    if (index >= 0 && index < _queue.length && index != _selected && !_selectionInProgress) {
+      final track = _queue[index];
+      setState(() {
+        _selected = index;
+        _position = Duration.zero;
+        _duration = Duration.zero;
+        _playbackTrackIdentity = track.identityKey;
+        _trackStartedAt = DateTime.now();
+        _playHistory
+          ..clear()
+          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+      });
+      _audioHandler?.publishTrack(track);
+      await _saveQueue();
+      unawaited(_syncAndroidWidget());
+    }
+    final position = Duration(milliseconds: ((state['positionMs'] as num?)?.toInt() ?? 0));
+    final duration = Duration(milliseconds: ((state['durationMs'] as num?)?.toInt() ?? 0));
+    final playing = state['playing'] == true;
+    final playbackState = (state['playbackState'] as num?)?.toInt();
+    setState(() {
+      _position = position;
+      _duration = duration;
+      _playerState = playing
+          ? PlayerState.playing
+          : playbackState == 4
+          ? PlayerState.completed
+          : PlayerState.paused;
+    });
+    _audioHandler?.syncExternalState(
+      position: position,
+      duration: duration,
+      state: _playerState,
+    );
+    if (playbackState == 4 && index == _queue.length - 1) {
+      await _handleCompletionSafely();
+    }
+  }
+
+  Future<void> _playGaplessQueue(int index) async {
+    final paths = <String>[];
+    for (final track in _queue) {
+      paths.add(await _playbackSourcePath(track));
+    }
+    await const MethodChannel('neonamp/gapless').invokeMethod<void>('setQueue', {
+      'paths': paths,
+      'index': index,
+      'play': true,
+    });
+    await const MethodChannel('neonamp/gapless').invokeMethod<void>('setVolume', {
+      'volume': _volumeFor(_queue[index]),
+    });
+    await const MethodChannel('neonamp/gapless').invokeMethod<void>('setSpeed', {
+      'speed': _playbackSpeed,
+    });
+    _gaplessQueueActive = true;
   }
 
   Future<void> _initializeAppState() async {
@@ -3598,6 +3692,10 @@ class _PlayerPageState extends State<PlayerPage>
       }
       return;
     }
+    if (_gaplessQueueActive) {
+      await const MethodChannel('neonamp/gapless').invokeMethod<void>('play');
+      return;
+    }
     if (_playerState == PlayerState.stopped ||
         _playerState == PlayerState.completed) {
       await _select(_selected);
@@ -3628,6 +3726,10 @@ class _PlayerPageState extends State<PlayerPage>
         setState(() => _playerState = PlayerState.paused);
         unawaited(_syncAndroidWidget());
       }
+      return;
+    }
+    if (_gaplessQueueActive) {
+      await const MethodChannel('neonamp/gapless').invokeMethod<void>('pause');
       return;
     }
     if (_midiActive) {
@@ -3672,6 +3774,18 @@ class _PlayerPageState extends State<PlayerPage>
       }
       return;
     }
+    if (_gaplessQueueActive) {
+      await const MethodChannel('neonamp/gapless').invokeMethod<void>('stop');
+      _gaplessQueueActive = false;
+      if (mounted && identity == _current?.identityKey) {
+        setState(() {
+          _playerState = PlayerState.stopped;
+          _position = Duration.zero;
+        });
+        unawaited(_syncAndroidWidget());
+      }
+      return;
+    }
     if (_midiActive) {
       await _midiPlayer.stop();
     } else if (_dspActive) {
@@ -3709,6 +3823,15 @@ class _PlayerPageState extends State<PlayerPage>
     final sourcePosition = _current == null
         ? clampedPosition
         : clampedPosition + _current!.cueStart;
+    if (_gaplessQueueActive) {
+      await const MethodChannel('neonamp/gapless').invokeMethod<void>('seek', {
+        'positionMs': clampedPosition.inMilliseconds,
+      });
+      if (mounted && identity == _current?.identityKey) {
+        setState(() => _position = clampedPosition);
+      }
+      return;
+    }
     if (_midiActive) {
       await _midiPlayer.seek(clampedPosition);
     } else if (_dspActive) {
@@ -3875,6 +3998,10 @@ class _PlayerPageState extends State<PlayerPage>
         await _dspPlayer.setPlaybackSpeed(value);
       } else if (_midiActive) {
         await _midiPlayer.setPlaybackSpeed(value);
+      } else if (_gaplessQueueActive) {
+        await const MethodChannel('neonamp/gapless').invokeMethod<void>('setSpeed', {
+          'speed': value,
+        });
       } else {
         await _player.setPlaybackRate(value);
       }
@@ -4329,6 +4456,7 @@ class _PlayerPageState extends State<PlayerPage>
             'replayGainEnabled',
             false,
           );
+          _gaplessEnabled = storedBool(settings, 'gaplessEnabled', true);
           _notificationSkipControls = storedBool(
             settings,
             'notificationSkipControls',
@@ -4550,6 +4678,7 @@ class _PlayerPageState extends State<PlayerPage>
       'eqBands': List<double>.of(_eqBands),
       'playbackSpeed': _playbackSpeed,
       'replayGainEnabled': _replayGainEnabled,
+      'gaplessEnabled': _gaplessEnabled,
       'notificationSkipControls': _notificationSkipControls,
       'scrobblingEnabled': _scrobblingEnabled,
       'scrobbleToken': _scrobbleToken,
@@ -6088,7 +6217,65 @@ class _PlayerPageState extends State<PlayerPage>
           !isUriMediaPath(sourcePath) &&
           !isMidiFilePath(track.path) &&
           (_equalizerEnabled || isTrackerModulePath(track.path));
-      if (Platform.isWindows && isMidiFilePath(track.path)) {
+      final useGapless = Platform.isAndroid &&
+          _gaplessEnabled &&
+          !shouldUseDsp &&
+          track.cueStartMs == null &&
+          !isMidiFilePath(track.path);
+      if (useGapless) {
+        await _playGaplessQueue(index);
+        _audioHandler?.publishTrack(track);
+      } else if (_gaplessQueueActive) {
+        await const MethodChannel('neonamp/gapless').invokeMethod<void>('stop');
+        _gaplessQueueActive = false;
+        if (Platform.isWindows && isMidiFilePath(track.path)) {
+          if (_dspActive) {
+            await _dspPlayer.stop();
+            _dspActive = false;
+          }
+          if (!_midiActive) await _player.stop();
+          _midiActive = true;
+          await _midiPlayer.play(track.path, playbackSpeed: _playbackSpeed);
+          _audioHandler?.publishTrack(track);
+        } else if (shouldUseDsp) {
+          if (_midiActive) {
+            await _midiPlayer.stop();
+            _midiActive = false;
+          }
+          if (!_dspActive) {
+            await _player.stop();
+            _dspActive = true;
+          }
+          try {
+            await _dspPlayer.play(
+              sourcePath,
+              volume: trackVolume,
+              playbackSpeed: _playbackSpeed,
+              equalizerEnabled: _equalizerEnabled,
+              bands: _eqBands,
+              balance: _balance,
+            );
+            _audioHandler?.publishTrack(track);
+          } on Object catch (error) {
+            debugPrint(
+              'DSP playback unavailable; falling back to standard player: $error',
+            );
+            await _dspPlayer.stop();
+            _dspActive = false;
+            await _playStandardTrack(track, sourcePath: sourcePath);
+          }
+        } else {
+          if (_midiActive) {
+            await _midiPlayer.stop();
+            _midiActive = false;
+          }
+          if (_dspActive) {
+            await _dspPlayer.stop();
+            _dspActive = false;
+          }
+          await _playStandardTrack(track, sourcePath: sourcePath);
+        }
+      } else if (Platform.isWindows && isMidiFilePath(track.path)) {
         if (_dspActive) {
           await _dspPlayer.stop();
           _dspActive = false;
@@ -6232,6 +6419,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _next({bool useCrossfade = true}) async {
     if (_queue.isEmpty || _crossfadeInProgress) return;
+    if (_gaplessQueueActive) {
+      await const MethodChannel('neonamp/gapless').invokeMethod<void>('next');
+      return;
+    }
     final next = _targetNextIndex();
     final cueTransition =
         _current?.cueStartMs != null || _queue[next].cueStartMs != null;
@@ -6479,6 +6670,10 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _previous() async {
     if (_queue.isEmpty) return;
     if (_position.inSeconds > 3) return _seekCurrent(Duration.zero);
+    if (_gaplessQueueActive) {
+      await const MethodChannel('neonamp/gapless').invokeMethod<void>('previous');
+      return;
+    }
     await _select((_selected - 1 + _queue.length) % _queue.length);
   }
 
@@ -9039,6 +9234,22 @@ class _PlayerPageState extends State<PlayerPage>
                     const Text('12s'),
                   ],
                 ),
+              if (Platform.isAndroid)
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('True gapless playback'),
+                  subtitle: const Text('Use Android’s queued decoder for uninterrupted albums'),
+                  value: _gaplessEnabled,
+                  onChanged: (value) {
+                    if (!mounted) return;
+                    setState(() => _gaplessEnabled = value);
+                    if (!value && _gaplessQueueActive) {
+                      _runAsyncSafely(_stopCurrent(), 'Stopping gapless playback');
+                    }
+                    _saveQueueSafely();
+                    setDialogState(() {});
+                  },
+                ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('ReplayGain normalization'),
@@ -9809,6 +10020,7 @@ class _PlayerPageState extends State<PlayerPage>
     }
     _runAsyncSafely(_dlnaCast.dispose(), 'Disposing DLNA cast');
     _castPositionTimer?.cancel();
+    _gaplessStateTimer?.cancel();
     _sleepTimer?.cancel();
     _resumeSaveTimer?.cancel();
     _positionSub?.cancel();

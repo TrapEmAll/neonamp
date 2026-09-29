@@ -31,6 +31,11 @@ import com.google.android.gms.cast.MediaSeekOptions
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 
 class MainActivity : AudioServiceActivity() {
     private val converterChannel = "neonamp/converter"
@@ -45,6 +50,8 @@ class MainActivity : AudioServiceActivity() {
     private var pendingMediaIntent: Map<String, String>? = null
     private var castContext: CastContext? = null
     private var pendingCastMedia: Map<String, Any?>? = null
+    private var gaplessPlayer: ExoPlayer? = null
+    private var gaplessChannel: MethodChannel? = null
 
     private val castSessionListener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarting(session: CastSession) = Unit
@@ -72,6 +79,66 @@ class MainActivity : AudioServiceActivity() {
 
     private external fun nativeReadTrackerInfo(inputPath: String): Array<String>?
     private external fun nativeRenderTrackerToWav(inputPath: String, outputPath: String): Boolean
+
+    private fun configureGaplessQueue(paths: List<String>, startIndex: Int, shouldPlay: Boolean) {
+        if (paths.isEmpty()) return
+        gaplessPlayer?.release()
+        val player = ExoPlayer.Builder(this).build()
+        player.setAudioAttributes(
+            AudioAttributes.Builder()
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .setUsage(C.USAGE_MEDIA)
+                .build(),
+            true,
+        )
+        player.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                emitGaplessState()
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                emitGaplessState()
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                emitGaplessState()
+            }
+        })
+        player.setMediaItems(
+            paths.map { path -> MediaItem.fromUri(gaplessUri(path)) },
+            startIndex.coerceIn(0, paths.lastIndex),
+            0L,
+        )
+        player.prepare()
+        gaplessPlayer = player
+        if (shouldPlay) player.play()
+        emitGaplessState()
+    }
+
+    private fun gaplessUri(path: String): Uri {
+        return if (path.startsWith("content:") || path.startsWith("http:")) {
+            Uri.parse(path)
+        } else if (path.startsWith("https:")) {
+            Uri.parse(path)
+        } else {
+            Uri.fromFile(File(path))
+        }
+    }
+
+    private fun gaplessState(): Map<String, Any?> {
+        val player = gaplessPlayer
+        return mapOf(
+            "index" to (player?.currentMediaItemIndex ?: C.INDEX_UNSET),
+            "positionMs" to (player?.currentPosition ?: 0L),
+            "durationMs" to (player?.duration ?: 0L).coerceAtLeast(0L),
+            "playing" to (player?.isPlaying == true),
+            "playbackState" to (player?.playbackState ?: Player.STATE_IDLE),
+        )
+    }
+
+    private fun emitGaplessState() {
+        gaplessChannel?.invokeMethod("stateChanged", gaplessState())
+    }
 
     companion object {
         init {
@@ -102,6 +169,52 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+        gaplessChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/gapless")
+        gaplessChannel?.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setQueue" -> {
+                    val paths = call.argument<List<String>>("paths") ?: emptyList()
+                    val startIndex = call.argument<Int>("index") ?: 0
+                    val shouldPlay = call.argument<Boolean>("play") ?: true
+                    configureGaplessQueue(paths, startIndex, shouldPlay)
+                    result.success(null)
+                }
+                "play" -> {
+                    gaplessPlayer?.play()
+                    result.success(null)
+                }
+                "pause" -> {
+                    gaplessPlayer?.pause()
+                    result.success(null)
+                }
+                "stop" -> {
+                    gaplessPlayer?.stop()
+                    result.success(null)
+                }
+                "next" -> {
+                    gaplessPlayer?.seekToNextMediaItem()
+                    result.success(null)
+                }
+                "previous" -> {
+                    gaplessPlayer?.seekToPreviousMediaItem()
+                    result.success(null)
+                }
+                "seek" -> {
+                    gaplessPlayer?.seekTo(call.argument<Number>("positionMs")?.toLong() ?: 0L)
+                    result.success(null)
+                }
+                "setSpeed" -> {
+                    gaplessPlayer?.setPlaybackSpeed(call.argument<Number>("speed")?.toFloat() ?: 1f)
+                    result.success(null)
+                }
+                "setVolume" -> {
+                    gaplessPlayer?.volume = call.argument<Number>("volume")?.toFloat() ?: 1f
+                    result.success(null)
+                }
+                "state" -> result.success(gaplessState())
+                else -> result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/widget")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -1088,6 +1201,8 @@ class MainActivity : AudioServiceActivity() {
     }
 
     override fun onDestroy() {
+        gaplessPlayer?.release()
+        gaplessPlayer = null
         folderPickerResult?.error("activity_destroyed", "The folder picker was closed.", null)
         folderPickerResult = null
         nearbyPermissionResult?.error("activity_destroyed", "The activity was closed.", null)
