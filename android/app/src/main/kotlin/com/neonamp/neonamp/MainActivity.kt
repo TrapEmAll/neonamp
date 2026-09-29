@@ -2,6 +2,7 @@ package com.neonamp.neonamp
 
 import android.Manifest
 import android.content.Intent
+import android.content.ContentUris
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.media.MediaCodec
@@ -781,6 +782,7 @@ class MainActivity : AudioServiceActivity() {
             try {
                 val projection = arrayOf(
                     MediaStore.Audio.Media._ID,
+                    MediaStore.Audio.Media.ALBUM_ID,
                     MediaStore.Audio.Media.DISPLAY_NAME,
                     MediaStore.Audio.Media.TITLE,
                     MediaStore.Audio.Media.ARTIST,
@@ -792,6 +794,7 @@ class MainActivity : AudioServiceActivity() {
                         MediaStore.Audio.Media.RELATIVE_PATH else MediaStore.Audio.Media.DATA,
                 )
                 val results = mutableListOf<Map<String, Any?>>()
+                val artworkCache = mutableMapOf<Long, ByteArray?>()
                 contentResolver.query(
                     MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                     projection,
@@ -800,6 +803,7 @@ class MainActivity : AudioServiceActivity() {
                     "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC",
                 )?.use { cursor ->
                     val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                    val albumIdColumn = cursor.getColumnIndex(MediaStore.Audio.Media.ALBUM_ID)
                     val nameColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DISPLAY_NAME)
                     val titleColumn = cursor.getColumnIndex(MediaStore.Audio.Media.TITLE)
                     val artistColumn = cursor.getColumnIndex(MediaStore.Audio.Media.ARTIST)
@@ -810,6 +814,11 @@ class MainActivity : AudioServiceActivity() {
                     val locationColumn = cursor.getColumnIndex(projection.last())
                     while (cursor.moveToNext()) {
                         val id = cursor.getLong(idColumn)
+                        val albumId = if (albumIdColumn >= 0 && !cursor.isNull(albumIdColumn)) {
+                            cursor.getLong(albumIdColumn)
+                        } else {
+                            -1L
+                        }
                         val uri = Uri.withAppendedPath(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id.toString())
                         val name = if (nameColumn >= 0) cursor.getString(nameColumn).orEmpty() else ""
                         val title = if (titleColumn >= 0) cursor.getString(titleColumn).orEmpty() else ""
@@ -824,6 +833,17 @@ class MainActivity : AudioServiceActivity() {
                                 "size" to (if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) cursor.getLong(sizeColumn) else 0L),
                                 "mimeType" to (if (mimeColumn >= 0) cursor.getString(mimeColumn).orEmpty() else ""),
                                 "relativePath" to (if (locationColumn >= 0) cursor.getString(locationColumn).orEmpty() else ""),
+                                "artwork" to if (albumId >= 0L) {
+                                    if (artworkCache.containsKey(albumId)) {
+                                        artworkCache[albumId]
+                                    } else {
+                                        readMediaStoreAlbumArtwork(albumId).also {
+                                            artworkCache[albumId] = it
+                                        }
+                                    }
+                                } else {
+                                    null
+                                },
                             ),
                         )
                     }
@@ -833,6 +853,30 @@ class MainActivity : AudioServiceActivity() {
                 runOnUiThread { result.error("media_store_scan_failed", error.message, null) }
             }
         }.start()
+    }
+
+    private fun readMediaStoreAlbumArtwork(albumId: Long): ByteArray? {
+        val albumUri = ContentUris.withAppendedId(
+            MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI,
+            albumId,
+        )
+        return try {
+            contentResolver.query(
+                albumUri,
+                arrayOf(MediaStore.Audio.Albums.ALBUM_ART),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                val path = cursor.getString(0)?.takeIf { it.isNotBlank() } ?: return@use null
+                val file = File(path)
+                if (!file.isFile || file.length() > 8L * 1024L * 1024L) return@use null
+                file.inputStream().use { input -> readBoundedBytes(input, 8 * 1024 * 1024) }
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun isTreeUri(uri: Uri): Boolean =

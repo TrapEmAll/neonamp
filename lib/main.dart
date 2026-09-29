@@ -5529,12 +5529,16 @@ class _PlayerPageState extends State<PlayerPage>
         }
         final title = item['title'] as String?;
         final name = item['name'] as String?;
+        final artwork = item['artwork'] is Uint8List
+            ? item['artwork'] as Uint8List
+            : null;
         _library.add(
           Track(
             path: path,
             name: valueOr(name, valueOr(title, 'Unknown audio')),
             artist: valueOr(item['artist'] as String?, 'Local library'),
             album: valueOr(item['album'] as String?, 'Unknown album'),
+            artwork: artwork,
           ),
         );
         added++;
