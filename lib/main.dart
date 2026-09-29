@@ -28,6 +28,7 @@ import 'tracker_modules.dart';
 import 'windows_midi_player.dart';
 import 'equalizer_presets.dart';
 import 'playlist_library_resolution.dart';
+import 'webdav_library.dart';
 
 const supportedVideoExtensions = {
   'avi',
@@ -4128,6 +4129,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _addFolder();
       case 'deviceLibrary':
         operation = _scanDeviceLibrary();
+      case 'webdav':
+        operation = _addWebDavLibrary();
       case 'cleanLibrary':
         operation = _cleanLibraryEntries();
       case 'exportBackup':
@@ -4424,6 +4427,99 @@ class _PlayerPageState extends State<PlayerPage>
           SnackBar(content: Text('Could not scan device music: $error')),
         );
       }
+    }
+  }
+
+  Future<void> _addWebDavLibrary() async {
+    final urlController = TextEditingController();
+    final userController = TextEditingController();
+    final passwordController = TextEditingController();
+    final values = await showDialog<List<String>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Add WebDAV library'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: urlController,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'WebDAV folder URL',
+                  hintText: 'https://cloud.example/music/',
+                ),
+              ),
+              TextField(
+                controller: userController,
+                decoration: const InputDecoration(labelText: 'Username (optional)'),
+              ),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'Password (optional)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, [
+              urlController.text.trim(),
+              userController.text,
+              passwordController.text,
+            ]),
+            child: const Text('Browse'),
+          ),
+        ],
+      ),
+    );
+    urlController.dispose();
+    userController.dispose();
+    passwordController.dispose();
+    if (!mounted || values == null || values.isEmpty) return;
+    final folder = Uri.tryParse(values[0]);
+    if (folder == null || (folder.scheme != 'http' && folder.scheme != 'https')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid HTTP(S) WebDAV folder URL.')),
+      );
+      return;
+    }
+    final client = WebDavLibraryClient();
+    try {
+      final entries = await client.list(
+        folder,
+        username: values.length > 1 ? values[1] : null,
+        password: values.length > 2 ? values[2] : null,
+      );
+      final audio = entries.where((entry) {
+        if (entry.isDirectory) return false;
+        return isSupportedLibraryAudioPath(entry.name) ||
+            entry.contentType?.startsWith('audio/') == true;
+      });
+      var added = 0;
+      setState(() {
+        for (final entry in audio) {
+          if (_library.any((track) => sameTrackPath(track.path, entry.url))) continue;
+          _library.add(Track(path: entry.url, name: entry.name, artist: 'WebDAV library'));
+          added++;
+        }
+      });
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Added $added WebDAV track(s) to the library.')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not browse WebDAV library: $error')),
+        );
+      }
+    } finally {
+      client.close();
     }
   }
 
@@ -9245,6 +9341,10 @@ class _PlayerPageState extends State<PlayerPage>
                   value: 'deviceLibrary',
                   child: Text('Scan all device music'),
                 ),
+              PopupMenuItem(
+                value: 'webdav',
+                child: Text('Add WebDAV network library'),
+              ),
               PopupMenuItem(
                 value: 'rescan',
                 child: Text('Rescan library folders'),
