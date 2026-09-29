@@ -60,6 +60,40 @@ class WebDavLibraryClient {
     return _parseResponse(body, folder);
   }
 
+  Future<List<WebDavEntry>> listRecursive(
+    Uri folder, {
+    String? username,
+    String? password,
+    int maxDepth = 12,
+  }) async {
+    if (maxDepth < 0) {
+      throw ArgumentError.value(maxDepth, 'maxDepth');
+    }
+    final root = folder;
+    final pending = <({Uri uri, int depth})>[(uri: folder, depth: 0)];
+    final visited = <String>{};
+    final entries = <WebDavEntry>[];
+    while (pending.isNotEmpty) {
+      final current = pending.removeAt(0);
+      final key = current.uri.normalizePath().toString();
+      if (!visited.add(key)) continue;
+      final children = await list(
+        current.uri,
+        username: username,
+        password: password,
+      );
+      for (final entry in children) {
+        final entryUri = Uri.tryParse(entry.url);
+        if (entryUri == null || !_sameOrigin(entryUri, root)) continue;
+        entries.add(entry);
+        if (entry.isDirectory && current.depth < maxDepth) {
+          pending.add((uri: entryUri, depth: current.depth + 1));
+        }
+      }
+    }
+    return entries;
+  }
+
   List<WebDavEntry> _parseResponse(String body, Uri base) {
     final document = XmlDocument.parse(body);
     final entries = <WebDavEntry>[];
@@ -110,6 +144,11 @@ class WebDavLibraryClient {
   bool _sameUrl(String left, String right) =>
       Uri.parse(left).normalizePath().toString() ==
       Uri.parse(right).normalizePath().toString();
+
+  bool _sameOrigin(Uri left, Uri right) =>
+      left.scheme.toLowerCase() == right.scheme.toLowerCase() &&
+      left.host.toLowerCase() == right.host.toLowerCase() &&
+      left.port == right.port;
 
   void close() => _client.close(force: true);
 }

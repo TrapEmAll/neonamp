@@ -5241,7 +5241,7 @@ class _PlayerPageState extends State<PlayerPage>
     }
     final client = WebDavLibraryClient();
     try {
-      final entries = await client.list(
+      final entries = await client.listRecursive(
         folder,
         username: values.length > 1 ? values[1] : null,
         password: values.length > 2 ? values[2] : null,
