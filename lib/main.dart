@@ -5982,6 +5982,42 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<int> _clearOfflineDownloads() async {
+    final support = await getApplicationSupportDirectory();
+    final offline = Directory(
+      '${support.path}${Platform.pathSeparator}offline',
+    );
+    final prefix = '${offline.path}${Platform.pathSeparator}';
+    final removedIdentities = _library
+        .where((track) => track.path.startsWith(prefix))
+        .map((track) => track.identityKey)
+        .toSet();
+    if (_current?.path.startsWith(prefix) == true) await _stopCurrent();
+    if (await offline.exists()) await offline.delete(recursive: true);
+    if (!mounted) return removedIdentities.length;
+    setState(() {
+      _library.removeWhere((track) => removedIdentities.contains(track.identityKey));
+      _queue.removeWhere((track) => removedIdentities.contains(track.identityKey));
+      _bookmarks.removeWhere((track) => removedIdentities.contains(track.identityKey));
+      _selectedLibraryPaths.removeWhere(removedIdentities.contains);
+    });
+    await _saveQueue();
+    return removedIdentities.length;
+  }
+
+  Future<({int files, int bytes})> _offlineDownloadStats() async {
+    final support = await getApplicationSupportDirectory();
+    final offline = Directory(
+      '${support.path}${Platform.pathSeparator}offline',
+    );
+    if (!await offline.exists()) return (files: 0, bytes: 0);
+    final files = offline.listSync().whereType<File>().toList();
+    return (
+      files: files.length,
+      bytes: files.fold<int>(0, (total, file) => total + file.lengthSync()),
+    );
+  }
+
   Future<void> _showStorageMaintenance() async {
     Map<Object?, Object?>? stats;
     Map<Object?, Object?>? battery;
@@ -5991,6 +6027,7 @@ class _PlayerPageState extends State<PlayerPage>
       battery = await const MethodChannel('neonamp/audio_output')
           .invokeMapMethod<Object?, Object?>('batteryState');
     }
+    final offlineStats = await _offlineDownloadStats();
     if (!mounted) return;
     final bytes = (stats?['bytes'] as num?)?.toInt() ?? 0;
     final files = (stats?['files'] as num?)?.toInt() ?? 0;
@@ -6024,6 +6061,7 @@ class _PlayerPageState extends State<PlayerPage>
                         'Clearing it can free storage without removing your library entries.\n\n'
                         'Background playback optimization: '
                         '${battery?['ignoringOptimizations'] == true ? 'disabled for NeonAmp' : 'may pause playback'}.'
+                        '\n\nOffline downloads: ${offlineStats.files} file(s), ${formatBytes(offlineStats.bytes)}.'
                     : 'Local files are played directly. No NeonAmp provider cache is active.',
               ),
               if (Platform.isAndroid) ...[
@@ -6090,6 +6128,18 @@ class _PlayerPageState extends State<PlayerPage>
               if (dialogContext.mounted) Navigator.pop(dialogContext);
             },
             child: const Text('Clear artwork cache'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final removed = await _clearOfflineDownloads();
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Removed $removed offline download(s).')),
+                );
+              }
+            },
+            child: const Text('Clear offline downloads'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
