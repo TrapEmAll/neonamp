@@ -48,6 +48,10 @@ dependencies:
   video_player_win: ^3.3.0
   xml: ^7.0.1
   upnp_client: ^1.5.0
+  dart_cast:
+    path: third_party/dart_cast
+  multicast_dns: ^0.3.2+6
+  protobuf: ^6.1.0
 
 dev_dependencies:
   flutter_test:
