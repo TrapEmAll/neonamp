@@ -2388,6 +2388,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<List<MediaItem>> Function(String parentMediaId)? onBrowseChildren;
   Future<void> Function(String mediaId)? onPlayMediaId;
   Future<List<MediaItem>> Function(String query)? onSearchRequested;
+  Future<void> Function(MediaItem item)? onAddQueueItemRequested;
+  Future<void> Function(MediaItem item)? onRemoveQueueItemRequested;
+  Future<void> Function(int index)? onSkipToQueueItemRequested;
   bool showSkipControls = true;
   bool showSeekControls = false;
   bool showArtwork = true;
@@ -2586,6 +2589,21 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     String query, [Map<String, dynamic>? extras]
   ) async =>
       onSearchRequested?.call(query) ?? const <MediaItem>[];
+
+  @override
+  Future<void> addQueueItem(MediaItem mediaItem) async {
+    await onAddQueueItemRequested?.call(mediaItem);
+  }
+
+  @override
+  Future<void> removeQueueItem(MediaItem mediaItem) async {
+    await onRemoveQueueItemRequested?.call(mediaItem);
+  }
+
+  @override
+  Future<void> skipToQueueItem(int index) async {
+    await onSkipToQueueItemRequested?.call(index);
+  }
 
   @override
   Future<void> seek(Duration position) {
@@ -3145,6 +3163,41 @@ class _PlayerPageState extends State<PlayerPage>
     handler.onBrowseChildren = _androidAutoChildren;
     handler.onPlayMediaId = _playAndroidAutoMedia;
     handler.onSearchRequested = _searchAndroidAutoMedia;
+    handler.onAddQueueItemRequested = _addAndroidAutoQueueItem;
+    handler.onRemoveQueueItemRequested = _removeAndroidAutoQueueItem;
+    handler.onSkipToQueueItemRequested = _skipToAndroidAutoQueueItem;
+  }
+
+  Track? _trackForAndroidAutoItem(MediaItem item) {
+    for (final track in _library) {
+      if (track.identityKey == item.id) return track;
+    }
+    final path = item.extras?['path'] as String?;
+    if (path == null || path.trim().isEmpty) return null;
+    return Track(
+      path: normalizeLocalMediaPath(path),
+      name: item.title.trim().isEmpty ? 'Android Auto track' : item.title,
+      artist: item.artist ?? 'Local library',
+      album: item.album ?? 'Unknown album',
+    );
+  }
+
+  Future<void> _addAndroidAutoQueueItem(MediaItem item) async {
+    final track = _trackForAndroidAutoItem(item);
+    if (track == null || !mounted) return;
+    setState(() => _queue.add(track));
+    await _saveQueue();
+  }
+
+  Future<void> _removeAndroidAutoQueueItem(MediaItem item) async {
+    if (!mounted) return;
+    final index = _queue.indexWhere((track) => track.identityKey == item.id);
+    if (index >= 0) await _remove(index);
+  }
+
+  Future<void> _skipToAndroidAutoQueueItem(int index) async {
+    if (!mounted || index < 0 || index >= _queue.length) return;
+    await _select(index);
   }
 
   MediaItem _androidAutoTrack(Track track) => MediaItem(
