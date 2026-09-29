@@ -1112,7 +1112,6 @@ class MainActivity : AudioServiceActivity() {
                     } else {
                         0L
                     }
-                    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                     // Directory names are not required to be extensionless. Some
                     // providers also report folders as application/octet-stream,
                     // so honor the directory flag first and probe generic entries
@@ -1122,6 +1121,7 @@ class MainActivity : AudioServiceActivity() {
                         (flags and DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE.toLong()) != 0L ||
                         (mimeType.isEmpty() || mimeType == "application/octet-stream") &&
                             hasChildDocuments(treeUri, documentId)
+                    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                     if (isDirectory) {
                         pending.add(documentId)
                         continue
