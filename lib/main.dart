@@ -2974,6 +2974,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<Track> _bookmarks = [];
   final List<PlaybackBookmark> _positionBookmarks = [];
   final List<String> _playHistory = [];
+  final Map<String, int> _playHistoryTimes = {};
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
   final Map<String, String> _libraryRelativePaths = {};
@@ -3074,6 +3075,17 @@ class _PlayerPageState extends State<PlayerPage>
   Track? get _current =>
       _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
   bool get _isPlaying => _playerState == PlayerState.playing;
+
+  void _recordPlayHistory(String identity) {
+    final updated = addToPlayHistory(_playHistory, identity);
+    _playHistory
+      ..clear()
+      ..addAll(updated);
+    _playHistoryTimes[identity] = DateTime.now().toUtc().millisecondsSinceEpoch;
+    _playHistoryTimes.removeWhere(
+      (key, _) => !_playHistory.contains(key),
+    );
+  }
 
   double _volumeFor(Track? track) => playbackVolume(
     volume: _volume,
@@ -3196,9 +3208,7 @@ class _PlayerPageState extends State<PlayerPage>
         _duration = Duration.zero;
         _playbackTrackIdentity = track.identityKey;
         _trackStartedAt = DateTime.now();
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        _recordPlayHistory(track.identityKey);
       });
       _audioHandler?.publishTrack(track);
       await _saveQueue();
@@ -4824,6 +4834,7 @@ class _PlayerPageState extends State<PlayerPage>
     final savedBookmarks = prefs.getString('bookmarks');
     final savedPositionBookmarks = prefs.getString('positionBookmarks');
     final savedPlayHistory = prefs.getStringList('playHistory') ?? [];
+    final savedPlayHistoryTimes = prefs.getString('playHistoryTimes');
     final savedResumePositions = prefs.getString('resumePositions');
     final savedFolders = prefs.getStringList('libraryFolders') ?? [];
     final savedPodcastFeeds = prefs.getStringList('podcastFeeds') ?? [];
@@ -4962,6 +4973,25 @@ class _PlayerPageState extends State<PlayerPage>
         final restoredTrack = restoredTrackForKey(savedKey);
         final historyKey = restoredTrack?.identityKey ?? savedKey;
         if (!_playHistory.contains(historyKey)) _playHistory.add(historyKey);
+      }
+      if (savedPlayHistoryTimes != null) {
+        try {
+          final decodedTimes = jsonDecode(savedPlayHistoryTimes);
+          if (decodedTimes is Map) {
+            for (final entry in decodedTimes.entries) {
+              final timestamp = (entry.value as num?)?.toInt();
+              if (timestamp == null || timestamp <= 0) continue;
+              final storedKey = entry.key.toString();
+              final restoredTrack = restoredTrackForKey(storedKey);
+              final historyKey = restoredTrack?.identityKey ?? storedKey;
+              if (_playHistory.contains(historyKey)) {
+                _playHistoryTimes[historyKey] = timestamp;
+              }
+            }
+          }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid play history timestamps: $error');
+        }
       }
       if (savedResumePositions != null) {
         try {
@@ -5335,6 +5365,7 @@ class _PlayerPageState extends State<PlayerPage>
         .map((bookmark) => bookmark.toJson())
         .toList();
     final playHistory = List<String>.of(_playHistory);
+    final playHistoryTimes = Map<String, int>.of(_playHistoryTimes);
     final resumePositions = Map<String, int>.of(_resumePositions);
     final libraryFolders = List<String>.of(_libraryFolders);
     final podcastFeeds = List<String>.of(_podcastFeeds);
@@ -5391,6 +5422,7 @@ class _PlayerPageState extends State<PlayerPage>
       prefs.setString('bookmarks', jsonEncode(bookmarks)),
       prefs.setString('positionBookmarks', jsonEncode(positionBookmarks)),
       prefs.setStringList('playHistory', playHistory),
+      prefs.setString('playHistoryTimes', jsonEncode(playHistoryTimes)),
       prefs.setString('resumePositions', jsonEncode(resumePositions)),
       prefs.setStringList('libraryFolders', libraryFolders),
       prefs.setStringList('podcastFeeds', podcastFeeds),
@@ -5927,6 +5959,12 @@ class _PlayerPageState extends State<PlayerPage>
         'artist': track.artist,
         'album': track.album,
         'path': track.path,
+        'lastPlayedAt': _playHistoryTimes[key] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                _playHistoryTimes[key]!,
+                isUtc: true,
+              ).toIso8601String(),
       });
     }
     await FilePicker.saveFile(
@@ -6434,6 +6472,7 @@ class _PlayerPageState extends State<PlayerPage>
         _bookmarks.clear();
         _positionBookmarks.clear();
         _playHistory.clear();
+        _playHistoryTimes.clear();
         _resumePositions.clear();
         _libraryFolders.clear();
         _libraryRelativePaths.clear();
@@ -6745,6 +6784,9 @@ class _PlayerPageState extends State<PlayerPage>
         (track) => missingIdentities.contains(track.identityKey),
       );
       _playHistory.removeWhere(missingIdentities.contains);
+      _playHistoryTimes.removeWhere(
+        (identity, _) => missingIdentities.contains(identity),
+      );
       _resumePositions.removeWhere(
         (identity, _) => missingPathKeys.any(
           (path) => storedTrackKeyMatchesPath(identity, path),
@@ -7609,9 +7651,7 @@ class _PlayerPageState extends State<PlayerPage>
         // not create fake history entries or discard the position that should
         // be retried later.
         setState(() {
-          _playHistory
-            ..clear()
-            ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+          _recordPlayHistory(track.identityKey);
           final libraryIndex = _library.indexWhere(
             (item) => sameTrackIdentity(item, track),
           );
@@ -7788,9 +7828,7 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() {
         _selected = next;
         _position = Duration.zero;
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        _recordPlayHistory(track.identityKey);
         final updatedTrack = track.copyWith(playCount: track.playCount + 1);
         final libraryIndex = _library.indexWhere(
           (item) => sameTrackIdentity(item, track),
@@ -7887,9 +7925,7 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() {
         _selected = next;
         _position = Duration.zero;
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        _recordPlayHistory(track.identityKey);
         final updatedTrack = track.copyWith(playCount: track.playCount + 1);
         final libraryIndex = _library.indexWhere(
           (item) => sameTrackIdentity(item, track),
@@ -12637,7 +12673,10 @@ class _PlayerPageState extends State<PlayerPage>
           alignment: Alignment.centerRight,
           child: TextButton.icon(
             onPressed: () async {
-              setState(_playHistory.clear);
+              setState(() {
+                _playHistory.clear();
+                _playHistoryTimes.clear();
+              });
               await _saveQueue();
             },
             icon: const Icon(Icons.delete_sweep_outlined, size: 16),
