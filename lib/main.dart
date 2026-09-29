@@ -2678,6 +2678,18 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     await onPrevious?.call();
   }
 
+  @override
+  Future<void> fastForward() async {
+    if (_closed) return;
+    await seek(_lastPosition + const Duration(seconds: 10));
+  }
+
+  @override
+  Future<void> rewind() async {
+    if (_closed) return;
+    await seek(_lastPosition - const Duration(seconds: 10));
+  }
+
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
