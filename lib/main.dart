@@ -7835,7 +7835,7 @@ class _PlayerPageState extends State<PlayerPage>
       ),
     );
     if (!mounted || selected == null) return;
-    await widget.onUiScaleChanged?.call(selected);
+    widget.onUiScaleChanged?.call(selected);
   }
 
   Future<void> _showLyrics(Track track) async {
