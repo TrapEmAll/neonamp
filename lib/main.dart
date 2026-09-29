@@ -7583,6 +7583,36 @@ class _PlayerPageState extends State<PlayerPage>
     await _select((_selected - 1 + _queue.length) % _queue.length);
   }
 
+  Future<void> _queueLibraryTrack(
+    Track track, {
+    bool playNow = false,
+    bool playNext = false,
+  }) async {
+    if (!mounted) return;
+    late final int index;
+    setState(() {
+      final insertAfterCurrent =
+          playNext && _current != null && _queue.isNotEmpty;
+      index = insertAfterCurrent
+          ? (_selected + 1).clamp(0, _queue.length).toInt()
+          : _queue.length;
+      _queue.insert(index, track);
+      if (playNow) _selected = index;
+    });
+    await _saveQueue();
+    if (playNow) {
+      await _select(index);
+      return;
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(playNext ? 'Added to play next.' : 'Added to queue.'),
+        ),
+      );
+    }
+  }
+
   Future<void> _remove(int index) async {
     if (!mounted ||
         _selectionInProgress ||
@@ -11989,6 +12019,38 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
                 onPressed: () => _addTrackToPlaylist(track),
               ),
+              PopupMenuButton<String>(
+                tooltip: 'Queue actions',
+                icon: const Icon(
+                  Icons.queue_music_outlined,
+                  size: 17,
+                  color: Colors.white30,
+                ),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'playNow':
+                      _runAsyncSafely(
+                        _queueLibraryTrack(track, playNow: true),
+                        'Playing library track',
+                      );
+                    case 'playNext':
+                      _runAsyncSafely(
+                        _queueLibraryTrack(track, playNext: true),
+                        'Adding library track to play next',
+                      );
+                    case 'addEnd':
+                      _runAsyncSafely(
+                        _queueLibraryTrack(track),
+                        'Adding library track to queue',
+                      );
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'playNow', child: Text('Play now')),
+                  PopupMenuItem(value: 'playNext', child: Text('Play next')),
+                  PopupMenuItem(value: 'addEnd', child: Text('Add to end')),
+                ],
+              ),
               if (track.album == 'Podcast' && isRemoteMediaPath(track.path))
                 IconButton(
                   tooltip: 'Download episode',
@@ -12001,13 +12063,10 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
             ],
           ),
-          onTap: () {
-            setState(() {
-              _queue.add(track);
-              _selected = _queue.length - 1;
-            });
-            _select(_selected);
-          },
+          onTap: () => _runAsyncSafely(
+            _queueLibraryTrack(track, playNow: true),
+            'Playing library track',
+          ),
         );
       },
     );
