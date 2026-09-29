@@ -6233,7 +6233,14 @@ class _PlayerPageState extends State<PlayerPage>
     Set<String>? scannedFilesystemRoots,
     Set<String>? discoveredFilesystemPaths,
   }) async {
-    final List<({String path, String name, String relativePath})> files;
+    final List<({
+      String path,
+      String readPath,
+      String name,
+      String relativePath,
+      String? signature,
+      String? legacyPath,
+    })> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
         throw StateError('Reselect this folder to grant Android media access.');
@@ -6247,13 +6254,27 @@ class _PlayerPageState extends State<PlayerPage>
             final path = item['path'] as String?;
             if (path == null || path.isEmpty) return null;
             final name = item['name'] as String? ?? path;
+            final readPath = item['scanPath'] as String? ?? path;
+            final size = (item['size'] as num?)?.toInt() ?? -1;
+            final modified = (item['modified'] as num?)?.toInt() ?? -1;
+            final legacyPath = item['legacyCachePath'] as String?;
             return (
               path: path,
+              readPath: readPath,
               name: name,
               relativePath: item['relativePath'] as String? ?? name,
+              signature: size >= 0 || modified > 0 ? '$size:$modified' : null,
+              legacyPath: legacyPath,
             );
           })
-          .whereType<({String path, String name, String relativePath})>()
+          .whereType<({
+            String path,
+            String readPath,
+            String name,
+            String relativePath,
+            String? signature,
+            String? legacyPath,
+          })>()
           .toList();
     } else {
       files = Directory(directory)
@@ -6263,11 +6284,14 @@ class _PlayerPageState extends State<PlayerPage>
           .map(
             (file) => (
               path: file.path,
+              readPath: file.path,
               name: file.uri.pathSegments.last,
               relativePath: file.path
                   .substring(directory.length)
                   .replaceFirst(RegExp(r'^[/\\]+'), '')
                   .replaceAll('\\', '/'),
+              signature: null,
+              legacyPath: null,
             ),
           )
           .toList();
@@ -6282,16 +6306,36 @@ class _PlayerPageState extends State<PlayerPage>
       discoveredFilesystemPaths?.add(
         discoveredPath,
       );
-      final signature = await _libraryFileSignature(file.path);
-      final existingIndex = _library.indexWhere(
+      final signature =
+          file.signature ?? await _libraryFileSignature(file.path);
+      var existingIndex = _library.indexWhere(
         (track) => trackPathKey(track.path) == discoveredPath,
       );
+      if (existingIndex < 0 && file.legacyPath != null) {
+        existingIndex = _library.indexWhere(
+          (track) => trackPathKey(track.path) == trackPathKey(file.legacyPath!),
+        );
+      }
+      final storedSignature = _libraryFileSignatures[discoveredPath] ??
+          (file.legacyPath == null
+              ? null
+              : _libraryFileSignatures[trackPathKey(file.legacyPath!)]);
       if (signature != null &&
           existingIndex >= 0 &&
-          _libraryFileSignatures[discoveredPath] == signature) {
+          storedSignature == signature) {
         if (mounted &&
             (operation == null || operation == _libraryOperationGeneration)) {
           setState(() {
+            if (_library[existingIndex].path != file.path) {
+              _library[existingIndex] = _library[existingIndex].copyWith(
+                path: file.path,
+              );
+              if (file.legacyPath != null) {
+                _libraryRelativePaths.remove(file.legacyPath);
+                _libraryFileSignatures.remove(trackPathKey(file.legacyPath!));
+              }
+            }
+            _libraryFileSignatures[discoveredPath] = signature;
             _libraryRelativePaths[file.path] = file.relativePath;
           });
         }
@@ -6299,11 +6343,12 @@ class _PlayerPageState extends State<PlayerPage>
       }
       late final Track scannedTrack;
       try {
-        scannedTrack = await _readTrack(file.path, file.name);
+        scannedTrack = await _readTrack(file.readPath, file.name);
       } on Object {
         continue;
       }
       final track = scannedTrack.copyWith(
+        path: file.path,
         rating: 0,
         playCount: 0,
         favorite: false,
@@ -6317,16 +6362,23 @@ class _PlayerPageState extends State<PlayerPage>
           _libraryFileSignatures[discoveredPath] = signature;
         }
         _libraryRelativePaths[file.path] = file.relativePath;
-        final libraryIndexes = [
-          for (var i = 0; i < _library.length; i++)
-            if (trackPathKey(_library[i].path) == discoveredPath) i,
-        ];
+        final libraryIndexes = existingIndex >= 0
+            ? <int>[existingIndex]
+            : [
+                for (var i = 0; i < _library.length; i++)
+                  if (trackPathKey(_library[i].path) == discoveredPath) i,
+              ];
         if (libraryIndexes.isNotEmpty) {
           for (final libraryIndex in libraryIndexes) {
             _library[libraryIndex] = mergeScannedTrack(
               _library[libraryIndex],
               track,
             );
+          }
+          if (file.legacyPath != null &&
+              trackPathKey(file.legacyPath!) != discoveredPath) {
+            _libraryRelativePaths.remove(file.legacyPath);
+            _libraryFileSignatures.remove(trackPathKey(file.legacyPath!));
           }
         } else {
           _library.add(track);

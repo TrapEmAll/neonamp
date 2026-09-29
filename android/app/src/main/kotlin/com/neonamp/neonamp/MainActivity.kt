@@ -1027,9 +1027,16 @@ class MainActivity : AudioServiceActivity() {
                     }
                     results.add(
                         mapOf(
-                            "path" to cachedFile.absolutePath,
+                            // Keep the provider URI as the durable library identity.
+                            // The bounded cache is only used to inspect metadata;
+                            // playback materializes the URI on demand.
+                            "path" to documentUri.toString(),
+                            "scanPath" to cachedFile.absolutePath,
+                            "legacyCachePath" to cachedFile.absolutePath,
                             "name" to name,
                             "relativePath" to relativePath,
+                            "size" to sourceSize,
+                            "modified" to sourceModified,
                         ),
                     )
                 }
