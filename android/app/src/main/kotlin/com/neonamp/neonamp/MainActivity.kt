@@ -32,6 +32,7 @@ import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaSeekOptions
 import com.google.android.gms.cast.MediaStatus
+import com.google.android.gms.common.images.WebImage
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
@@ -690,6 +691,11 @@ class MainActivity : AudioServiceActivity() {
             putString(MediaMetadata.KEY_TITLE, media["title"] as? String ?: "NeonAmp")
             putString(MediaMetadata.KEY_ARTIST, media["artist"] as? String ?: "")
             putString(MediaMetadata.KEY_ALBUM_TITLE, media["album"] as? String ?: "")
+            (media["artworkUrl"] as? String)?.let { artworkUrl ->
+                Uri.parse(artworkUrl).takeIf {
+                    it.scheme == "http" || it.scheme == "https"
+                }?.let { addImage(WebImage(it)) }
+            }
         }
         return MediaInfo.Builder(url)
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)

@@ -2860,6 +2860,7 @@ class _PlayerPageState extends State<PlayerPage>
   AudioPlayer _activePlayer = AudioPlayer();
   final DlnaCast _dlnaCast = DlnaCast();
   final GoogleCast _googleCast = GoogleCast();
+  final GoogleCastArtworkServer _googleCastArtwork = GoogleCastArtworkServer();
   DspLocalPlayer _dspPlayer = DspLocalPlayer();
   final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
   NeonAudioHandler? _audioHandler;
@@ -4003,6 +4004,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (_googleCasting) {
       _castPositionTimer?.cancel();
       await _googleCast.stop();
+      await _googleCastArtwork.close();
       _googleCasting = false;
       if (mounted && identity == _current?.identityKey) {
         setState(() {
@@ -4123,14 +4125,20 @@ class _PlayerPageState extends State<PlayerPage>
               'title': track.name,
               'artist': track.artist,
               'album': track.album,
+              if (track.artwork != null) 'artwork': track.artwork,
             },
           )
           .toList();
+      final castItemsWithArtwork =
+          await _googleCastArtwork.attachArtwork(castItems);
       final accepted = await _googleCast.castQueue(
-        items: castItems,
+        items: castItemsWithArtwork,
         startIndex: _selected,
       );
-      if (!accepted || !mounted) return;
+      if (!accepted || !mounted) {
+        await _googleCastArtwork.close();
+        return;
+      }
       await _stopCurrent();
       setState(() {
         _googleCasting = true;
@@ -4143,6 +4151,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     } on Object catch (error) {
+      await _googleCastArtwork.close();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not start Google Cast: $error')),
@@ -7002,6 +7011,7 @@ class _PlayerPageState extends State<PlayerPage>
       _castPositionTimer?.cancel();
       if (_googleCasting) {
         await _googleCast.stop();
+        await _googleCastArtwork.close();
         _googleCasting = false;
       }
       if (_casting) await _dlnaCast.stop();
@@ -11034,6 +11044,10 @@ class _PlayerPageState extends State<PlayerPage>
       );
     }
     _runAsyncSafely(_dlnaCast.dispose(), 'Disposing DLNA cast');
+    _runAsyncSafely(
+      _googleCastArtwork.close(),
+      'Disposing Google Cast artwork server',
+    );
     _castPositionTimer?.cancel();
     _gaplessStateTimer?.cancel();
     _audioOutputNotifier.dispose();
