@@ -28,11 +28,14 @@ request builds remain usable with the local debug fallback.
 6. Add the store listing, privacy policy, data-safety form, content rating,
    screenshots, release notes, and a staged rollout percentage.
 
-Play Integrity tokens are intentionally not decoded in NeonAmp. The app-side
-request must be paired with a protected backend that sends each token to
-Google for verification; decryption keys and verdict policy must never be
-shipped in the APK. Configure the cloud project number and backend endpoint
-when enabling protected Play services or account flows.
+NeonAmp includes an optional standard Play Integrity client in
+`lib/play_integrity.dart` and the `neonamp/play_integrity` Android channel.
+Call `prepare` with the Google Cloud project number before requesting a token,
+then bind each protected request with `PlayIntegrityClient.requestHash` and
+send the opaque token to the protected backend. Tokens are intentionally not
+decoded in NeonAmp; decryption keys and verdict policy must never be shipped
+in the APK. Configure the cloud project number and backend endpoint when
+enabling protected Play services or account flows.
 
 The workflow also publishes one ARMv7 APK and one ARM64 APK for users who need
 direct installation. Google Play should receive the App Bundle so it can handle

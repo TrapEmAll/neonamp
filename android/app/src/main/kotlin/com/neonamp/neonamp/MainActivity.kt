@@ -39,6 +39,8 @@ import com.google.android.gms.common.images.WebImage
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
 import com.google.android.gms.cast.framework.SessionManagerListener
+import com.google.android.play.core.integrity.IntegrityManagerFactory
+import com.google.android.play.core.integrity.StandardIntegrityManager
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -63,6 +65,7 @@ class MainActivity : AudioServiceActivity() {
     private var gaplessPlayer: ExoPlayer? = null
     private var gaplessChannel: MethodChannel? = null
     private var audioOutputChannel: MethodChannel? = null
+    private var integrityTokenProvider: StandardIntegrityManager.StandardIntegrityTokenProvider? = null
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -324,6 +327,74 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "neonamp/play_integrity",
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "prepare" -> {
+                    val cloudProjectNumber = call.argument<Number>("cloudProjectNumber")?.toLong()
+                    if (cloudProjectNumber == null || cloudProjectNumber <= 0L) {
+                        result.error(
+                            "invalid_project",
+                            "A positive Google Cloud project number is required.",
+                            null,
+                        )
+                        return@setMethodCallHandler
+                    }
+                    val manager = IntegrityManagerFactory.createStandard(this)
+                    manager.prepareIntegrityToken(
+                        StandardIntegrityManager.PrepareIntegrityTokenRequest.builder()
+                            .setCloudProjectNumber(cloudProjectNumber)
+                            .build(),
+                    ).addOnSuccessListener { provider ->
+                        integrityTokenProvider = provider
+                        result.success(true)
+                    }.addOnFailureListener { error ->
+                        integrityTokenProvider = null
+                        result.error(
+                            "prepare_failed",
+                            error.message ?: "Could not prepare Play Integrity.",
+                            null,
+                        )
+                    }
+                }
+                "requestToken" -> {
+                    val requestHash = call.argument<String>("requestHash")?.trim()
+                    val provider = integrityTokenProvider
+                    if (provider == null) {
+                        result.error(
+                            "not_prepared",
+                            "Prepare the Play Integrity token provider first.",
+                            null,
+                        )
+                    } else if (requestHash.isNullOrEmpty() || requestHash.length > 500) {
+                        result.error(
+                            "invalid_request_hash",
+                            "A non-empty request hash up to 500 characters is required.",
+                            null,
+                        )
+                    } else {
+                        provider.request(
+                            StandardIntegrityManager.StandardIntegrityTokenRequest.builder()
+                                .setRequestHash(requestHash)
+                                .build(),
+                        ).addOnSuccessListener { response ->
+                            result.success(response.token())
+                        }.addOnFailureListener { error ->
+                            result.error(
+                                "request_failed",
+                                error.message ?: "Could not request Play Integrity.",
+                                null,
+                            )
+                        }
+                    }
+                }
+                "state" -> result.success(mapOf("prepared" to (integrityTokenProvider != null)))
+                else -> result.notImplemented()
+            }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(AUDIO_SERVICE) as AudioManager
             manager.registerAudioDeviceCallback(audioDeviceCallback, null)
