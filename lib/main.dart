@@ -119,6 +119,38 @@ String detectArtworkMimeType(Uint8List bytes) {
   return 'image/jpeg';
 }
 
+Uint8List? boundedMediaArtwork(Uint8List? source, {int maxBytes = 256 * 1024}) {
+  if (source == null) return null;
+  if (source.length <= maxBytes) return source;
+  try {
+    final decoded = img.decodeImage(source);
+    if (decoded == null) return null;
+    var encoded = img.encodeJpg(
+      img.copyResizeCropSquare(decoded, size: 512),
+      quality: 78,
+    );
+    if (encoded.length > maxBytes) {
+      encoded = img.encodeJpg(
+        img.copyResizeCropSquare(decoded, size: 256),
+        quality: 60,
+      );
+    }
+    return encoded.length <= maxBytes ? Uint8List.fromList(encoded) : null;
+  } on Object {
+    return null;
+  }
+}
+
+Uri? mediaArtworkUri(Uint8List? source) {
+  final artwork = boundedMediaArtwork(source);
+  return artwork == null
+      ? null
+      : Uri.dataFromBytes(
+          artwork,
+          mimeType: detectArtworkMimeType(artwork),
+        );
+}
+
 AudioMetadata readTrackMetadata(File file, {bool getImage = false}) =>
     isAsfAudioPath(file.path)
     ? readAsfMetadata(file, getImage: getImage)
@@ -2514,12 +2546,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         title: track.name,
         artist: track.artist,
         album: track.album,
-        artUri: showArtwork && track.artwork != null
-            ? Uri.dataFromBytes(
-                track.artwork!,
-                mimeType: detectArtworkMimeType(track.artwork!),
-              )
-            : null,
+        artUri: showArtwork ? mediaArtworkUri(track.artwork) : null,
         duration: duration,
       ),
     );
@@ -2558,12 +2585,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         title: track.name,
         artist: track.artist,
         album: track.album,
-        artUri: showArtwork && track.artwork != null
-            ? Uri.dataFromBytes(
-                track.artwork!,
-                mimeType: detectArtworkMimeType(track.artwork!),
-              )
-            : null,
+        artUri: showArtwork ? mediaArtworkUri(track.artwork) : null,
         duration: duration,
       ),
     );
@@ -2588,12 +2610,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           title: track.name,
           artist: track.artist,
           album: track.album,
-          artUri: track.artwork == null
-              ? null
-              : Uri.dataFromBytes(
-                  track.artwork!,
-                  mimeType: detectArtworkMimeType(track.artwork!),
-                ),
+          artUri: mediaArtworkUri(track.artwork),
           duration: track.cueEnd == null
               ? null
               : track.cueEnd! - track.cueStart,
@@ -3298,12 +3315,7 @@ class _PlayerPageState extends State<PlayerPage>
     title: track.name,
     artist: track.artist,
     album: track.album,
-    artUri: track.artwork == null
-        ? null
-        : Uri.dataFromBytes(
-            track.artwork!,
-            mimeType: detectArtworkMimeType(track.artwork!),
-          ),
+    artUri: mediaArtworkUri(track.artwork),
     playable: true,
     duration: track.cueEnd == null
         ? null
@@ -3845,19 +3857,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (sourceArtwork != null && sourceArtwork.length > 256 * 1024) {
         if (!identical(_widgetArtworkSource, sourceArtwork)) {
           _widgetArtworkSource = sourceArtwork;
-          try {
-            final decoded = img.decodeImage(sourceArtwork);
-            _widgetArtworkBytes = decoded == null
-                ? null
-                : Uint8List.fromList(
-                    img.encodeJpg(
-                      img.copyResizeCropSquare(decoded, size: 256),
-                      quality: 78,
-                    ),
-                  );
-          } on Object {
-            _widgetArtworkBytes = null;
-          }
+          _widgetArtworkBytes = boundedMediaArtwork(sourceArtwork);
         }
         widgetArtwork = _widgetArtworkBytes;
       } else if (!identical(_widgetArtworkSource, sourceArtwork)) {
