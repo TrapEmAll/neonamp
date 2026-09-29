@@ -431,7 +431,7 @@ class MainActivity : AudioServiceActivity() {
                     "scanMediaStore" -> scanMediaStore(result)
                     "persistedFolderUris" -> result.success(
                         contentResolver.persistedUriPermissions
-                            .filter { it.isReadPermission }
+                            .filter { it.isReadPermission || it.isWritePermission }
                             .map { it.uri.toString() },
                     )
                     "cacheStats" -> {
