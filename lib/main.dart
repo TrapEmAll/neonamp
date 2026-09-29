@@ -4852,7 +4852,11 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _addFolder() async {
     final operation = ++_libraryOperationGeneration;
     try {
-      final directory = await _pickFolderLocation('Choose a music folder');
+      final directory = await _pickFolderLocation(
+        Platform.isAndroid
+            ? 'Choose a music or network folder (SMB/NFS providers supported)'
+            : 'Choose a music folder',
+      );
       if (directory == null || operation != _libraryOperationGeneration) return;
       final scanned = await _scanFolder(directory, operation: operation);
       if (operation != _libraryOperationGeneration) return;
@@ -5736,6 +5740,27 @@ class _PlayerPageState extends State<PlayerPage>
           if (!mounted || operation != _libraryOperationGeneration) return;
         }
       } on Object catch (error) {
+        if (Platform.isAndroid &&
+            Uri.tryParse(folder)?.scheme.toLowerCase() == 'content') {
+          try {
+            final replacement = await _pickFolderLocation(
+              'Re-select network or music folder access',
+            );
+            if (replacement != null && replacement != folder) {
+              final replacementIndex = _libraryFolders.indexOf(folder);
+              await _scanFolder(replacement, operation: operation);
+              if (!mounted || operation != _libraryOperationGeneration) return;
+              if (replacementIndex >= 0) {
+                _libraryFolders[replacementIndex] = replacement;
+              }
+              await _saveQueue();
+              continue;
+            }
+          } on Object {
+            // Keep the original scan error; the folder can be repaired from
+            // the next rescan if the provider is temporarily unavailable.
+          }
+        }
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not rescan a library folder: $error')),
@@ -10561,7 +10586,14 @@ class _PlayerPageState extends State<PlayerPage>
             itemBuilder: (_) => [
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
-              PopupMenuItem(value: 'folder', child: Text('Add folder')),
+              PopupMenuItem(
+                value: 'folder',
+                child: Text(
+                  Platform.isAndroid
+                      ? 'Add music or network folder'
+                      : 'Add folder',
+                ),
+              ),
               if (Platform.isAndroid)
                 PopupMenuItem(
                   value: 'deviceLibrary',
