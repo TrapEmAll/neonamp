@@ -2498,6 +2498,7 @@ class NeonAmpApp extends StatefulWidget {
 
 class _NeonAmpAppState extends State<NeonAmpApp> {
   String _themeName = 'Neon';
+  double _uiScale = 1.0;
   final Map<String, ThemeSkin> _customSkins = {};
   int _themeOperationGeneration = 0;
 
@@ -2525,7 +2526,11 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
       }
     }
     if (!mounted || operation != _themeOperationGeneration) return;
-    setState(() => _themeName = prefs.getString('themeName') ?? 'Neon');
+    final savedScale = prefs.getDouble('uiScale') ?? 1.0;
+    setState(() {
+      _themeName = prefs.getString('themeName') ?? 'Neon';
+      _uiScale = savedScale.clamp(0.85, 1.25).toDouble();
+    });
   }
 
   Future<void> _setTheme(String themeName) async {
@@ -2535,6 +2540,16 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     final prefs = await SharedPreferences.getInstance();
     if (operation != _themeOperationGeneration) return;
     await prefs.setString('themeName', themeName);
+  }
+
+  Future<void> _setUiScale(double scale) async {
+    final operation = ++_themeOperationGeneration;
+    final value = scale.clamp(0.85, 1.25).toDouble();
+    if (!mounted) return;
+    setState(() => _uiScale = value);
+    final prefs = await SharedPreferences.getInstance();
+    if (operation != _themeOperationGeneration) return;
+    await prefs.setDouble('uiScale', value);
   }
 
   Future<void> _addCustomSkin(ThemeSkin skin) async {
@@ -2571,6 +2586,11 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
         brightness: Brightness.dark,
       ),
       fontFamily: 'Segoe UI',
+      textTheme: ThemeData.dark().textTheme.apply(fontSizeFactor: _uiScale),
+      visualDensity: VisualDensity(
+        horizontal: (_uiScale - 1.0) * 2,
+        vertical: (_uiScale - 1.0) * 2,
+      ),
       useMaterial3: true,
     );
   }
@@ -2582,8 +2602,10 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     theme: _themeData(),
     home: PlayerPage(
       themeName: _themeName,
+      uiScale: _uiScale,
       skins: _skins,
       onThemeChanged: _setTheme,
+      onUiScaleChanged: _setUiScale,
       onSkinImported: _addCustomSkin,
     ),
   );
@@ -2593,14 +2615,18 @@ class PlayerPage extends StatefulWidget {
   const PlayerPage({
     super.key,
     this.themeName = 'Neon',
+    this.uiScale = 1.0,
     this.skins = const [],
     this.onThemeChanged,
+    this.onUiScaleChanged,
     this.onSkinImported,
   });
 
   final String themeName;
+  final double uiScale;
   final List<ThemeSkin> skins;
   final ValueChanged<String>? onThemeChanged;
+  final ValueChanged<double>? onUiScaleChanged;
   final Future<void> Function(ThemeSkin skin)? onSkinImported;
 
   @override
@@ -3057,6 +3083,11 @@ class _PlayerPageState extends State<PlayerPage>
         config: AudioServiceConfig(
           androidNotificationChannelId: 'com.neonamp.audio',
           androidNotificationChannelName: 'NeonAmp playback',
+          androidNotificationChannelDescription:
+              'Playback controls and current track information',
+          androidNotificationIcon: 'mipmap/ic_launcher',
+          androidShowNotificationBadge: true,
+          notificationColor: const Color(0xffef4bff),
           androidNotificationOngoing: true,
           androidStopForegroundOnPause: false,
         ),
@@ -3948,6 +3979,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _showPlayerLayout();
       case 'theme':
         operation = _showThemePicker();
+      case 'display':
+        operation = _showDisplaySettings();
       case 'importSkin':
         operation = _importSkin();
       case 'plugins':
@@ -4039,7 +4072,6 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _addFiles() async {
     final operation = ++_libraryOperationGeneration;
-    final queueWasEmpty = _queue.isEmpty;
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: [
@@ -4091,7 +4123,6 @@ class _PlayerPageState extends State<PlayerPage>
       }
       if (!mounted || operation != _libraryOperationGeneration) return;
       setState(() {
-        _queue.add(track);
         if (!_library.any((item) => sameTrackPath(item.path, path))) {
           _library.add(track);
         }
@@ -4101,7 +4132,6 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted || operation != _libraryOperationGeneration) return;
     await _saveQueue();
     if (!mounted || operation != _libraryOperationGeneration) return;
-    if (queueWasEmpty && _queue.isNotEmpty) await _select(0);
     if (mounted && skipped > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Added $added file(s); skipped $skipped.')),
@@ -4257,9 +4287,9 @@ class _PlayerPageState extends State<PlayerPage>
     }
     var added = 0;
     for (final file in files) {
-    final discoveredPath = trackPathKey(file.path);
-    discoveredFilesystemPaths?.add(
-      discoveredPath,
+      final discoveredPath = trackPathKey(file.path);
+      discoveredFilesystemPaths?.add(
+        discoveredPath,
       );
       late final Track scannedTrack;
       try {
@@ -4291,25 +4321,6 @@ class _PlayerPageState extends State<PlayerPage>
           }
         } else {
           _library.add(track);
-        }
-        final queueIndexes = [
-          for (var i = 0; i < _queue.length; i++)
-            if (trackPathKey(_queue[i].path) == discoveredPath) i,
-        ];
-        if (queueIndexes.isNotEmpty) {
-          for (final queueIndex in queueIndexes) {
-            _queue[queueIndex] = mergeScannedTrack(
-              _queue[queueIndex],
-              track,
-            );
-          }
-        } else if (!libraryIndexes.any(
-          (index) => _library[index].cueStartMs != null,
-        )) {
-          _queue.add(track);
-        } else {
-          // A CUE library owns this physical source; do not add a duplicate
-          // raw source track just because the folder was rescanned.
         }
       });
       added++;
@@ -7655,6 +7666,49 @@ class _PlayerPageState extends State<PlayerPage>
     widget.onThemeChanged?.call(selected);
   }
 
+  Future<void> _showDisplaySettings() async {
+    var scale = widget.uiScale;
+    final selected = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Display preferences'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('UI size: ${(scale * 100).round()}%'),
+              Slider(
+                min: 0.85,
+                max: 1.25,
+                divisions: 8,
+                value: scale,
+                label: '${(scale * 100).round()}%',
+                onChanged: (value) => setDialogState(() => scale = value),
+              ),
+              const SizedBox(height: 8),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Color themes are available under Choose skin.'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, scale),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    await widget.onUiScaleChanged?.call(selected);
+  }
+
   Future<void> _showLyrics(Track track) async {
     final lyrics = track.lyrics?.trim();
     if (lyrics == null || lyrics.isEmpty) {
@@ -8818,6 +8872,10 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Customize player controls'),
               ),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
+              PopupMenuItem(
+                value: 'display',
+                child: Text('Display size'),
+              ),
               PopupMenuItem(
                 value: 'importSkin',
                 child: Text('Import skin package'),
