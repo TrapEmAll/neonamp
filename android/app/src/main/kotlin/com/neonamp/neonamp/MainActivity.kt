@@ -1096,7 +1096,7 @@ class MainActivity : AudioServiceActivity() {
                     val bytes = contentResolver.openInputStream(documentUri)
                         ?.use { stream -> readBoundedBytes(stream, 1 * 1024 * 1024) }
                     return@use bytes
-                        ?.toString(Charsets.UTF_8)
+                        ?.let { String(it, Charsets.UTF_8) }
                         ?.takeIf { it.isNotBlank() }
                 }
                 null
