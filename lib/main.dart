@@ -8619,6 +8619,7 @@ class _PlayerPageState extends State<PlayerPage>
     final directory = await _pickFolderLocation('Choose an offline music folder');
     if (!mounted || directory == null) return;
     final client = HttpClient();
+    File? temporary;
     try {
       final request = await client.getUrl(source);
       final response = await request.close();
@@ -8627,17 +8628,26 @@ class _PlayerPageState extends State<PlayerPage>
       }
       final safeName = syncFileName(track.name);
       final sourceExtension = source.path.split('.').last.toLowerCase();
-      final filename = safeName.contains('.')
+      final requestedFilename = safeName.contains('.')
           ? safeName
           : '$safeName.${RegExp(r'^[a-z0-9]{1,5}$').hasMatch(sourceExtension) ? sourceExtension : 'mp3'}';
-      final target = Platform.isAndroid
-          ? File(
+      final targetDirectory = Platform.isAndroid
+          ? Directory(
               '${(await getApplicationSupportDirectory()).path}'
-              '${Platform.pathSeparator}offline${Platform.pathSeparator}$filename',
+              '${Platform.pathSeparator}offline',
             )
-          : File('$directory${Platform.pathSeparator}$filename');
-      await target.parent.create(recursive: true);
-      await response.pipe(target.openWrite());
+          : Directory(directory);
+      await targetDirectory.create(recursive: true);
+      final usedNames = targetDirectory
+          .listSync()
+          .whereType<File>()
+          .map((file) => syncFileName(file.path).toLowerCase())
+          .toSet();
+      final filename = nextSyncFileName(requestedFilename, usedNames);
+      final target = File('${targetDirectory.path}${Platform.pathSeparator}$filename');
+      temporary = File('${target.path}.part');
+      await response.pipe(temporary.openWrite());
+      await temporary.rename(target.path);
       if (Platform.isAndroid) {
         await _copyFileToFolder(directory, target.path, filename);
       }
@@ -8661,6 +8671,13 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     } finally {
+      if (temporary?.existsSync() == true) {
+        try {
+          await temporary!.delete();
+        } on Object {
+          // A failed cleanup must not hide the download error.
+        }
+      }
       client.close(force: true);
     }
   }
