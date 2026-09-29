@@ -4114,31 +4114,36 @@ class _PlayerPageState extends State<PlayerPage>
       await _googleCast.showPicker();
       return;
     }
-    final uri = Uri.tryParse(current.path);
-    if (uri == null || (uri.scheme != 'http' && uri.scheme != 'https')) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Google Cast currently supports HTTP(S) streams. Use DLNA for local files.'),
-          ),
-        );
-      }
-      return;
-    }
     try {
-      final castItems = _queue
-          .map(
-            (track) => <String, dynamic>{
-              'url': track.path,
-              'title': track.name,
-              'artist': track.artist,
-              'album': track.album,
-              if (track.artwork != null) 'artwork': track.artwork,
-            },
-          )
-          .toList();
+      final castItems = <Map<String, dynamic>>[];
+      for (final track in _queue) {
+        if (isMidiFilePath(track.path) || isTrackerModulePath(track.path)) {
+          throw StateError(
+            'Google Cast cannot decode MIDI or tracker module files.',
+          );
+        }
+        final trackUri = Uri.tryParse(track.path);
+        final isHttp = trackUri?.scheme == 'http' || trackUri?.scheme == 'https';
+        final item = <String, dynamic>{
+          'title': track.name,
+          'artist': track.artist,
+          'album': track.album,
+          if (track.artwork != null) 'artwork': track.artwork,
+        };
+        if (isHttp) {
+          item['url'] = track.path;
+        } else {
+          final localPath = await _playbackSourcePath(track);
+          if (isUriMediaPath(localPath)) {
+            throw StateError('This track is not available for LAN casting.');
+          }
+          item['url'] = localPath;
+          item['localPath'] = localPath;
+        }
+        castItems.add(item);
+      }
       final castItemsWithArtwork =
-          await _googleCastArtwork.attachArtwork(castItems);
+          await _googleCastArtwork.attachQueue(castItems);
       final accepted = await _googleCast.castQueue(
         items: castItemsWithArtwork,
         startIndex: _selected,

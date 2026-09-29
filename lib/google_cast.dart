@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -7,18 +8,30 @@ import 'package:flutter/services.dart';
 class GoogleCastArtworkServer {
   HttpServer? _server;
 
-  Future<List<Map<String, dynamic>>> attachArtwork(
+  Future<List<Map<String, dynamic>>> attachQueue(
     List<Map<String, dynamic>> items,
   ) async {
     await close();
     final artworkItems = <int, Uint8List>{};
+    final mediaItems = <int, File>{};
     for (var index = 0; index < items.length; index++) {
-      final bytes = items[index]['artwork'];
-      if (bytes is Uint8List && bytes.isNotEmpty && bytes.length <= 8 * 1024 * 1024) {
-        artworkItems[index] = bytes;
+      final artwork = items[index]['artwork'];
+      if (artwork is Uint8List &&
+          artwork.isNotEmpty &&
+          artwork.length <= 8 * 1024 * 1024) {
+        artworkItems[index] = artwork;
+      }
+      final localPath = items[index]['localPath'];
+      if (localPath is String && localPath.isNotEmpty) {
+        final file = File(localPath);
+        if (await file.exists()) mediaItems[index] = file;
       }
     }
-    if (artworkItems.isEmpty) return items;
+    if (artworkItems.isEmpty && mediaItems.isEmpty) {
+      return items
+          .map((item) => <String, dynamic>{...item}..remove('artwork'))
+          .toList();
+    }
 
     HttpServer? server;
     try {
@@ -35,34 +48,134 @@ class GoogleCastArtworkServer {
       _server = server;
       unawaited(
         server.forEach((request) async {
-          final match = RegExp('^/$token/(\\d+)$').firstMatch(request.uri.path);
-          final index = match == null ? null : int.tryParse(match.group(1)!);
-          final bytes = index == null ? null : artworkItems[index];
-          if (bytes == null || request.method != 'GET') {
-            request.response.statusCode = HttpStatus.notFound;
-            await request.response.close();
-            return;
+          final match = RegExp('^/$token/(art|media)/(\\d+)$')
+              .firstMatch(request.uri.path);
+          final kind = match?.group(1);
+          final index = match == null ? null : int.tryParse(match.group(2)!);
+          if (kind == 'art' && index != null) {
+            final bytes = artworkItems[index];
+            if (bytes != null && request.method == 'GET') {
+              request.response
+                ..statusCode = HttpStatus.ok
+                ..headers.contentType = ContentType('image', 'jpeg')
+                ..headers.contentLength = bytes.length;
+              await request.response.addStream(
+                Stream<List<int>>.value(bytes),
+              );
+              await request.response.close();
+              return;
+            }
           }
-          request.response
-            ..statusCode = HttpStatus.ok
-            ..headers.contentType = ContentType('image', 'jpeg')
-            ..headers.contentLength = bytes.length;
-          await request.response.addStream(Stream<List<int>>.value(bytes));
+          if (kind == 'media' && index != null) {
+            final file = mediaItems[index];
+            if (file != null &&
+                (request.method == 'GET' || request.method == 'HEAD')) {
+              await _serveMedia(request, file);
+              return;
+            }
+          }
+          request.response.statusCode = HttpStatus.notFound;
           await request.response.close();
         }).catchError((_) {}),
       );
       return items.asMap().entries.map((entry) {
         final item = <String, dynamic>{...entry.value};
-        if (artworkItems.containsKey(entry.key)) {
-          item['artworkUrl'] = 'http://$address:${server!.port}/$token/${entry.key}';
+        if (mediaItems.containsKey(entry.key)) {
+          item['url'] =
+              'http://$address:${server!.port}/$token/media/${entry.key}';
         }
-        item.remove('artwork');
+        if (artworkItems.containsKey(entry.key)) {
+          item['artworkUrl'] =
+              'http://$address:${server!.port}/$token/art/${entry.key}';
+        }
+        item
+          ..remove('localPath')
+          ..remove('artwork');
         return item;
       }).toList();
     } on Object {
       await server?.close(force: true);
       _server = null;
-      return items;
+      return items
+          .map((item) => <String, dynamic>{...item}..remove('localPath'))
+          .toList();
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> attachArtwork(
+    List<Map<String, dynamic>> items,
+  ) => attachQueue(items);
+
+  Future<void> _serveMedia(HttpRequest request, File file) async {
+    final length = await file.length();
+    if (length <= 0) {
+      request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+      return;
+    }
+    var start = 0;
+    var end = length - 1;
+    final range = request.headers.value(HttpHeaders.rangeHeader);
+    if (range != null) {
+      final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range.trim());
+      if (match == null) {
+        request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+        await request.response.close();
+        return;
+      }
+      final requestedStart = int.tryParse(match.group(1)!);
+      final requestedEnd = int.tryParse(match.group(2)!);
+      if (requestedStart == null) {
+        final suffix = requestedEnd ?? 0;
+        if (suffix <= 0) {
+          request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+          await request.response.close();
+          return;
+        }
+        start = math.max(0, length - suffix).toInt();
+      } else {
+        start = requestedStart;
+        end = requestedEnd == null ? end : math.min(end, requestedEnd).toInt();
+      }
+      if (start >= length || start > end) {
+        request.response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+        await request.response.close();
+        return;
+      }
+      request.response.statusCode = HttpStatus.partialContent;
+      request.response.headers.set(
+        HttpHeaders.contentRangeHeader,
+        'bytes $start-$end/$length',
+      );
+    }
+    request.response.headers
+      ..set(HttpHeaders.contentTypeHeader, _mediaContentType(file.path))
+      ..set(HttpHeaders.acceptRangesHeader, 'bytes')
+      ..contentLength = end - start + 1;
+    if (request.method == 'HEAD') {
+      await request.response.close();
+      return;
+    }
+    await request.response.addStream(file.openRead(start, end + 1));
+    await request.response.close();
+  }
+
+  String _mediaContentType(String path) {
+    switch (path.split('.').last.toLowerCase()) {
+      case 'flac':
+        return 'audio/flac';
+      case 'ogg':
+      case 'oga':
+        return 'audio/ogg';
+      case 'opus':
+        return 'audio/opus';
+      case 'm4a':
+      case 'aac':
+        return 'audio/mp4';
+      case 'wav':
+        return 'audio/wav';
+      default:
+        return 'audio/mpeg';
     }
   }
 
