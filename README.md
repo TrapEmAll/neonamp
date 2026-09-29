@@ -80,6 +80,9 @@ keystore automatically when present and otherwise keeps local development
 builds installable with the debug key. Never commit the real keystore or
 `key.properties`.
 
+The complete tagged-release and Play Console checklist is in
+[`docs/android-play-store.md`](docs/android-play-store.md).
+
 ## Development
 
 ```text
