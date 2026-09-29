@@ -159,12 +159,10 @@ class MainActivity : AudioServiceActivity() {
     }
 
     private fun gaplessUri(path: String): Uri {
-        return if (path.startsWith("content:") || path.startsWith("http:")) {
-            Uri.parse(path)
-        } else if (path.startsWith("https:")) {
-            Uri.parse(path)
-        } else {
-            Uri.fromFile(File(path))
+        val parsed = Uri.parse(path)
+        return when (parsed.scheme?.lowercase(Locale.ROOT)) {
+            "content", "file", "http", "https" -> parsed
+            else -> Uri.fromFile(File(path))
         }
     }
 
