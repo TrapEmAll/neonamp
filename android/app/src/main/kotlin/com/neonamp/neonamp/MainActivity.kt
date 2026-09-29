@@ -11,6 +11,7 @@ import android.media.MediaMuxer
 import android.media.AudioManager
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -85,6 +86,32 @@ class MainActivity : AudioServiceActivity() {
                             result.success(false)
                         }
                     }
+                    "batteryState" -> {
+                        val power = getSystemService(POWER_SERVICE) as PowerManager
+                        result.success(
+                            mapOf(
+                                "ignoringOptimizations" to
+                                    (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                                        power.isIgnoringBatteryOptimizations(packageName)),
+                            ),
+                        )
+                    }
+                    "openBatterySettings" -> {
+                        try {
+                            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:$packageName"),
+                                )
+                            } else {
+                                Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+                            }
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (_: Throwable) {
+                            result.success(false)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -117,8 +144,20 @@ class MainActivity : AudioServiceActivity() {
                             mapOf(
                                 "files" to files.size,
                                 "bytes" to files.sumOf { it.length() },
+                                "limitBytes" to cacheLimitBytes(),
                             ),
                         )
+                    }
+                    "setCacheLimit" -> {
+                        val bytes = call.argument<Number>("bytes")?.toLong()
+                        if (bytes == null || bytes < 64L * 1024L * 1024L) {
+                            result.error("invalid_arguments", "Cache limit must be at least 64 MB.", null)
+                        } else {
+                            getSharedPreferences("neonamp_storage", MODE_PRIVATE)
+                                .edit().putLong("cacheLimitBytes", bytes).apply()
+                            pruneCache(File(filesDir, "neonamp-library-cache"))
+                            result.success(true)
+                        }
                     }
                     "clearCache" -> {
                         val directory = File(filesDir, "neonamp-library-cache")
@@ -476,6 +515,7 @@ class MainActivity : AudioServiceActivity() {
     @Synchronized
     private fun scanSafFolder(treeUri: Uri): List<Map<String, String>> {
         val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        pruneCache(cacheDirectory)
         cacheDirectory.listFiles()?.filter { it.name.endsWith(".tmp") }?.forEach {
             it.delete()
         }
@@ -623,6 +663,22 @@ class MainActivity : AudioServiceActivity() {
             } ?: throw IllegalStateException("Android could not read this folder. Re-add it to restore access.")
         }
         return results
+    }
+
+    private fun cacheLimitBytes(): Long = getSharedPreferences("neonamp_storage", MODE_PRIVATE)
+        .getLong("cacheLimitBytes", 512L * 1024L * 1024L)
+
+    @Synchronized
+    private fun pruneCache(directory: File) {
+        val files = directory.listFiles().orEmpty()
+            .filter { it.isFile && !it.name.endsWith(".tmp") }
+            .sortedBy { it.lastModified() }
+        var total = files.sumOf { it.length() }
+        for (file in files) {
+            if (total <= cacheLimitBytes()) break
+            val length = file.length()
+            if (file.delete()) total -= length
+        }
     }
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")

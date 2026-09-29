@@ -4809,9 +4809,12 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _showStorageMaintenance() async {
     Map<Object?, Object?>? stats;
+    Map<Object?, Object?>? battery;
     if (Platform.isAndroid) {
-      stats = await const MethodChannel('neonamp/library')
-          .invokeMapMethod<Object?, Object?>('cacheStats');
+      final channel = const MethodChannel('neonamp/library');
+      stats = await channel.invokeMapMethod<Object?, Object?>('cacheStats');
+      battery = await const MethodChannel('neonamp/audio_output')
+          .invokeMapMethod<Object?, Object?>('batteryState');
     }
     if (!mounted) return;
     final bytes = (stats?['bytes'] as num?)?.toInt() ?? 0;
@@ -4829,7 +4832,9 @@ class _PlayerPageState extends State<PlayerPage>
           Platform.isAndroid
               ? 'Provider cache: $files file(s), ${formatBytes(bytes)}.\n\n'
                   'The cache is rebuilt when a provider-backed track is played. '
-                  'Clearing it can free storage without removing your library entries.'
+                  'Clearing it can free storage without removing your library entries.\n\n'
+                  'Background playback optimization: '
+                  '${battery?['ignoringOptimizations'] == true ? 'disabled for NeonAmp' : 'may pause playback'}.'
               : 'Local files are played directly. No NeonAmp provider cache is active.',
         ),
         actions: [
@@ -4846,6 +4851,14 @@ class _PlayerPageState extends State<PlayerPage>
                 }
               },
               child: const Text('Clear cache'),
+            ),
+          if (Platform.isAndroid && battery?['ignoringOptimizations'] != true)
+            TextButton(
+              onPressed: () async {
+                await const MethodChannel('neonamp/audio_output')
+                    .invokeMethod<bool>('openBatterySettings');
+              },
+              child: const Text('Allow background playback'),
             ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
