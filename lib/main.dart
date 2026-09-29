@@ -68,6 +68,24 @@ bool isWavAudioPath(String path) {
 
 bool isAacAudioPath(String path) => path.split('.').last.toLowerCase() == 'aac';
 
+bool isAndroidGaplessCompatiblePath(String path) {
+  if (isUriMediaPath(path)) return true;
+  final extension = path.split('?').first.split('.').last.toLowerCase();
+  return const {
+    'mp3',
+    'flac',
+    'm4a',
+    'm4b',
+    'mp4',
+    'aac',
+    'ogg',
+    'oga',
+    'opus',
+    'wav',
+    'wave',
+  }.contains(extension);
+}
+
 bool isAsfAudioPath(String path) => path.split('.').last.toLowerCase() == 'wma';
 
 AudioMetadata readTrackMetadata(File file, {bool getImage = false}) =>
@@ -6244,7 +6262,12 @@ class _PlayerPageState extends State<PlayerPage>
           _gaplessEnabled &&
           !shouldUseDsp &&
           track.cueStartMs == null &&
-          !isMidiFilePath(track.path);
+          !isMidiFilePath(track.path) &&
+          _queue.every(
+            (item) =>
+                isAndroidGaplessCompatiblePath(item.path) ||
+                isAndroidGaplessCompatiblePath(item.name),
+          );
       if (useGapless) {
         await _playGaplessQueue(index);
         _audioHandler?.publishTrack(track);
