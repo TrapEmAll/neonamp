@@ -57,7 +57,7 @@ class GoogleCastArtworkServer {
             if (bytes != null && request.method == 'GET') {
               request.response
                 ..statusCode = HttpStatus.ok
-                ..headers.contentType = ContentType('image', 'jpeg')
+                ..headers.contentType = _artContentType(bytes)
                 ..headers.contentLength = bytes.length;
               await request.response.addStream(
                 Stream<List<int>>.value(bytes),
@@ -170,13 +170,53 @@ class GoogleCastArtworkServer {
       case 'opus':
         return 'audio/opus';
       case 'm4a':
+      case 'm4b':
       case 'aac':
         return 'audio/mp4';
       case 'wav':
         return 'audio/wav';
+      case 'aif':
+      case 'aiff':
+        return 'audio/aiff';
+      case 'mka':
+        return 'audio/x-matroska';
+      case 'webm':
+        return 'audio/webm';
+      case 'wma':
+        return 'audio/x-ms-wma';
+      case 'ape':
+        return 'audio/x-ape';
       default:
         return 'audio/mpeg';
     }
+  }
+
+  ContentType _artContentType(Uint8List bytes) {
+    if (bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4e &&
+        bytes[3] == 0x47) {
+      return ContentType('image', 'png');
+    }
+    if (bytes.length >= 12 &&
+        String.fromCharCodes(bytes.sublist(0, 4)) == 'RIFF' &&
+        String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP') {
+      return ContentType('image', 'webp');
+    }
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xff &&
+        bytes[1] == 0xd8 &&
+        bytes[2] == 0xff) {
+      return ContentType('image', 'jpeg');
+    }
+    if (bytes.length >= 6) {
+      final header = String.fromCharCodes(bytes.sublist(0, 6));
+      if (header == 'GIF87a' || header == 'GIF89a') {
+        return ContentType('image', 'gif');
+      }
+    }
+    return ContentType('image', 'jpeg');
   }
 
   Future<void> close() async {
