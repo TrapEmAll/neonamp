@@ -2124,6 +2124,33 @@ Duration _cueRelativeDuration(Track? track, Duration sourceDuration) {
   );
 }
 
+class QueueSnapshot {
+  const QueueSnapshot({required this.savedAt, required this.tracks});
+
+  final DateTime savedAt;
+  final List<Track> tracks;
+
+  Map<String, dynamic> toJson() => {
+    'savedAt': savedAt.toIso8601String(),
+    'tracks': tracks.map((track) => track.toJson()).toList(),
+  };
+
+  static QueueSnapshot fromJson(Map<String, dynamic> json) {
+    final savedAt = DateTime.tryParse(json['savedAt'] as String? ?? '');
+    final values = json['tracks'];
+    if (savedAt == null || values is! List) {
+      throw const FormatException('Invalid queue snapshot.');
+    }
+    return QueueSnapshot(
+      savedAt: savedAt,
+      tracks: values
+          .whereType<Map>()
+          .map((value) => Track.fromJson(Map<String, dynamic>.from(value)))
+          .toList(),
+    );
+  }
+}
+
 class ThemeSkin {
   const ThemeSkin({
     required this.name,
@@ -2743,6 +2770,7 @@ class _PlayerPageState extends State<PlayerPage>
   final WindowsMidiPlayer _midiPlayer = WindowsMidiPlayer();
   NeonAudioHandler? _audioHandler;
   final List<Track> _queue = [];
+  final List<QueueSnapshot> _queueHistory = [];
   bool _gaplessEnabled = true;
   Timer? _gaplessStateTimer;
   bool _gaplessQueueActive = false;
@@ -4287,6 +4315,7 @@ class _PlayerPageState extends State<PlayerPage>
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getStringList('queue') ?? [];
     final savedQueueTracks = prefs.getString('queueTracks');
+    final savedQueueHistory = prefs.getString('queueHistory');
     final savedLibrary = prefs.getStringList('library') ?? [];
     final savedBookmarks = prefs.getString('bookmarks');
     final savedPlayHistory = prefs.getStringList('playHistory') ?? [];
@@ -4374,6 +4403,26 @@ class _PlayerPageState extends State<PlayerPage>
             );
           }),
         );
+      }
+      if (savedQueueHistory != null) {
+        try {
+          final decodedHistory = jsonDecode(savedQueueHistory);
+          if (decodedHistory is List) {
+            for (final value in decodedHistory) {
+              if (value is! Map) continue;
+              try {
+                final snapshot = QueueSnapshot.fromJson(
+                  Map<String, dynamic>.from(value),
+                );
+                if (snapshot.tracks.isNotEmpty) _queueHistory.add(snapshot);
+              } on Object catch (error) {
+                debugPrint('Skipping invalid queue snapshot: $error');
+              }
+            }
+          }
+        } on Object catch (error) {
+          debugPrint('Ignoring invalid queue history: $error');
+        }
       }
       final restoredTracks = [..._queue, ..._library];
       Track? restoredTrackForKey(String key) {
@@ -4632,6 +4681,8 @@ class _PlayerPageState extends State<PlayerPage>
         operation = _showVisualizer();
       case 'settings':
         operation = _showSettings();
+      case 'queueHistory':
+        operation = _showQueueHistory();
       case 'rescan':
         operation = _rescanFolders();
       case 'import':
@@ -4703,6 +4754,9 @@ class _PlayerPageState extends State<PlayerPage>
     // writes can persist a mixture of old and new state across app restarts.
     final queueTracks = _queue.map((track) => track.toJson()).toList();
     final queuePaths = _queue.map((track) => track.path).toList();
+    final queueHistory = _queueHistory
+        .map((snapshot) => snapshot.toJson())
+        .toList();
     final libraryTracks = _library
         .map((track) => jsonEncode(track.toJson()))
         .toList();
@@ -4750,6 +4804,7 @@ class _PlayerPageState extends State<PlayerPage>
     await prefs.setString('queueTracks', jsonEncode(queueTracks));
     await Future.wait([
       prefs.setStringList('queue', queuePaths),
+      prefs.setString('queueHistory', jsonEncode(queueHistory)),
       prefs.setStringList('library', libraryTracks),
       prefs.setString('bookmarks', jsonEncode(bookmarks)),
       prefs.setStringList('playHistory', playHistory),
@@ -4761,6 +4816,97 @@ class _PlayerPageState extends State<PlayerPage>
       prefs.setString('plugins', jsonEncode(plugins)),
       prefs.setString('settings', jsonEncode(settings)),
     ]);
+  }
+
+  void _rememberQueueSnapshot() {
+    if (_queue.isEmpty) return;
+    final identities = _queue.map((track) => track.identityKey).toList();
+    if (_queueHistory.any(
+      (snapshot) =>
+          snapshot.tracks.length == identities.length &&
+          snapshot.tracks.asMap().entries.every(
+                (entry) => entry.value.identityKey == identities[entry.key],
+              ),
+    )) {
+      return;
+    }
+    _queueHistory.insert(
+      0,
+      QueueSnapshot(
+        savedAt: DateTime.now(),
+        tracks: List<Track>.of(_queue),
+      ),
+    );
+    if (_queueHistory.length > 10) {
+      _queueHistory.removeRange(10, _queueHistory.length);
+    }
+  }
+
+  Future<void> _showQueueHistory() async {
+    if (_queueHistory.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No saved queue history yet.')),
+        );
+      }
+      return;
+    }
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Queue history'),
+        content: SizedBox(
+          width: 520,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _queueHistory.length,
+            itemBuilder: (context, index) {
+              final snapshot = _queueHistory[index];
+              final timestamp = snapshot.savedAt.toLocal().toString();
+              return ListTile(
+                leading: const Icon(Icons.history),
+                title: Text('${snapshot.tracks.length} tracks'),
+                subtitle: Text(timestamp.length > 16 ? timestamp.substring(0, 16) : timestamp),
+                onTap: () => Navigator.pop(dialogContext, index),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, -1),
+            child: const Text('Clear history'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected == -1) {
+      _queueHistory.clear();
+      await _saveQueue();
+      return;
+    }
+    if (selected < 0 || selected >= _queueHistory.length) return;
+    if (_selectionInProgress || _crossfadeInProgress) return;
+    final snapshot = _queueHistory[selected];
+    _rememberQueueSnapshot();
+    await _stopCurrent();
+    if (!mounted) return;
+    setState(() {
+      _queue
+        ..clear()
+        ..addAll(snapshot.tracks);
+      _selected = 0;
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _playerState = PlayerState.stopped;
+    });
+    _audioHandler?.syncQueue(_queue);
+    await _saveQueue();
   }
 
   Future<void> _addFiles() async {
@@ -6875,6 +7021,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _clearQueue() async {
     if (_selectionInProgress || _crossfadeInProgress) return;
     final operation = ++_queueOperationGeneration;
+    _rememberQueueSnapshot();
     _castPositionTimer?.cancel();
     _resumeSaveTimer?.cancel();
     await _stopCurrent();
@@ -9517,6 +9664,7 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (!mounted) return;
     final operation = ++_queueOperationGeneration;
+    _rememberQueueSnapshot();
     await _stopCurrent();
     if (!mounted || operation != _queueOperationGeneration) return;
     setState(() {
@@ -10586,6 +10734,7 @@ class _PlayerPageState extends State<PlayerPage>
             itemBuilder: (_) => [
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
+              PopupMenuItem(value: 'queueHistory', child: Text('Queue history')),
               PopupMenuItem(
                 value: 'folder',
                 child: Text(
@@ -10780,6 +10929,13 @@ class _PlayerPageState extends State<PlayerPage>
               Text(
                 '${_queue.length} tracks',
                 style: const TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+              IconButton(
+                onPressed: _showQueueHistory,
+                icon: const Icon(Icons.history, size: 18),
+                color: Colors.white38,
+                tooltip: 'Queue history',
+                visualDensity: VisualDensity.compact,
               ),
               if (_queue.isNotEmpty)
                 IconButton(
