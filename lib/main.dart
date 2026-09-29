@@ -8682,7 +8682,9 @@ class _PlayerPageState extends State<PlayerPage>
     if (source == null || !isHttpUri(source)) return;
     final directory = await _pickFolderLocation('Choose an offline music folder');
     if (!mounted || directory == null) return;
-    final client = HttpClient();
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20)
+      ..idleTimeout = const Duration(seconds: 30);
     File? temporary;
     try {
       final credentials = _webDavCredentials[webDavCredentialKey(source)];
@@ -8694,6 +8696,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
       final request = await client.getUrl(source);
+      request.headers.set(HttpHeaders.userAgentHeader, 'NeonAmp/1.0');
       final response = await request.close();
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('Remote track returned ${response.statusCode}');
