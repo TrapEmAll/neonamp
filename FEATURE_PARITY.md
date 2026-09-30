@@ -44,6 +44,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Recursive folder scanning and M3U/M3U8 playlist import
 - Android MediaStore device-music scan with cached paths, relative folder metadata, incremental cache refresh, and shared metadata/DSP playback
 - Versioned JSON backup and restore for library, queue, playlists, settings, resume positions, and Android folder-permission metadata
+- Android share/open-with handling for audio files, audio URLs, and supported playlist files from Files, Downloads, browsers, and messaging apps, including cold-start and warm-start delivery with content-URI caching
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume
 - Configurable local-file crossfade with optional FFmpeg silence detection that adjusts transition timing from leading/trailing silence; streams retain the fixed-duration fallback
 - One-tap 15-second rewind and forward seek on Windows and Android

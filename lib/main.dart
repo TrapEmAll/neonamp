@@ -59,6 +59,7 @@ import 'track_auditor.dart';
 import 'audio_formats.dart';
 import 'audio_format_info.dart';
 import 'android_media_store.dart';
+import 'android_external_intent.dart';
 import 'ab_loop.dart';
 import 'backup.dart';
 
@@ -2768,7 +2769,86 @@ class _PlayerPageState extends State<PlayerPage>
     _bindMidiStreams();
     _initializeWindowsMediaKeys();
     _initializeAudioService();
-    _loadQueue();
+    unawaited(_loadQueue().then((_) => _consumeAndroidIntents()));
+  }
+
+  Future<void> _consumeAndroidIntents() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final values = await const MethodChannel('neonamp/intents')
+          .invokeListMethod<Map<Object?, Object?>>('drain');
+      final intents = deduplicateAndroidExternalIntents(
+        (values ?? []).map((value) {
+          final path = value['path']?.toString() ?? '';
+          final name = value['name']?.toString();
+          return AndroidExternalIntent(path: path, name: name);
+        }),
+      );
+      if (intents.isEmpty || !mounted) return;
+
+      final imported = <Track>[];
+      var importedPlaylist = false;
+      for (final intent in intents) {
+        final extension = intent.path
+            .split(RegExp(r'[/\\]'))
+            .last
+            .split('.')
+            .last
+            .toLowerCase();
+        if (const {'m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'}
+            .contains(extension)) {
+          await _importPlaylist(externalPath: intent.path);
+          importedPlaylist = true;
+          continue;
+        }
+        if (!intent.isRemoteUrl &&
+            (!isSupportedLibraryAudioPath(intent.path) ||
+                !File(intent.path).existsSync())) {
+          continue;
+        }
+        imported.add(
+          await _readTrack(
+            intent.path,
+            intent.name ?? intent.path.split(RegExp(r'[/\\]')).last,
+          ),
+        );
+      }
+      if (imported.isEmpty || !mounted) {
+        if (importedPlaylist) return;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('NeonAmp could not open the shared media.'),
+            ),
+          );
+        }
+        return;
+      }
+      var firstIndex = -1;
+      setState(() {
+        for (final track in imported) {
+          if (!_library.any((item) => item.path == track.path)) {
+            _library.add(track);
+          }
+          if (_queue.any((item) => item.path == track.path)) continue;
+          if (firstIndex < 0) firstIndex = _queue.length;
+          _queue.add(track);
+        }
+      });
+      await _saveQueue();
+      if (firstIndex >= 0) await _select(firstIndex);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Opened ${imported.length} shared item(s).')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open shared media: $error')),
+        );
+      }
+    }
   }
 
   Future<void> _initializeWindowsMediaKeys() async {
@@ -4320,12 +4400,17 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _importPlaylist() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
-    );
-    final file = result.firstOrNull;
+  Future<void> _importPlaylist({String? externalPath}) async {
+    final file = externalPath == null
+        ? (await FilePicker.pickFiles(
+            type: FileType.custom,
+            allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
+          ))?.firstOrNull
+        : PlatformFile(
+            name: File(externalPath).uri.pathSegments.last,
+            size: File(externalPath).lengthSync(),
+            path: externalPath,
+          );
     if (file == null) return;
     final materialized = await _materializePickedFile(file);
     if (materialized == null) return;

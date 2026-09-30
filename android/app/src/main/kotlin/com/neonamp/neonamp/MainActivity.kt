@@ -48,6 +48,7 @@ class MainActivity : AudioServiceActivity() {
     private var folderPickerResult: MethodChannel.Result? = null
     private var audioCdResult: MethodChannel.Result? = null
     private var usbTag = 1
+    private val pendingExternalValues = mutableListOf<Pair<String, String?>>()
     private val libraryCachePreferences by lazy {
         getSharedPreferences("neonamp-library-cache", Context.MODE_PRIVATE)
     }
@@ -86,6 +87,7 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enqueueExternalIntent(intent)
         val filter = IntentFilter(usbPermissionAction)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(usbReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -105,8 +107,36 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        enqueueExternalIntent(intent)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/intents")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "drain") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val pending = synchronized(pendingExternalValues) {
+                    val values = pendingExternalValues.toList()
+                    pendingExternalValues.clear()
+                    values
+                }
+                Thread {
+                    val items = pending.mapNotNull { (value, mimeType) ->
+                        try {
+                            materializeExternalValue(value, mimeType)
+                        } catch (_: Throwable) {
+                            null
+                        }
+                    }
+                    runOnUiThread { result.success(items) }
+                }.start()
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/widget")
             .setMethodCallHandler { call, result ->
                 if (call.method != "update") {
@@ -314,6 +344,110 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun enqueueExternalIntent(intent: Intent?) {
+        if (intent == null) return
+        when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data?.let { uri ->
+                synchronized(pendingExternalValues) {
+                    pendingExternalValues.add(uri.toString() to intent.type)
+                }
+            }
+            Intent.ACTION_SEND -> {
+                intent.getStringExtra(Intent.EXTRA_TEXT)?.let { text ->
+                    synchronized(pendingExternalValues) {
+                        pendingExternalValues.add(text to intent.type)
+                    }
+                }
+                intentExternalStreams(intent).forEach { uri ->
+                    synchronized(pendingExternalValues) {
+                        pendingExternalValues.add(uri.toString() to intent.type)
+                    }
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> intentExternalStreams(intent).forEach { uri ->
+                synchronized(pendingExternalValues) {
+                    pendingExternalValues.add(uri.toString() to intent.type)
+                }
+            }
+        }
+    }
+
+    private fun intentExternalStreams(intent: Intent): List<Uri> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val multiple = intent.getParcelableArrayListExtra(
+                Intent.EXTRA_STREAM,
+                Uri::class.java,
+            )
+            if (multiple != null) return multiple
+            return listOfNotNull(
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java),
+            )
+        }
+        @Suppress("DEPRECATION")
+        val multiple = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+        if (multiple != null) return multiple
+        @Suppress("DEPRECATION")
+        return listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+    }
+
+    private fun materializeExternalValue(
+        value: String,
+        mimeType: String?,
+    ): Map<String, String>? {
+        val uri = Uri.parse(value)
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
+        if (scheme == "http" || scheme == "https") {
+            return mapOf("path" to value, "name" to (uri.lastPathSegment ?: value))
+        }
+        if (scheme == "file") {
+            val path = uri.path ?: return null
+            return mapOf("path" to path, "name" to File(path).name)
+        }
+        if (scheme == null && (value.startsWith("/") || value.matches(Regex("^[A-Za-z]:[\\\\/].*")))) {
+            val file = File(value)
+            if (file.isFile) return mapOf("path" to file.path, "name" to file.name)
+        }
+        if (scheme != "content") return null
+        val name = queryDisplayName(uri) ?: uri.lastPathSegment ?: "shared-audio"
+        val extension = name.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it.isNotBlank() }
+            ?: audioExtensionForMimeType(mimeType.orEmpty())
+            ?: "bin"
+        val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        val cachedFile = File(cacheDirectory, "${sha256(uri.toString())}.$extension")
+        if (!cachedFile.isFile) {
+            val temporary = File(cacheDirectory, "${cachedFile.name}.tmp")
+            contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(temporary).use { output -> input.copyTo(output) }
+            } ?: return null
+            if (!temporary.renameTo(cachedFile)) {
+                temporary.copyTo(cachedFile, overwrite = true)
+                temporary.delete()
+            }
+        }
+        libraryCachePreferences.edit()
+            .putString(cachedFile.canonicalPath, uri.toString())
+            .apply()
+        return mapOf("path" to cachedFile.absolutePath, "name" to name)
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && !cursor.isNull(index)) return cursor.getString(index)
+            }
+        }
+        return null
     }
 
     private fun pickLibraryFolder(result: MethodChannel.Result) {
