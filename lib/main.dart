@@ -3095,6 +3095,38 @@ class _PlayerPageState extends State<PlayerPage>
     final destination = File(
       '${cache.path}${Platform.pathSeparator}$encoded$extension',
     );
+    Future<String> renderTrimClip() async {
+      final start = double.tryParse(startController.text.trim());
+      final end = double.tryParse(endController.text.trim());
+      final range = start == null || end == null
+          ? null
+          : (
+              start: Duration(microseconds: (start * 1000000).round()),
+              end: Duration(microseconds: (end * 1000000).round()),
+            );
+      if (range == null || !isValidTrimRange(range.start, range.end, duration)) {
+        throw const FormatException('Enter a valid range within the track.');
+      }
+      final outputPath =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'neonamp-clip-${DateTime.now().microsecondsSinceEpoch}.wav';
+      final session = await FFmpegKit.executeWithArguments(
+        buildAudioTrimArguments(
+          inputPath: track.path,
+          outputPath: outputPath,
+          start: range.start,
+          end: range.end,
+        ),
+      );
+      final returnCode = await session.getReturnCode();
+      final output = File(outputPath);
+      if (!ReturnCode.isSuccess(returnCode) ||
+          !await output.exists() ||
+          await output.length() <= 44) {
+        throw StateError('Could not export the selected audio range.');
+      }
+      return outputPath;
+    }
     try {
       if (!await destination.exists() || await destination.length() <= 44) {
         await NetworkLibraryClient().downloadToFile(
@@ -9195,8 +9227,10 @@ class _PlayerPageState extends State<PlayerPage>
             if (Platform.isAndroid)
               OutlinedButton(
                 onPressed: () async {
-                  final source = File(outputPath);
+                  String? outputPath;
                   try {
+                    outputPath = await renderTrimClip();
+                    final source = File(outputPath);
                     final exported = await const MethodChannel('neonamp/library')
                         .invokeMapMethod<String, dynamic>('exportRingtone', {
                           'sourcePath': source.path,
@@ -9217,6 +9251,11 @@ class _PlayerPageState extends State<PlayerPage>
                       ScaffoldMessenger.of(dialogContext).showSnackBar(
                         SnackBar(content: Text('Could not save ringtone: $error')),
                       );
+                    }
+                  } finally {
+                    if (outputPath != null) {
+                      final output = File(outputPath!);
+                      if (await output.exists()) await output.delete();
                     }
                   }
                 },
