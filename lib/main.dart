@@ -2427,6 +2427,8 @@ class NeonAmpApp extends StatefulWidget {
 class _NeonAmpAppState extends State<NeonAmpApp> {
   String _themeName = 'Neon';
   double _textScale = 1.0;
+  bool _dynamicColor = false;
+  int? _systemAccentColor;
   final Map<String, ThemeSkin> _customSkins = {};
 
   @override
@@ -2451,11 +2453,22 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
         _customSkins.clear();
       }
     }
+    int? systemAccentColor;
+    if (Platform.isAndroid) {
+      try {
+        systemAccentColor = await const MethodChannel('neonamp/theme')
+            .invokeMethod<int>('dynamicColor');
+      } on Object {
+        systemAccentColor = null;
+      }
+    }
     if (!mounted) return;
     final savedScale = prefs.getDouble('textScale') ?? 1.0;
     setState(() {
       _themeName = prefs.getString('themeName') ?? 'Neon';
       _textScale = savedScale.clamp(0.85, 1.3).toDouble();
+      _dynamicColor = prefs.getBool('dynamicColor') ?? false;
+      _systemAccentColor = systemAccentColor;
     });
   }
 
@@ -2470,6 +2483,12 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     setState(() => _textScale = clamped);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('textScale', clamped);
+  }
+
+  Future<void> _setDynamicColor(bool enabled) async {
+    setState(() => _dynamicColor = enabled);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('dynamicColor', enabled);
   }
 
   Future<void> _addCustomSkin(ThemeSkin skin) async {
@@ -2495,11 +2514,16 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
       (value) => value.name == _themeName,
       orElse: () => builtInSkins().first,
     );
+    final seedColor = Platform.isAndroid &&
+            _dynamicColor &&
+            _systemAccentColor != null
+        ? Color(_systemAccentColor!)
+        : skin.seedColor;
     return ThemeData(
       brightness: Brightness.dark,
       scaffoldBackgroundColor: skin.backgroundColor,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: skin.seedColor,
+        seedColor: seedColor,
         brightness: Brightness.dark,
       ),
       fontFamily: 'Segoe UI',
@@ -2525,6 +2549,8 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
       onSkinImported: _addCustomSkin,
       textScale: _textScale,
       onTextScaleChanged: _setTextScale,
+      dynamicColor: _dynamicColor,
+      onDynamicColorChanged: _setDynamicColor,
     ),
   );
 }
@@ -2538,6 +2564,8 @@ class PlayerPage extends StatefulWidget {
     this.onSkinImported,
     this.textScale = 1.0,
     this.onTextScaleChanged,
+    this.dynamicColor = false,
+    this.onDynamicColorChanged,
   });
 
   final String themeName;
@@ -2546,6 +2574,8 @@ class PlayerPage extends StatefulWidget {
   final Future<void> Function(ThemeSkin skin)? onSkinImported;
   final double textScale;
   final ValueChanged<double>? onTextScaleChanged;
+  final bool dynamicColor;
+  final ValueChanged<bool>? onDynamicColorChanged;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -9413,6 +9443,16 @@ class _PlayerPageState extends State<PlayerPage>
               _importSkin();
             },
           ),
+          if (Platform.isAndroid)
+            SwitchListTile(
+              title: const Text('Use Android dynamic color'),
+              subtitle: const Text('Tint controls from the system accent'),
+              value: widget.dynamicColor,
+              onChanged: (value) {
+                widget.onDynamicColorChanged?.call(value);
+                Navigator.pop(context);
+              },
+            ),
         ],
       ),
     );
