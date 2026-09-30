@@ -15,10 +15,13 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.media.AudioManager
+import android.media.AudioDeviceInfo
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.provider.MediaStore
+import android.content.ContentUris
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -46,6 +49,7 @@ class MainActivity : AudioServiceActivity() {
     private var folderPickerResult: MethodChannel.Result? = null
     private var audioCdResult: MethodChannel.Result? = null
     private var usbTag = 1
+    private val pendingExternalValues = mutableListOf<Pair<String, String?>>()
     private val libraryCachePreferences by lazy {
         getSharedPreferences("neonamp-library-cache", Context.MODE_PRIVATE)
     }
@@ -84,6 +88,7 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enqueueExternalIntent(intent)
         val filter = IntentFilter(usbPermissionAction)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(usbReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -103,8 +108,49 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        enqueueExternalIntent(intent)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/intents")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "drain") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val pending = synchronized(pendingExternalValues) {
+                    val values = pendingExternalValues.toList()
+                    pendingExternalValues.clear()
+                    values
+                }
+                Thread {
+                    val items = pending.mapNotNull { (value, mimeType) ->
+                        try {
+                            materializeExternalValue(value, mimeType)
+                        } catch (_: Throwable) {
+                            null
+                        }
+                    }
+                    runOnUiThread { result.success(items) }
+                }.start()
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/widget")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "update") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                val title = call.argument<String>("title") ?: "NeonAmp"
+                val artist = call.argument<String>("artist") ?: "Nothing queued"
+                val playing = call.argument<Boolean>("playing") ?: false
+                val artwork = call.argument<ByteArray>("artwork")
+                NeonAmpWidgetProvider.updateAll(this, title, artist, playing, artwork)
+                result.success(true)
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, libraryChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -126,6 +172,18 @@ class MainActivity : AudioServiceActivity() {
                             }.start()
                         }
                     }
+                    "scanMediaStore" -> {
+                        Thread {
+                            try {
+                                val files = scanMediaStore()
+                                runOnUiThread { result.success(files) }
+                            } catch (error: Throwable) {
+                                runOnUiThread {
+                                    result.error("media_store_scan_failed", error.message, null)
+                                }
+                            }
+                        }.start()
+                    }
                     "copyFileToFolder" -> {
                         val folderUri = call.argument<String>("uri")
                         val sourcePath = call.argument<String>("sourcePath")
@@ -144,6 +202,25 @@ class MainActivity : AudioServiceActivity() {
                                 }
                             }.start()
                         }
+                    }
+                    "cacheInfo" -> result.success(cacheInfo())
+                    "setCacheLimit" -> {
+                        val limitBytes = call.argument<Number>("limitBytes")?.toLong()
+                        if (limitBytes == null || limitBytes < 0L) {
+                            result.error("invalid_arguments", "A non-negative cache limit is required.", null)
+                        } else {
+                            libraryCachePreferences.edit().putLong("limitBytes", limitBytes).apply()
+                            enforceCacheLimit()
+                            result.success(cacheInfo())
+                        }
+                    }
+                    "clearCache" -> {
+                        clearLibraryCache()
+                        result.success(cacheInfo())
+                    }
+                    "repairCache" -> {
+                        repairLibraryCache()
+                        result.success(cacheInfo())
                     }
                     "writeTextToFolder" -> {
                         val folderUri = call.argument<String>("uri")
@@ -217,11 +294,41 @@ class MainActivity : AudioServiceActivity() {
                     ?.toIntOrNull()
                 val bufferFrames = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)
                     ?.toIntOrNull()
+                val outputDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull()
+                } else {
+                    null
+                }
+                val routeType = outputDevice?.type?.let { type ->
+                    when (type) {
+                        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth A2DP"
+                        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth SCO"
+                        AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE headset"
+                        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB device"
+                        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB headset"
+                        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Built-in speaker"
+                        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "Built-in earpiece"
+                        AudioDeviceInfo.TYPE_HDMI,
+                        AudioDeviceInfo.TYPE_HDMI_EARC,
+                        -> "HDMI"
+                        else -> "Audio device $type"
+                    }
+                }
+                val routeName = outputDevice?.productName?.toString()?.takeIf { it.isNotBlank() }
+                val latencyMs = if (sampleRate != null && sampleRate > 0 && bufferFrames != null) {
+                    bufferFrames * 1000.0 / sampleRate
+                } else {
+                    null
+                }
                 result.success(
                     mapOf(
                         "backend" to "Android AudioTrack",
                         "sampleRate" to sampleRate,
                         "bufferFrames" to bufferFrames,
+                        "routeName" to routeName,
+                        "routeType" to routeType,
+                        "codec" to "PCM / AudioTrack",
+                        "latencyMs" to latencyMs,
                         "formatKnown" to (sampleRate != null),
                     ),
                 )
@@ -289,6 +396,158 @@ class MainActivity : AudioServiceActivity() {
             }
     }
 
+    private fun enqueueExternalIntent(intent: Intent?) {
+        if (intent == null) return
+        when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data?.let { uri ->
+                synchronized(pendingExternalValues) {
+                    pendingExternalValues.add(uri.toString() to intent.type)
+                }
+            }
+            Intent.ACTION_SEND -> {
+                intent.getStringExtra(Intent.EXTRA_TEXT)?.let { text ->
+                    synchronized(pendingExternalValues) {
+                        pendingExternalValues.add(text to intent.type)
+                    }
+                }
+                intentExternalStreams(intent).forEach { uri ->
+                    synchronized(pendingExternalValues) {
+                        pendingExternalValues.add(uri.toString() to intent.type)
+                    }
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> intentExternalStreams(intent).forEach { uri ->
+                synchronized(pendingExternalValues) {
+                    pendingExternalValues.add(uri.toString() to intent.type)
+                }
+            }
+        }
+    }
+
+    private fun intentExternalStreams(intent: Intent): List<Uri> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val multiple = intent.getParcelableArrayListExtra(
+                Intent.EXTRA_STREAM,
+                Uri::class.java,
+            )
+            if (multiple != null) return multiple
+            return listOfNotNull(
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java),
+            )
+        }
+        @Suppress("DEPRECATION")
+        val multiple = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+        if (multiple != null) return multiple
+        @Suppress("DEPRECATION")
+        return listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+    }
+
+    private fun materializeExternalValue(
+        value: String,
+        mimeType: String?,
+    ): Map<String, String>? {
+        val uri = Uri.parse(value)
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
+        if (scheme == "http" || scheme == "https") {
+            return mapOf("path" to value, "name" to (uri.lastPathSegment ?: value))
+        }
+        if (scheme == "file") {
+            val path = uri.path ?: return null
+            return mapOf("path" to path, "name" to File(path).name)
+        }
+        if (scheme == null && (value.startsWith("/") || value.matches(Regex("^[A-Za-z]:[\\\\/].*")))) {
+            val file = File(value)
+            if (file.isFile) return mapOf("path" to file.path, "name" to file.name)
+        }
+        if (scheme != "content") return null
+        val name = queryDisplayName(uri) ?: uri.lastPathSegment ?: "shared-audio"
+        val fileExtension = name.substringAfterLast('.', "")
+            .lowercase(Locale.ROOT)
+            .takeIf { it.isNotBlank() }
+            ?: audioExtensionForMimeType(mimeType.orEmpty())
+            ?: "bin"
+        val cacheDirectory = libraryCacheDirectory()
+        val cachedFile = File(cacheDirectory, "${sha256(uri.toString())}.$fileExtension")
+        if (!cachedFile.isFile) {
+            val temporary = File(cacheDirectory, "${cachedFile.name}.tmp")
+            contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(temporary).use { output -> input.copyTo(output) }
+            } ?: return null
+            if (!temporary.renameTo(cachedFile)) {
+                temporary.copyTo(cachedFile, overwrite = true)
+                temporary.delete()
+            }
+        }
+        enforceCacheLimit()
+        libraryCachePreferences.edit()
+            .putString(cachedFile.canonicalPath, uri.toString())
+            .apply()
+        return mapOf("path" to cachedFile.absolutePath, "name" to name)
+    }
+
+    private fun libraryCacheDirectory(): File =
+        File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+
+    private fun cacheLimitBytes(): Long =
+        libraryCachePreferences.getLong("limitBytes", 0L)
+
+    private fun cacheInfo(): Map<String, Any> {
+        val files = libraryCacheDirectory().listFiles()?.filter { it.isFile } ?: emptyList()
+        return mapOf(
+            "files" to files.size,
+            "bytes" to files.sumOf { it.length() },
+            "limitBytes" to cacheLimitBytes(),
+        )
+    }
+
+    private fun enforceCacheLimit() {
+        val limit = cacheLimitBytes()
+        if (limit <= 0L) return
+        val files = libraryCacheDirectory().listFiles()
+            ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+            ?.sortedBy { it.lastModified() }
+            ?.toMutableList() ?: return
+        var total = files.sumOf { it.length() }
+        for (file in files) {
+            if (total <= limit) break
+            val length = file.length()
+            if (file.delete()) total -= length
+        }
+    }
+
+    private fun clearLibraryCache() {
+        libraryCacheDirectory().listFiles()?.forEach { if (it.isFile) it.delete() }
+        val limit = cacheLimitBytes()
+        libraryCachePreferences.edit().clear().putLong("limitBytes", limit).apply()
+    }
+
+    private fun repairLibraryCache() {
+        val root = libraryCacheDirectory().canonicalFile
+        val validPrefix = root.path + File.separator
+        val editor = libraryCachePreferences.edit()
+        libraryCachePreferences.all.keys
+            .filter { it != "limitBytes" && (!it.startsWith(validPrefix) || !File(it).isFile) }
+            .forEach { editor.remove(it) }
+        editor.apply()
+        enforceCacheLimit()
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && !cursor.isNull(index)) return cursor.getString(index)
+            }
+        }
+        return null
+    }
+
     private fun pickLibraryFolder(result: MethodChannel.Result) {
         if (folderPickerResult != null) {
             result.error("picker_busy", "A folder picker is already open.", null)
@@ -353,7 +612,7 @@ class MainActivity : AudioServiceActivity() {
     }
 
     private fun scanSafFolder(treeUri: Uri): List<Map<String, String>> {
-        val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        val cacheDirectory = libraryCacheDirectory()
         val audioExtensions = setOf(
             "mp3", "flac", "wav", "ogg", "m4a", "mp4", "aac", "wma",
             "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
@@ -455,6 +714,102 @@ class MainActivity : AudioServiceActivity() {
                 }
             } ?: throw IllegalStateException("Android could not read this folder. Re-add it to restore access.")
         }
+        enforceCacheLimit()
+        return results
+    }
+
+    private fun scanMediaStore(): List<Map<String, String>> {
+        val cacheDirectory = libraryCacheDirectory()
+        val results = mutableListOf<Map<String, String>>()
+        val relativePathColumnName = "relative_path"
+        val projection = mutableListOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.MIME_TYPE,
+            MediaStore.Audio.Media.SIZE,
+            MediaStore.Audio.Media.DATE_MODIFIED,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            projection.add(relativePathColumnName)
+        }
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        }
+        contentResolver.query(
+            collection,
+            projection.toTypedArray(),
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0",
+            null,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                "$relativePathColumnName ASC, ${MediaStore.Audio.Media.DISPLAY_NAME} ASC"
+            } else {
+                "${MediaStore.Audio.Media.DISPLAY_NAME} ASC"
+            },
+        )?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+            val mimeColumn = cursor.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
+            val relativeColumn = cursor.getColumnIndex(relativePathColumnName)
+            val sizeColumn = cursor.getColumnIndex(MediaStore.Audio.Media.SIZE)
+            val modifiedColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATE_MODIFIED)
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idColumn)
+                val name = cursor.getString(nameColumn) ?: continue
+                val mime = if (mimeColumn >= 0 && !cursor.isNull(mimeColumn)) {
+                    cursor.getString(mimeColumn).orEmpty()
+                } else {
+                    ""
+                }
+                var extension = name.substringAfterLast('.', "")
+                    .lowercase(Locale.ROOT)
+                if (extension.isBlank()) {
+                    extension = audioExtensionForMimeType(mime) ?: continue
+                }
+                val sourceSize = if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) {
+                    cursor.getLong(sizeColumn)
+                } else {
+                    -1L
+                }
+                val sourceModified = if (modifiedColumn >= 0 && !cursor.isNull(modifiedColumn)) {
+                    cursor.getLong(modifiedColumn) * 1000L
+                } else {
+                    -1L
+                }
+                val sourceUri = ContentUris.withAppendedId(collection, id)
+                val cacheFile = File(cacheDirectory, "${sha256(sourceUri.toString())}.$extension")
+                if (!cacheFile.isFile ||
+                    (sourceSize >= 0 && cacheFile.length() != sourceSize) ||
+                    (sourceModified > 0 && cacheFile.lastModified() != sourceModified)
+                ) {
+                    val temporary = File(cacheDirectory, "${cacheFile.name}.tmp")
+                    contentResolver.openInputStream(sourceUri)?.use { input ->
+                        FileOutputStream(temporary).use { output -> input.copyTo(output) }
+                    } ?: continue
+                    if (!temporary.renameTo(cacheFile)) {
+                        temporary.copyTo(cacheFile, overwrite = true)
+                        temporary.delete()
+                    }
+                    if (sourceModified > 0) cacheFile.setLastModified(sourceModified)
+                }
+                libraryCachePreferences.edit()
+                    .putString(cacheFile.canonicalPath, sourceUri.toString())
+                    .apply()
+                val relative = (if (relativeColumn >= 0 && !cursor.isNull(relativeColumn)) {
+                    cursor.getString(relativeColumn)
+                } else null).orEmpty() + name
+                results.add(
+                    mapOf(
+                        "path" to cacheFile.absolutePath,
+                        "name" to name,
+                        "relativePath" to relative,
+                    ),
+                )
+            }
+        } ?: throw IllegalStateException("Android MediaStore is unavailable.")
+        enforceCacheLimit()
         return results
     }
 

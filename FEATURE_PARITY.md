@@ -16,6 +16,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - OGG Vorbis and Opus tag editing rewrites Vorbis comments, including lyrics, totals, and embedded picture blocks, while retaining encoded audio packets
 - Batch metadata editing for selected library tracks with per-file failure reporting on Windows and Android
 - Embedded album-art reading and display when the source file contains cover art, including Android notification and lock-screen media metadata
+- Folder-art fallback for local tracks without embedded art, using Cover, Folder, Front, AlbumArt, and Album-Art images with bounded file sizes
 - Embedded cover-art replacement for supported local containers
 - Embedded lyrics editing and in-app lyrics viewing
 - AIFF/AIFC metadata and embedded cover-art editing through ID3 chunks, including lyrics
@@ -32,6 +33,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - CUE sheet import with virtual per-track queue entries backed by the original continuous audio file and segment-aware seek/progress on Windows and Android
 - HTTP audio stream / internet radio URL playback
 - Unified local-library plus Subsonic/Navidrome/Jellyfin search with persisted profiles and direct stream playback in the shared queue on Windows and Android
+- WebDAV network-library browsing with persisted profiles, recursive audio discovery, library-only import, and credential-aware streaming without storing credentials in track URLs
 - Optional ListenBrainz, Last.fm, and Libre.fm now-playing and completed-listen scrobbling with persisted token/API/session configuration, signed Last.fm-compatible submissions, normal listen-threshold handling, and non-blocking submission on Windows and Android
 - DLNA/UPnP renderer discovery and casting of HTTP(S) streams, local audio files, and segment-aware CUE virtual tracks on Windows and Android, with receiver transport controls, relative seek/progress, segment-boundary advancement, and byte-range file serving
 - Chromecast audio discovery and playback for MP3, AAC/M4A, WAV, OGG/Opus, and FLAC on Windows and Android, with remote play/pause/seek/volume/progress controls and CUE-segment-aware queue advancement; MIDI/KAR can be rendered through an imported SF2 SoundFont before casting
@@ -42,6 +44,10 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Podcast subscriptions import/export through interoperable OPML files on Windows and Android
 - Podcast subscription management allows unsubscribing without removing existing episodes from the queue/library
 - Recursive folder scanning and M3U/M3U8 playlist import
+- Android MediaStore device-music scan with cached paths, relative folder metadata, incremental cache refresh, and shared metadata/DSP playback
+- Android offline-cache controls with unlimited/128 MB/512 MB/1 GB limits, stale-entry repair, usage reporting, and confirmed cache clearing
+- Versioned JSON backup and restore for library, queue, playlists, settings, resume positions, and Android folder-permission metadata
+- Android share/open-with handling for audio files, audio URLs, and supported playlist files from Files, Downloads, browsers, and messaging apps, including cold-start and warm-start delivery with content-URI caching
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume
 - Configurable local-file crossfade with optional FFmpeg silence detection that adjusts transition timing from leading/trailing silence; streams retain the fixed-duration fallback
 - One-tap 15-second rewind and forward seek on Windows and Android
@@ -50,7 +56,10 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Persistent sleep timer with 15/30/60/90-minute playback stop options on Windows and Android
 - Persistent recently played history shared by the Windows and Android UIs
 - Per-track playback-position resume shared by the Windows and Android UIs
+- Persisted A–B loop points with wrap-around enforcement across native audio, DSP, and MIDI playback
+- Library imports do not implicitly add tracks to the playback queue; queue changes remain explicit
 - Persistent queue reordering, per-track removal, and clear-queue controls
+- Named queue snapshots with persistent save, restore, and delete actions
 - Native 10-band DSP equalizer for local files with built-in, plugin, and user-saved presets plus persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android; imported AutoEQ profiles preserve custom frequency centers and apply them through the shared FFmpeg parametric path; optional WAV/FLAC/AIFF/OGG impulse responses are available through the cross-platform convolution engine and are applied to normal playback and DSP crossfades; the bundled or user-imported SF2 SoundFont enables shared DSP processing for MIDI/KAR on both platforms
 - Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, Matroska/WebM, AMR/AMR-WB, Speex, M4B, 3GP, Ogg/OGA/OGX, MPEG Layer I/II, AC3, AU, CAF, DTS, SND, TAK, TTA, VOC, and DSD DSF/DFF/DSDIFF audio when native playback cannot open the original; DSD is decoded to PCM through the shared FFmpeg path rather than sent as native DoP/ASIO; decoded audio is temporary and uses the shared playback controls and DSP path
 - Local audio format diagnostics for WAV, FLAC, AIFF/AIFC, and DSD containers, showing source sample rate, bit depth, channel count, and codec when available; the library auditor also samples PCM WAV peaks to flag digital-full-scale clipping; hardware-exclusive/DAC-lock status is not inferred
@@ -66,7 +75,11 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Audio CD track discovery and WAV ripping through the native Windows CD-ROM API and Android USB-host MMC/CDDA transport, with SAF-compatible Android rip destinations
 - Responsive Windows and Android layouts
 - Local HTTP/WebSocket remote control with phone-friendly queue browsing, remote track selection, clear-queue, transport, seek, and volume commands
-- Android background playback with notification, lock-screen, headset, and Android Auto media controls
+- Android background playback with notification, lock-screen, headset, and Android Auto media controls, including browsable library, queue, favorites, history, podcasts, playlists, and voice-search metadata
+- Android home-screen media widget with compact/large responsive layouts, artwork, queue shortcut, and play/pause/previous/next actions synchronized with native, DSP, MIDI, and cast playback state
+- Android distribution workflow produces both ARM-only APK and App Bundle artifacts; optional GitHub Actions upload-keystore secrets create a Play Console-compatible signed bundle without storing credentials in the repository
+- Android audio diagnostics report the active AudioTrack output route/type, PCM path, sample rate, and estimated buffer latency; unavailable DAC bit depth or Bluetooth codec values remain explicitly unknown
+- Android notification controls are configurable and persisted: artwork visibility, seek/15-second skip actions, and compact previous/play/next action presets
 - Windows global media keys for play/pause, stop, previous, and next
 - Android USB/Bluetooth gamepad controls for play/pause, next, previous, 15-second seek, mute, and an in-app controller overlay; bindings can be captured, remapped, reset, and persisted; the same controller key events are handled by the Windows Flutter surface
 - Windows System Media Transport Controls with lock-screen/taskbar metadata and transport buttons

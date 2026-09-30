@@ -10,13 +10,19 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 
 - Native Windows desktop build and Android APK from one Flutter codebase.
 - Android background playback with lock-screen, headset, notification, and Android Auto media controls.
+- Android home-screen widget with compact and large layouts, artwork, queue shortcut, and play/pause/previous/next controls.
+- Android Auto can browse the library, queue, favorites, history, podcasts, playlists, and search track metadata.
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
+- On Android, scan the device's MediaStore music collection in one step; cached results use the same metadata and DSP path as SAF folders.
+- Android offline cache management includes usage reporting, configurable size limits, stale-entry repair, and confirmed cache clearing.
+- Open audio files, supported playlists, and audio URLs from Android Files, Downloads, browsers, and messaging apps; NeonAmp caches temporary content URIs and starts playback from the received item.
 - Decode legacy and container audio formats through the bundled cross-platform fallback decoder when the native playback path cannot read them; conversion is temporary and does not modify the music file.
 - Play local videos in a separate Windows/Android queue with seeking, speed and volume controls; codec support depends on the device's native decoders.
 - Add HTTP audio streams and online radio URLs.
 - Discover DLNA/UPnP network players and cast local audio or HTTP(S) streams from Windows or Android; local files are served temporarily over the LAN, so both devices must be able to communicate on the same network.
+- Browse a WebDAV music folder recursively and add discovered audio to the library without implicitly queueing it.
 - Discover AirPlay receivers and cast compatible local audio or HTTP(S) streams from Windows or Android.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
@@ -31,6 +37,10 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Manage podcast subscriptions and unsubscribe without removing episodes already added to the queue or library.
 - Persistent queue between launches.
 - Persistent Bookmarks view for quick access to local tracks, CUE tracks, and radio streams.
+- A–B loop points can be set from the current playback position, persisted, and enforced across native, DSP, and MIDI playback.
+- Adding files or folders updates the library without silently changing the playback queue.
+- Save and restore named queue snapshots without disturbing the library.
+- Export and import a versioned JSON backup containing library, queue, playlists, settings, resume positions, and folder-permission metadata.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
 - Import and export ASX playlists with titles, stream URLs, and relative media references.
@@ -51,6 +61,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Persistent smart playlists for favorites, top-rated, most-played, genre, and artist rules, including two-rule all/any matching.
 - Sort the library by recently added, title, artist, album, rating, or play count with a persisted direction.
 - Embedded album-art display when cover art is available in the audio file.
+- Folder cover-art fallback for tracks without embedded artwork.
 - Replace embedded cover art for supported local audio containers.
 - Named playlists with add-to-playlist actions plus M3U/M3U8 and legacy PLS import/export.
 - Import and export iTunes-compatible XML libraries, including local-track metadata and named playlists.
@@ -69,7 +80,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
   - Animated spectrum-bars, waveform, and oscilloscope visualizers with persisted mode selection.
 - Desktop Visuals and Settings actions are available on Windows and Android.
 
-The Android APK is a debug/distribution artifact signed with Flutter's local release key for direct installation. A Play Store release will need a real upload keystore and store configuration.
+The Android CI artifact includes both the ARM-only APK and an Android App Bundle. Without signing secrets, the builds use Flutter's local release/debug signing for direct installation. For a Play Store-ready signed bundle, configure these GitHub Actions secrets: `ANDROID_UPLOAD_KEYSTORE_BASE64`, `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. The keystore itself is never committed.
 
 ## Development
 

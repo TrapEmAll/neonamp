@@ -58,9 +58,32 @@ import 'abx_test.dart';
 import 'track_auditor.dart';
 import 'audio_formats.dart';
 import 'audio_format_info.dart';
+import 'android_media_store.dart';
+import 'android_external_intent.dart';
+import 'ab_loop.dart';
+import 'backup.dart';
+import 'webdav_library.dart';
+import 'folder_artwork.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
+
+Future<void> _updateAndroidWidget({
+  required Track track,
+  required bool playing,
+}) async {
+  if (!Platform.isAndroid) return;
+  try {
+    await const MethodChannel('neonamp/widget').invokeMethod('update', {
+      'title': track.name,
+      'artist': track.artist,
+      'playing': playing,
+      if (track.artwork != null) 'artwork': boundedMediaArtwork(track.artwork),
+    });
+  } on Object catch (error) {
+    debugPrint('Could not update Android widget: $error');
+  }
+}
 
 const supportedVideoExtensions = {
   'avi',
@@ -2148,17 +2171,24 @@ class _MuteIntent extends Intent {
 }
 
 class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
-  NeonAudioHandler(this.player) {
+  NeonAudioHandler(this.player, {this.remoteUrlResolver}) {
     _bindPlayerStreams();
   }
 
   AudioPlayer player;
+  final String Function(Track track)? remoteUrlResolver;
   Future<void> Function()? onNext;
   Future<void> Function()? onPrevious;
   Future<void> Function()? onPlayRequested;
   Future<void> Function()? onPauseRequested;
   Future<void> Function()? onStopRequested;
   Future<void> Function(Duration position)? onSeekRequested;
+  Future<List<MediaItem>> Function(String parentMediaId)? childrenProvider;
+  Future<List<MediaItem>> Function(String query)? searchProvider;
+  Future<void> Function(String mediaId)? playMediaIdRequested;
+  bool Function()? notificationArtworkEnabled;
+  bool Function()? notificationSeekControlsEnabled;
+  String Function()? notificationCompactActions;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
@@ -2200,7 +2230,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     final duration = track.cueEnd == null
         ? null
         : track.cueEnd! - track.cueStart;
-    final artworkUri = await _artworkUri(track);
+    final artworkUri = await _notificationArtworkUri(track);
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
@@ -2211,9 +2241,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         duration: duration,
       ),
     );
+    unawaited(_updateAndroidWidget(track: track, playing: true));
     await player.play(
       track.path.startsWith('http')
-          ? UrlSource(track.path)
+          ? UrlSource(remoteUrlResolver?.call(track) ?? track.path)
           : DeviceFileSource(track.path),
     );
     await player.setPlaybackRate(_playbackSpeed);
@@ -2228,7 +2259,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<void> publishTrack(Track track) async {
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
-    final artworkUri = await _artworkUri(track);
+    final artworkUri = await _notificationArtworkUri(track);
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
@@ -2238,6 +2269,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         artUri: artworkUri,
       ),
     );
+    unawaited(_updateAndroidWidget(track: track, playing: false));
   }
 
   Future<Uri?> _artworkUri(Track track) async {
@@ -2298,25 +2330,73 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     await onPrevious?.call();
   }
 
+  Future<Uri?> _notificationArtworkUri(Track track) async {
+    if (notificationArtworkEnabled?.call() == false) return null;
+    return _artworkUri(track);
+  }
+
+  @override
+  Future<List<MediaItem>> getChildren(
+    String parentMediaId, [
+    Map<String, dynamic>? options,
+  ]) async {
+    final provider = childrenProvider;
+    return provider == null ? <MediaItem>[] : await provider(parentMediaId);
+  }
+
+  @override
+  Future<List<MediaItem>> search(
+    String query, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    final provider = searchProvider;
+    return provider == null ? <MediaItem>[] : await provider(query);
+  }
+
+  @override
+  Future<void> playFromMediaId(
+    String mediaId, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    await playMediaIdRequested?.call(mediaId);
+  }
+
   void _broadcast({Duration? position, PlayerState? state}) {
     if (position != null) _lastPosition = position;
     final currentState = state ?? player.state;
+    final controls = switch (notificationCompactActions?.call()) {
+      'playNext' => <MediaControl>[
+        currentState == PlayerState.playing
+            ? MediaControl.pause
+            : MediaControl.play,
+        MediaControl.skipToNext,
+      ],
+      'previousPlay' => <MediaControl>[
+        MediaControl.skipToPrevious,
+        currentState == PlayerState.playing
+            ? MediaControl.pause
+            : MediaControl.play,
+      ],
+      _ => <MediaControl>[
+        MediaControl.skipToPrevious,
+        currentState == PlayerState.playing
+            ? MediaControl.pause
+            : MediaControl.play,
+        MediaControl.skipToNext,
+      ],
+    };
+    final compactIndices = List<int>.generate(controls.length, (index) => index);
     playbackState.add(
       PlaybackState(
-        controls: [
-          MediaControl.skipToPrevious,
-          currentState == PlayerState.playing
-              ? MediaControl.pause
-              : MediaControl.play,
-          MediaControl.stop,
-          MediaControl.skipToNext,
-        ],
-        systemActions: const {
-          MediaAction.seek,
-          MediaAction.seekForward,
-          MediaAction.seekBackward,
-        },
-        androidCompactActionIndices: const [0, 1, 3],
+        controls: controls,
+        systemActions: notificationSeekControlsEnabled?.call() == false
+            ? const <MediaAction>{}
+            : const {
+                MediaAction.seek,
+                MediaAction.seekForward,
+                MediaAction.seekBackward,
+              },
+        androidCompactActionIndices: compactIndices,
         processingState: currentState == PlayerState.completed
             ? AudioProcessingState.completed
             : AudioProcessingState.ready,
@@ -2457,6 +2537,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
   final List<SmartPlaylist> _smartPlaylists = [];
+  final Map<String, List<Track>> _savedQueueSnapshots = {};
   final Map<String, NeonAmpPlugin> _plugins = {};
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _controllerFocusNode = FocusNode();
@@ -2485,6 +2566,10 @@ class _PlayerPageState extends State<PlayerPage>
   bool _shuffle = false;
   bool _repeat = false;
   bool _repeatOne = false;
+  bool _abLoopEnabled = false;
+  Duration? _abLoopStart;
+  Duration? _abLoopEnd;
+  bool _abLoopSeekInProgress = false;
   bool _crossfade = false;
   bool _silenceAwareCrossfade = false;
   bool _bitPerfectMode = false;
@@ -2521,8 +2606,12 @@ class _PlayerPageState extends State<PlayerPage>
   bool _r128NormalizationEnabled = false;
   final Map<String, double?> _measuredLufs = <String, double?>{};
   bool _truePeakLimiterEnabled = true;
+  bool _notificationArtworkEnabled = true;
+  bool _notificationSeekControlsEnabled = true;
+  String _notificationCompactActions = 'previousPlayNext';
   String? _convolutionImpulsePath;
   final List<MediaServerProfile> _mediaServerProfiles = [];
+  final List<WebDavProfile> _webDavProfiles = [];
   String _listenBrainzToken = '';
   String _lastFmApiKey = '';
   String _lastFmSessionKey = '';
@@ -2683,6 +2772,12 @@ class _PlayerPageState extends State<PlayerPage>
       _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
   bool get _isPlaying => _playerState == PlayerState.playing;
 
+  void _syncAndroidWidgetState() {
+    final track = _current;
+    if (track == null) return;
+    unawaited(_updateAndroidWidget(track: track, playing: _isPlaying));
+  }
+
   double _volumeFor(Track? track) {
     var result = playbackVolume(
       volume: _volume,
@@ -2742,7 +2837,114 @@ class _PlayerPageState extends State<PlayerPage>
     _bindMidiStreams();
     _initializeWindowsMediaKeys();
     _initializeAudioService();
-    _loadQueue();
+    final queueLoad = _loadQueue();
+    if (Platform.isAndroid) {
+      unawaited(queueLoad.then((_) => _consumeAndroidIntents()));
+    } else {
+      unawaited(queueLoad);
+    }
+  }
+
+  String _webDavPlaybackUrl(Track track) {
+    final profileId = track.customMetadata['webdavProfileId'];
+    if (profileId == null) return track.path;
+    WebDavProfile? profile;
+    for (final candidate in _webDavProfiles) {
+      if (candidate.id == profileId) {
+        profile = candidate;
+        break;
+      }
+    }
+    if (profile == null) return track.path;
+    return webDavAuthenticatedUri(Uri.parse(track.path), profile).toString();
+  }
+
+  Future<void> _consumeAndroidIntents() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final values = await const MethodChannel('neonamp/intents')
+          .invokeListMethod<Map<Object?, Object?>>('drain');
+      final intents = deduplicateAndroidExternalIntents(
+        (values ?? []).map((value) {
+          final path = value['path']?.toString() ?? '';
+          final name = value['name']?.toString();
+          return AndroidExternalIntent(path: path, name: name);
+        }),
+      );
+      if (intents.isEmpty || !mounted) return;
+
+      final imported = <Track>[];
+      var importedPlaylist = false;
+      var importedCue = false;
+      for (final intent in intents) {
+        final extension = intent.path
+            .split(RegExp(r'[/\\]'))
+            .last
+            .split('.')
+            .last
+            .toLowerCase();
+        if (const {'m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'}
+            .contains(extension)) {
+          await _importPlaylist(externalPath: intent.path);
+          importedPlaylist = true;
+          continue;
+        }
+        if (extension == 'cue') {
+          await _importCueSheet(
+            externalPath: intent.path,
+            externalItems: intents,
+          );
+          importedCue = true;
+          continue;
+        }
+        if (!intent.isRemoteUrl &&
+            (!isSupportedLibraryAudioPath(intent.path) ||
+                !File(intent.path).existsSync())) {
+          continue;
+        }
+        imported.add(
+          await _readTrack(
+            intent.path,
+            intent.name ?? intent.path.split(RegExp(r'[/\\]')).last,
+          ),
+        );
+      }
+      if (imported.isEmpty || !mounted) {
+        if (importedPlaylist || importedCue) return;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('NeonAmp could not open the shared media.'),
+            ),
+          );
+        }
+        return;
+      }
+      var firstIndex = -1;
+      setState(() {
+        for (final track in imported) {
+          if (!_library.any((item) => item.path == track.path)) {
+            _library.add(track);
+          }
+          if (_queue.any((item) => item.path == track.path)) continue;
+          if (firstIndex < 0) firstIndex = _queue.length;
+          _queue.add(track);
+        }
+      });
+      await _saveQueue();
+      if (firstIndex >= 0) await _select(firstIndex);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Opened ${imported.length} shared item(s).')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open shared media: $error')),
+        );
+      }
+    }
   }
 
   Future<void> _initializeWindowsMediaKeys() async {
@@ -2809,6 +3011,7 @@ class _PlayerPageState extends State<PlayerPage>
       final relative = _cueRelativePosition(track, value);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
+      unawaited(_enforceAbLoop(relative));
       unawaited(_maybeSubmitScrobble(relative));
       if (track?.cueStartMs == null &&
           !_casting &&
@@ -2830,6 +3033,7 @@ class _PlayerPageState extends State<PlayerPage>
     });
     _stateSub = _player.onPlayerStateChanged.listen((value) {
       setState(() => _playerState = value);
+      _syncAndroidWidgetState();
       unawaited(_syncWindowsMediaSession());
     });
     _completeSub = _player.onPlayerComplete.listen((_) => _handleComplete());
@@ -2852,6 +3056,7 @@ class _PlayerPageState extends State<PlayerPage>
       final relative = _cueRelativePosition(track, value);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
+      unawaited(_enforceAbLoop(relative));
       unawaited(_maybeSubmitScrobble(relative));
       if (track?.cueStartMs == null &&
           !_casting &&
@@ -2878,6 +3083,7 @@ class _PlayerPageState extends State<PlayerPage>
     _dspStateSub = _dspPlayer.onPlayerStateChanged.listen((value) {
       if (!mounted || !_dspActive) return;
       setState(() => _playerState = value);
+      _syncAndroidWidgetState();
       _audioHandler?.syncExternalState(position: _position, state: value);
       unawaited(_syncWindowsMediaSession());
     });
@@ -2891,6 +3097,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || !_midiActive || _selectionInProgress) return;
       setState(() => _position = value);
       _rememberResumePosition(value);
+      unawaited(_enforceAbLoop(value));
     });
     _midiPlayer.onDurationChanged.listen((value) {
       if (!mounted || !_midiActive) return;
@@ -2900,6 +3107,7 @@ class _PlayerPageState extends State<PlayerPage>
     _midiPlayer.onPlayerStateChanged.listen((value) {
       if (!mounted || !_midiActive) return;
       setState(() => _playerState = value);
+      _syncAndroidWidgetState();
       unawaited(_syncWindowsMediaSession());
     });
     _midiPlayer.onPlayerComplete.listen((_) {
@@ -2907,15 +3115,47 @@ class _PlayerPageState extends State<PlayerPage>
     });
   }
 
+  Future<void> _enforceAbLoop(Duration position) async {
+    if (_abLoopSeekInProgress) return;
+    final target = abLoopSeekTarget(
+      enabled: _abLoopEnabled,
+      start: _abLoopStart,
+      end: _abLoopEnd,
+      position: position,
+    );
+    if (target == null) return;
+    _abLoopSeekInProgress = true;
+    try {
+      await _seekCurrent(target);
+    } finally {
+      _abLoopSeekInProgress = false;
+    }
+  }
+
   Future<void> _initializeAudioService() async {
     if (!Platform.isAndroid) return;
     _audioHandler = await AudioService.init(
-      builder: () => NeonAudioHandler(_player),
+      builder: () => NeonAudioHandler(
+        _player,
+        remoteUrlResolver: _webDavPlaybackUrl,
+      ),
       config: AudioServiceConfig(
         androidNotificationChannelId: 'com.neonamp.audio',
         androidNotificationChannelName: 'NeonAmp playback',
         androidNotificationOngoing: true,
         androidStopForegroundOnPause: false,
+        fastForwardInterval: const Duration(seconds: 15),
+        rewindInterval: const Duration(seconds: 15),
+        preloadArtwork: true,
+        artDownscaleWidth: 512,
+        artDownscaleHeight: 512,
+        androidBrowsableRootExtras: const {
+          AndroidContentStyle.supportedKey: true,
+          AndroidContentStyle.browsableHintKey:
+              AndroidContentStyle.listItemHintValue,
+          AndroidContentStyle.playableHintKey:
+              AndroidContentStyle.listItemHintValue,
+        },
       ),
     );
     _audioHandler!.onNext = _next;
@@ -2924,6 +3164,154 @@ class _PlayerPageState extends State<PlayerPage>
     _audioHandler!.onPauseRequested = _pauseCurrent;
     _audioHandler!.onStopRequested = _stopCurrent;
     _audioHandler!.onSeekRequested = _seekCurrent;
+    _audioHandler!.childrenProvider = _androidAutoChildren;
+    _audioHandler!.searchProvider = _androidAutoSearch;
+    _audioHandler!.playMediaIdRequested = _playAndroidAutoMedia;
+    _audioHandler!.notificationArtworkEnabled =
+        () => _notificationArtworkEnabled;
+    _audioHandler!.notificationSeekControlsEnabled =
+        () => _notificationSeekControlsEnabled;
+    _audioHandler!.notificationCompactActions =
+        () => _notificationCompactActions;
+  }
+
+  Future<MediaItem> _androidAutoTrack(Track track) async {
+    Uri? artworkUri;
+    try {
+      artworkUri = await cacheMediaArtwork(
+        track.artwork,
+        directory: await getTemporaryDirectory(),
+      );
+    } on Object catch (error) {
+      debugPrint('Could not cache Android Auto artwork: $error');
+    }
+    return MediaItem(
+      id: track.identityKey,
+      title: track.name,
+      artist: track.artist,
+      album: track.album,
+      genre: track.genre,
+      duration: track.cueEnd == null ? null : track.cueEnd! - track.cueStart,
+      artUri: artworkUri,
+      playable: true,
+      extras: const {
+        AndroidContentStyle.playableHintKey:
+            AndroidContentStyle.listItemHintValue,
+      },
+    );
+  }
+
+  Future<List<MediaItem>> _androidAutoChildren(String parentMediaId) async {
+    if (parentMediaId == AudioService.browsableRootId) {
+      return [
+        const MediaItem(
+          id: 'auto:library',
+          title: 'Library',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:queue',
+          title: 'Queue',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:favorites',
+          title: 'Favorites',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:history',
+          title: 'Recently played',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:podcasts',
+          title: 'Podcasts',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        for (final name in _playlists.keys)
+          MediaItem(
+            id: 'auto:playlist:$name',
+            title: name,
+            playable: false,
+            extras: const {
+              AndroidContentStyle.browsableHintKey:
+                  AndroidContentStyle.listItemHintValue,
+            },
+          ),
+      ];
+    }
+    Iterable<Track> tracks;
+    if (parentMediaId == 'auto:library') {
+      tracks = _library;
+    } else if (parentMediaId == 'auto:queue') {
+      tracks = _queue;
+    } else if (parentMediaId == 'auto:favorites') {
+      tracks = _library.where((track) => track.favorite);
+    } else if (parentMediaId == 'auto:history') {
+      tracks = _playHistory.map((identity) => _findTrackByIdentity(identity)).whereType<Track>();
+    } else if (parentMediaId == 'auto:podcasts') {
+      tracks = _library.where((track) => track.album == 'Podcast');
+    } else if (parentMediaId.startsWith('auto:playlist:')) {
+      final name = parentMediaId.substring('auto:playlist:'.length);
+      final paths = _playlists[name] ?? const <String>[];
+      tracks = paths.map((path) => _findTrackByIdentity(path)).whereType<Track>();
+    } else {
+      return const [];
+    }
+    return [for (final track in tracks) await _androidAutoTrack(track)];
+  }
+
+  Track? _findTrackByIdentity(String identity) {
+    for (final track in [..._queue, ..._library]) {
+      if (track.identityKey == identity || track.path == identity) return track;
+    }
+    return null;
+  }
+
+  Future<List<MediaItem>> _androidAutoSearch(String query) async {
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) return const [];
+    final matches = _library.where(
+      (track) => track.name.toLowerCase().contains(needle) ||
+          track.artist.toLowerCase().contains(needle) ||
+          track.album.toLowerCase().contains(needle),
+    );
+    return [for (final track in matches.take(50)) await _androidAutoTrack(track)];
+  }
+
+  Future<void> _playAndroidAutoMedia(String mediaId) async {
+    final track = _findTrackByIdentity(mediaId);
+    if (track == null) return;
+    var index = _queue.indexWhere((item) => item.identityKey == track.identityKey);
+    if (index < 0) {
+      setState(() {
+        _queue.add(track);
+        index = _queue.length - 1;
+      });
+      await _saveQueue();
+    }
+    await _select(index);
   }
 
   Future<void> _showCastDevices() async {
@@ -3654,6 +4042,15 @@ class _PlayerPageState extends State<PlayerPage>
         _bitPerfectMode = settings['bitPerfectMode'] as bool? ?? false;
         _crossfadeSeconds =
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
+        _abLoopEnabled = settings['abLoopEnabled'] as bool? ?? false;
+        final savedAbStart = (settings['abLoopStartMs'] as num?)?.toInt();
+        final savedAbEnd = (settings['abLoopEndMs'] as num?)?.toInt();
+        _abLoopStart = savedAbStart == null
+            ? null
+            : Duration(milliseconds: savedAbStart);
+        _abLoopEnd = savedAbEnd == null
+            ? null
+            : Duration(milliseconds: savedAbEnd);
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _eqPreamp = ((settings['eqPreamp'] as num?)?.toDouble() ?? 0).clamp(-12, 12).toDouble();
         _eqQ = ((settings['eqQ'] as num?)?.toDouble() ?? 1).clamp(0.1, 10).toDouble();
@@ -3670,6 +4067,16 @@ class _PlayerPageState extends State<PlayerPage>
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         _r128NormalizationEnabled = settings['r128NormalizationEnabled'] as bool? ?? false;
         _truePeakLimiterEnabled = settings['truePeakLimiterEnabled'] as bool? ?? true;
+        _notificationArtworkEnabled =
+            settings['notificationArtworkEnabled'] as bool? ?? true;
+        _notificationSeekControlsEnabled =
+            settings['notificationSeekControlsEnabled'] as bool? ?? true;
+        final savedNotificationActions =
+            settings['notificationCompactActions'] as String?;
+        if (const {'previousPlayNext', 'playNext', 'previousPlay'}
+            .contains(savedNotificationActions)) {
+          _notificationCompactActions = savedNotificationActions!;
+        }
         final savedImpulse = settings['convolutionImpulsePath'] as String?;
         _convolutionImpulsePath = savedImpulse != null &&
                 isSupportedImpulseResponsePath(savedImpulse)
@@ -3682,6 +4089,29 @@ class _PlayerPageState extends State<PlayerPage>
               (item) => MediaServerProfile.fromJson(Map<String, dynamic>.from(item)),
             ),
           );
+        }
+        final savedWebDav = settings['webDavProfiles'];
+        if (savedWebDav is List) {
+          _webDavProfiles.addAll(
+            savedWebDav.whereType<Map>().map(
+              (item) => WebDavProfile.fromJson(Map<String, dynamic>.from(item)),
+            ),
+          );
+        }
+        final savedQueueSnapshots = settings['queueSnapshots'];
+        if (savedQueueSnapshots is Map) {
+          for (final entry in savedQueueSnapshots.entries) {
+            final rawTracks = entry.value;
+            if (rawTracks is! List) continue;
+            try {
+              _savedQueueSnapshots[entry.key.toString()] = rawTracks
+                  .whereType<Map>()
+                  .map((value) => Track.fromJson(Map<String, dynamic>.from(value)))
+                  .toList();
+            } on Object catch (error) {
+              debugPrint('Skipping invalid queue snapshot: $error');
+            }
+          }
         }
         final savedScrobble = settings['scrobbleProfile'];
         if (savedScrobble is Map) {
@@ -3771,6 +4201,9 @@ class _PlayerPageState extends State<PlayerPage>
         'silenceAwareCrossfade': _silenceAwareCrossfade,
         'bitPerfectMode': _bitPerfectMode,
         'crossfadeSeconds': _crossfadeSeconds,
+        'abLoopEnabled': _abLoopEnabled,
+        'abLoopStartMs': _abLoopStart?.inMilliseconds,
+        'abLoopEndMs': _abLoopEnd?.inMilliseconds,
         'equalizerEnabled': _equalizerEnabled,
         'eqPreamp': _eqPreamp,
         'eqQ': _eqQ,
@@ -3785,8 +4218,18 @@ class _PlayerPageState extends State<PlayerPage>
         'replayGainEnabled': _replayGainEnabled,
         'r128NormalizationEnabled': _r128NormalizationEnabled,
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
+        'notificationArtworkEnabled': _notificationArtworkEnabled,
+        'notificationSeekControlsEnabled': _notificationSeekControlsEnabled,
+        'notificationCompactActions': _notificationCompactActions,
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
+        'webDavProfiles': _webDavProfiles.map((profile) => profile.toJson()).toList(),
+        'queueSnapshots': _savedQueueSnapshots.map(
+          (name, tracks) => MapEntry(
+            name,
+            tracks.map((track) => track.toJson()).toList(),
+          ),
+        ),
         'scrobbleProfile': ScrobbleProfile(
           token: _listenBrainzToken,
           enabled: _scrobblingEnabled,
@@ -3809,6 +4252,162 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _exportBackup() async {
+    final prefs = await SharedPreferences.getInstance();
+    final state = <String, Object?>{};
+    for (final key in prefs.getKeys()) {
+      final value = prefs.get(key);
+      if (value is String || value is bool || value is int || value is double) {
+        state[key] = value;
+      } else if (value is List<String>) {
+        state[key] = value;
+      }
+    }
+    await FilePicker.saveFile(
+      fileName: 'neonamp-backup.json',
+      bytes: Uint8List.fromList(utf8.encode(encodeNeonAmpBackup(state))),
+      mimeType: 'application/json',
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+  }
+
+  Future<void> _importBackup() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (picked.isEmpty) return;
+    try {
+      final backup = decodeNeonAmpBackup(
+        utf8.decode(await picked.first.readAsBytes(), allowMalformed: true),
+      );
+      final prefs = await SharedPreferences.getInstance();
+      for (final entry in backup.entries) {
+        final value = entry.value;
+        if (value is String) {
+          await prefs.setString(entry.key, value);
+        } else if (value is bool) {
+          await prefs.setBool(entry.key, value);
+        } else if (value is double) {
+          await prefs.setDouble(entry.key, value);
+        } else if (value is num) {
+          await prefs.setInt(entry.key, value.toInt());
+        } else if (value is List) {
+          await prefs.setStringList(
+            entry.key,
+            value.map((item) => item.toString()).toList(),
+          );
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _queue.clear();
+        _library.clear();
+        _bookmarks.clear();
+        _playHistory.clear();
+        _libraryFolders.clear();
+        _libraryRelativePaths.clear();
+        _resumePositions.clear();
+        _podcastFeeds.clear();
+        _playlists.clear();
+        _smartPlaylists.clear();
+        _plugins.clear();
+      _mediaServerProfiles.clear();
+      _webDavProfiles.clear();
+      _savedQueueSnapshots.clear();
+      });
+      await _loadQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Backup restored. Android folder permissions may need to be reselected.',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not restore backup: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showAbLoop() async {
+    var enabled = _abLoopEnabled;
+    var start = _abLoopStart;
+    var end = _abLoopEnd;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('A–B loop'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'A: ${start == null ? 'not set' : formatAbLoopDuration(start!)}\n'
+                'B: ${end == null ? 'not set' : formatAbLoopDuration(end!)}\n\n'
+                'Set A and B while the track is at the desired positions.',
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Loop continuously'),
+                value: enabled,
+                onChanged: (value) => setDialogState(() => enabled = value),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: _current == null
+                  ? null
+                  : () {
+                      start = _position;
+                      setDialogState(() {});
+                    },
+              child: const Text('Set A'),
+            ),
+            TextButton(
+              onPressed: _current == null
+                  ? null
+                  : () {
+                      end = _position;
+                      setDialogState(() {});
+                    },
+              child: const Text('Set B'),
+            ),
+            TextButton(
+              onPressed: () {
+                start = null;
+                end = null;
+                enabled = false;
+                setDialogState(() {});
+              },
+              child: const Text('Clear'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final normalized = normalizedAbLoop(start, end);
+                setState(() {
+                  _abLoopStart = normalized?.start;
+                  _abLoopEnd = normalized?.end;
+                  _abLoopEnabled = enabled && normalized != null;
+                });
+                unawaited(_saveQueue());
+                Navigator.pop(dialogContext);
+              },
+              child: Text(enabled ? 'Enable' : 'Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _addFiles() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -3825,11 +4424,13 @@ class _PlayerPageState extends State<PlayerPage>
       if (materialized == null) continue;
       final path = materialized.path;
       try {
-        if (_queue.any((track) => track.path == path)) continue;
+        if (_queue.any((track) => track.path == path) ||
+            _library.any((track) => track.path == path)) {
+          continue;
+        }
         final track = await _readTrack(path, file.name);
         if (!mounted) return;
         setState(() {
-          _queue.add(track);
           if (!_library.any((item) => item.path == path)) _library.add(track);
         });
         added++;
@@ -3841,7 +4442,11 @@ class _PlayerPageState extends State<PlayerPage>
       }
     }
     await _saveQueue();
-    if (added > 0 && _queue.isNotEmpty) await _select(0);
+    if (added > 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added $added track(s) to the library.')),
+      );
+    }
   }
 
   Future<void> _addFolder() async {
@@ -3868,6 +4473,136 @@ class _PlayerPageState extends State<PlayerPage>
         SnackBar(content: Text('Could not add music folder: $error')),
       );
     }
+  }
+
+  Future<void> _scanMediaStore() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final results = await const MethodChannel('neonamp/library')
+          .invokeListMethod<Map<Object?, Object?>>('scanMediaStore');
+      final tracks = deduplicateAndroidMediaStoreTracks(
+        (results ?? []).map(AndroidMediaStoreTrack.fromMap),
+      );
+      var added = 0;
+      for (final file in tracks) {
+        if (_library.any((track) => track.path == file.path)) continue;
+        final track = await _readTrack(file.path, file.name);
+        if (!mounted) return;
+        setState(() {
+          _library.add(track);
+          _libraryRelativePaths[file.path] = file.relativePath;
+        });
+        added++;
+      }
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              added == 0
+                  ? 'MediaStore is up to date.'
+                  : 'Added $added device track(s) to the library.',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not scan device music: $error')),
+      );
+    }
+  }
+
+  Future<void> _showAndroidStorageControls() async {
+    if (!Platform.isAndroid) return;
+    const channel = MethodChannel('neonamp/library');
+    try {
+      final info = await channel.invokeMapMethod<String, dynamic>('cacheInfo');
+      if (!mounted) return;
+      final action = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Offline cache'),
+          children: [
+            if (info != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+                child: Text(
+                  '${info['files'] ?? 0} files · '
+                  '${_formatBytes((info['bytes'] as num?)?.toInt() ?? 0)} used\n'
+                  '${(info['limitBytes'] as num?)?.toInt() == 0 ? 'No size limit' : 'Limit: ${_formatBytes((info['limitBytes'] as num).toInt())}'}',
+                ),
+              ),
+            for (final option in const <({String label, String action})>[
+              (label: 'Unlimited cache', action: 'limit:0'),
+              (label: 'Limit to 128 MB', action: 'limit:134217728'),
+              (label: 'Limit to 512 MB', action: 'limit:536870912'),
+              (label: 'Limit to 1 GB', action: 'limit:1073741824'),
+            ])
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, option.action),
+                child: Text(option.label),
+              ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'repair'),
+              child: const Text('Repair stale cache entries'),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'clear'),
+              child: const Text('Clear cached files'),
+            ),
+          ],
+        ),
+      );
+      if (action == null || !mounted) return;
+      if (action == 'clear') {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Clear offline cache?'),
+            content: const Text(
+              'Cached copies will be removed. Your library entries and folder permissions will remain.',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Clear')),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+      }
+      Map<String, dynamic>? updated;
+      if (action.startsWith('limit:')) {
+        updated = await channel.invokeMapMethod<String, dynamic>(
+          'setCacheLimit',
+          {'limitBytes': int.parse(action.substring('limit:'.length))},
+        );
+      } else if (action == 'repair') {
+        updated = await channel.invokeMapMethod<String, dynamic>('repairCache');
+      } else if (action == 'clear') {
+        updated = await channel.invokeMapMethod<String, dynamic>('clearCache');
+      }
+      if (!mounted) return;
+      final summary = updated == null
+          ? 'Offline cache updated.'
+          : '${updated['files'] ?? 0} files · ${_formatBytes((updated['bytes'] as num?)?.toInt() ?? 0)} used';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(summary)));
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not manage offline cache: $error')),
+        );
+      }
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
   Future<String?> _pickFolderLocation(String dialogTitle) async {
@@ -3974,14 +4709,12 @@ class _PlayerPageState extends State<PlayerPage>
           .toList();
     }
     for (final file in files) {
-      final alreadyQueued = _queue.any((track) => track.path == file.path);
       final alreadyInLibrary = _library.any((track) => track.path == file.path);
-      if (alreadyQueued && alreadyInLibrary) continue;
+      if (alreadyInLibrary) continue;
       final track = await _readTrack(file.path, file.name);
       if (!mounted) return 0;
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
-        if (!alreadyQueued) _queue.add(track);
         if (!alreadyInLibrary) _library.add(track);
       });
     }
@@ -4065,16 +4798,23 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _importPlaylist() async {
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
-    );
-    final file = result.firstOrNull;
-    if (file == null) return;
-    final materialized = await _materializePickedFile(file);
-    if (materialized == null) return;
-    final playlistPath = materialized.path;
+  Future<void> _importPlaylist({String? externalPath}) async {
+    late final String playlistPath;
+    var temporary = false;
+    if (externalPath != null) {
+      playlistPath = externalPath;
+    } else {
+      final picked = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
+      );
+      final file = picked.firstOrNull;
+      if (file == null) return;
+      final materialized = await _materializePickedFile(file);
+      if (materialized == null) return;
+      playlistPath = materialized.path;
+      temporary = materialized.temporary;
+    }
     try {
       final extension = playlistPath.split('.').last.toLowerCase();
       final document = parsePlaylistDocument(
@@ -4145,9 +4885,9 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     } finally {
-      if (materialized.temporary) {
-        final temporary = File(materialized.path);
-        if (await temporary.exists()) await temporary.delete();
+      if (temporary) {
+        final temporaryFile = File(playlistPath);
+        if (await temporaryFile.exists()) await temporaryFile.delete();
       }
     }
   }
@@ -4287,55 +5027,81 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _importCueSheet() async {
-    final picked = await FilePicker.pickFiles(
-      type: FileType.custom,
-      dialogTitle: 'Select a CUE sheet and its audio file(s)',
-      allowedExtensions: [
-        'cue',
-        'mp3',
-        'flac',
-        'm4a',
-        'mp4',
-        'aac',
-        'ape',
-        'ogg',
-        'opus',
-        'wav',
-        'wma',
-        'aif',
-        'aiff',
-        'aifc',
-        'webm',
-        'mkv',
-        'mka',
-        'mov',
-      ],
-    );
+  Future<void> _importCueSheet({
+    String? externalPath,
+    List<AndroidExternalIntent> externalItems = const [],
+  }) async {
+    final picked = externalPath == null
+        ? await FilePicker.pickFiles(
+            type: FileType.custom,
+            dialogTitle: 'Select a CUE sheet and its audio file(s)',
+            allowedExtensions: [
+              'cue',
+              'mp3',
+              'flac',
+              'm4a',
+              'mp4',
+              'aac',
+              'ape',
+              'ogg',
+              'opus',
+              'wav',
+              'wma',
+              'aif',
+              'aiff',
+              'aifc',
+              'webm',
+              'mkv',
+              'mka',
+              'mov',
+            ],
+          )
+        : null;
     final cueInfo = picked
-        .where((file) => file.extension?.toLowerCase() == 'cue')
+        ?.where((file) => file.extension?.toLowerCase() == 'cue')
         .firstOrNull;
-    if (cueInfo == null) return;
+    final cuePath = externalPath ?? cueInfo?.path;
+    if (cuePath == null) return;
     String? temporaryCuePath;
     try {
-      final cueBytes = await _readPickedBytes(cueInfo);
+      final cueBytes = externalPath == null
+          ? await _readPickedBytes(cueInfo!)
+          : await File(externalPath).readAsBytes();
       if (cueBytes == null) return;
-      final cuePath = cueInfo.path ??
-          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}'
-          'neonamp-${DateTime.now().microsecondsSinceEpoch}.cue';
-      if (cueInfo.path == null) {
-        temporaryCuePath = cuePath;
-        await File(cuePath).writeAsBytes(cueBytes, flush: true);
+      var resolvedCuePath = cuePath;
+      if (externalPath == null && cueInfo!.path == null) {
+        resolvedCuePath =
+            '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}'
+            'neonamp-${DateTime.now().microsecondsSinceEpoch}.cue';
+        temporaryCuePath = resolvedCuePath;
+        await File(resolvedCuePath).writeAsBytes(cueBytes, flush: true);
       }
-      final cueFile = File(cuePath);
+      final cueFile = File(resolvedCuePath);
       final text = utf8.decode(cueBytes, allowMalformed: true);
       final entries = parseCueSheet(text, cueFile.path);
-      final selectedAudio = picked
-          .where(
-            (file) =>
-                file.path != null && file.extension?.toLowerCase() != 'cue',
-          )
-          .toList();
+      final selectedAudio = externalPath == null
+          ? picked!
+                .where(
+                  (file) =>
+                      file.path != null &&
+                      file.extension?.toLowerCase() != 'cue',
+                )
+                .map((file) => (path: file.path!, name: file.name))
+                .toList()
+          : externalItems
+                .where(
+                  (item) =>
+                      item.path != externalPath &&
+                      !item.isRemoteUrl &&
+                      isSupportedLibraryAudioPath(item.path),
+                )
+                .map(
+                  (item) => (
+                    path: item.path,
+                    name: item.name ?? item.path.split(RegExp(r'[/\\]')).last,
+                  ),
+                )
+                .toList();
       final tracks = <Track>[];
       final sourceTracks = <String, Track>{};
       for (final entry in entries) {
@@ -4441,6 +5207,12 @@ class _PlayerPageState extends State<PlayerPage>
       final id3Numbers = containerId3 == null
           ? null
           : readContainerId3TrackDiscNumbers(containerId3);
+      final embeddedArtwork = metadata.pictures.isNotEmpty
+          ? metadata.pictures.first.bytes
+          : (isAiffAudioPath(path) || isWavAudioPath(path))
+          ? readAiffId3Picture(containerId3!)?.$1
+          : null;
+      final artwork = embeddedArtwork ?? await findFolderArtwork(path);
       return Track(
         path: path,
         name: metadata.title?.trim().isNotEmpty == true
@@ -4467,11 +5239,7 @@ class _PlayerPageState extends State<PlayerPage>
                 : isWavAudioPath(path)
                 ? readWavId3Lyrics(containerId3!)
                 : null),
-        artwork: metadata.pictures.isNotEmpty
-            ? metadata.pictures.first.bytes
-            : (isAiffAudioPath(path) || isWavAudioPath(path))
-            ? readAiffId3Picture(containerId3!)?.$1
-            : null,
+        artwork: artwork,
         replayGainDb: replayGainDb,
       );
     } catch (_) {
@@ -4621,7 +5389,7 @@ class _PlayerPageState extends State<PlayerPage>
           await _player.stop();
           await _player.play(
             track.path.startsWith('http')
-                ? UrlSource(track.path)
+                ? UrlSource(_webDavPlaybackUrl(track))
                 : DeviceFileSource(track.path),
           );
           await _player.setPlaybackRate(_bitPerfectMode ? 1.0 : _playbackSpeed);
@@ -4786,7 +5554,7 @@ class _PlayerPageState extends State<PlayerPage>
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
         track.path.startsWith('http')
-            ? UrlSource(track.path)
+            ? UrlSource(_webDavPlaybackUrl(track))
             : DeviceFileSource(track.path),
       );
       final incomingDuration =
@@ -4893,7 +5661,7 @@ class _PlayerPageState extends State<PlayerPage>
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
         track.path.startsWith('http')
-            ? UrlSource(track.path)
+            ? UrlSource(_webDavPlaybackUrl(track))
             : DeviceFileSource(track.path),
       );
       final incomingDuration =
@@ -5125,6 +5893,120 @@ class _PlayerPageState extends State<PlayerPage>
       _playerState = PlayerState.stopped;
     });
     await _saveQueue();
+  }
+
+  Future<void> _saveQueueSnapshot() async {
+    if (_queue.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('The queue is empty.')),
+        );
+      }
+      return;
+    }
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Save queue snapshot'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Snapshot name'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty) return;
+    setState(() {
+      _savedQueueSnapshots[name] = List<Track>.from(_queue);
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _showQueueSnapshots() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Saved queues'),
+          content: SizedBox(
+            width: 460,
+            child: _savedQueueSnapshots.isEmpty
+                ? const Text('No saved queues yet.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final entry in _savedQueueSnapshots.entries)
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.queue_music),
+                          title: Text(entry.key),
+                          subtitle: Text('${entry.value.length} tracks'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: 'Restore queue',
+                                icon: const Icon(Icons.restore),
+                                onPressed: () async {
+                                  setState(() {
+                                    _queue
+                                      ..clear()
+                                      ..addAll(entry.value);
+                                    _selected = 0;
+                                    _position = Duration.zero;
+                                    _playerState = PlayerState.stopped;
+                                  });
+                                  await _saveQueue();
+                                  if (dialogContext.mounted) {
+                                    Navigator.pop(dialogContext);
+                                  }
+                                },
+                              ),
+                              IconButton(
+                                tooltip: 'Delete saved queue',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () async {
+                                  setState(() => _savedQueueSnapshots.remove(entry.key));
+                                  await _saveQueue();
+                                  setDialogState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                await _saveQueueSnapshot();
+              },
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save current queue'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _addStream() async {
@@ -8136,6 +9018,160 @@ class _PlayerPageState extends State<PlayerPage>
     query.dispose();
   }
 
+  Future<void> _showWebDavLibraries() async {
+    final saved = _webDavProfiles.firstOrNull;
+    final name = TextEditingController(text: saved?.name ?? 'NAS music');
+    final baseUrl = TextEditingController(text: saved?.baseUrl ?? '');
+    final username = TextEditingController(text: saved?.username ?? '');
+    final password = TextEditingController(text: saved?.password ?? '');
+    var entries = <WebDavEntry>[];
+    var loading = false;
+    var error = '';
+
+    Future<void> browse(StateSetter setDialogState) async {
+      final url = baseUrl.text.trim();
+      final parsed = Uri.tryParse(url);
+      if (parsed == null || (parsed.scheme != 'http' && parsed.scheme != 'https')) {
+        setDialogState(() => error = 'Enter an HTTP or HTTPS WebDAV folder URL.');
+        return;
+      }
+      final profile = WebDavProfile(
+        id: saved?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        name: name.text.trim().isEmpty ? 'WebDAV library' : name.text.trim(),
+        baseUrl: url,
+        username: username.text.trim(),
+        password: password.text,
+      );
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      final client = WebDavLibraryClient();
+      try {
+        final found = await client.listRecursive(
+          profile.uri,
+          username: profile.username,
+          password: profile.password,
+        );
+        setState(() {
+          _webDavProfiles
+            ..removeWhere((item) => item.id == profile.id)
+            ..add(profile);
+        });
+        await _saveQueue();
+        setDialogState(() {
+          entries = found.where((entry) => isWebDavAudioPath(entry.url)).toList();
+        });
+      } on Object catch (caught) {
+        setDialogState(() => error = caught.toString());
+      } finally {
+        client.close();
+        setDialogState(() => loading = false);
+      }
+    }
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('WebDAV network library'),
+            content: SizedBox(
+              width: 560,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(labelText: 'Library name'),
+                  ),
+                  TextField(
+                    controller: baseUrl,
+                    decoration: const InputDecoration(labelText: 'WebDAV folder URL'),
+                    keyboardType: TextInputType.url,
+                  ),
+                  TextField(
+                    controller: username,
+                    decoration: const InputDecoration(labelText: 'Username (optional)'),
+                  ),
+                  TextField(
+                    controller: password,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password (optional)'),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Browse audio files recursively. Files are added to the library only; they are not added to the queue automatically.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: loading ? null : () => browse(setDialogState),
+                    icon: const Icon(Icons.cloud_sync_outlined),
+                    label: const Text('Browse library'),
+                  ),
+                  if (loading) const LinearProgressIndicator(),
+                  if (error.isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(error, style: const TextStyle(color: Colors.redAccent)),
+                    ),
+                  if (entries.isNotEmpty)
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: entries.length,
+                        itemBuilder: (context, index) {
+                          final entry = entries[index];
+                          final track = Track(
+                            path: entry.url,
+                            name: entry.name,
+                            artist: 'WebDAV',
+                            customMetadata: {
+                              'webdavProfileId': saved?.id ?? _webDavProfiles.last.id,
+                            },
+                          );
+                          return ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.music_note),
+                            title: Text(entry.name),
+                            subtitle: entry.size == null ? null : Text(_formatBytes(entry.size!)),
+                            trailing: IconButton(
+                              tooltip: 'Add to library',
+                              icon: const Icon(Icons.library_add_outlined),
+                              onPressed: () async {
+                                if (_library.any((item) => item.path == track.path)) return;
+                                setState(() => _library.add(track));
+                                await _saveQueue();
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      name.dispose();
+      baseUrl.dispose();
+      username.dispose();
+      password.dispose();
+    }
+  }
+
   Future<void> _showMediaServers() async {
     final saved = _mediaServerProfiles.firstOrNull;
     var kind = saved?.kind ?? 'subsonic';
@@ -8455,9 +9491,10 @@ class _PlayerPageState extends State<PlayerPage>
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Settings'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Crossfade tracks'),
@@ -8551,6 +9588,54 @@ class _PlayerPageState extends State<PlayerPage>
                   setDialogState(() {});
                 },
               ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Notification artwork'),
+                subtitle: const Text('Show album art in Android media controls'),
+                value: _notificationArtworkEnabled,
+                onChanged: (value) {
+                  setState(() => _notificationArtworkEnabled = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Notification seek controls'),
+                subtitle: const Text('Show seek and 15-second skip actions'),
+                value: _notificationSeekControlsEnabled,
+                onChanged: (value) {
+                  setState(() => _notificationSeekControlsEnabled = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              DropdownButtonFormField<String>(
+                value: _notificationCompactActions,
+                decoration: const InputDecoration(
+                  labelText: 'Compact notification actions',
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'previousPlayNext',
+                    child: Text('Previous · Play · Next'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'playNext',
+                    child: Text('Play · Next'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'previousPlay',
+                    child: Text('Previous · Play'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => _notificationCompactActions = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Convolution impulse response'),
@@ -8591,7 +9676,8 @@ class _PlayerPageState extends State<PlayerPage>
                   'Space: play/pause · M: mute · Ctrl+arrows: seek',
                 ),
               ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -9155,6 +10241,10 @@ class _PlayerPageState extends State<PlayerPage>
       sourceFormat: info,
       hardwareSampleRate: (nativeOutput?['sampleRate'] as num?)?.toInt(),
       hardwareBitDepth: (nativeOutput?['bitDepth'] as num?)?.toInt(),
+      routeName: nativeOutput?['routeName'] as String?,
+      routeType: nativeOutput?['routeType'] as String?,
+      outputCodec: nativeOutput?['codec'] as String?,
+      latencyMs: (nativeOutput?['latencyMs'] as num?)?.toDouble(),
     );
     await showDialog<void>(
       context: context,
@@ -9927,6 +11017,11 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.more_vert, color: Colors.white60),
             onSelected: (value) {
               if (value == 'folder') _addFolder();
+              if (value == 'mediaStore') _scanMediaStore();
+              if (value == 'storage') _showAndroidStorageControls();
+              if (value == 'abLoop') _showAbLoop();
+              if (value == 'backupExport') _exportBackup();
+              if (value == 'backupImport') _importBackup();
               if (value == 'visuals') _showVisualizer();
               if (value == 'settings') _showSettings();
               if (value == 'rescan') _rescanFolders();
@@ -9945,6 +11040,8 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'eq') _showEqualizer();
               if (value == 'convolution') _chooseConvolutionImpulse();
               if (value == 'servers') _showMediaServers();
+              if (value == 'webdav') _showWebDavLibraries();
+              if (value == 'savedQueues') _showQueueSnapshots();
               if (value == 'scrobble') _showScrobblingSettings();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
@@ -9972,6 +11069,25 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
               PopupMenuItem(value: 'folder', child: Text('Add folder')),
+              if (Platform.isAndroid)
+                const PopupMenuItem(
+                  value: 'mediaStore',
+                  child: Text('Scan all device music'),
+                ),
+              if (Platform.isAndroid)
+                const PopupMenuItem(
+                  value: 'storage',
+                  child: Text('Offline cache and storage'),
+                ),
+              const PopupMenuItem(value: 'abLoop', child: Text('A–B loop')),
+              const PopupMenuItem(
+                value: 'backupExport',
+                child: Text('Export backup'),
+              ),
+              const PopupMenuItem(
+                value: 'backupImport',
+                child: Text('Import backup'),
+              ),
               PopupMenuItem(
                 value: 'rescan',
                 child: Text('Rescan library folders'),
@@ -10078,6 +11194,8 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),
               PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
               PopupMenuItem(value: 'servers', child: Text('Remote media servers')),
+              PopupMenuItem(value: 'webdav', child: Text('WebDAV network library')),
+              PopupMenuItem(value: 'savedQueues', child: Text('Saved queues')),
               PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],
           ),
