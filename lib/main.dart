@@ -2788,6 +2788,7 @@ class _PlayerPageState extends State<PlayerPage>
 
       final imported = <Track>[];
       var importedPlaylist = false;
+      var importedCue = false;
       for (final intent in intents) {
         final extension = intent.path
             .split(RegExp(r'[/\\]'))
@@ -2799,6 +2800,14 @@ class _PlayerPageState extends State<PlayerPage>
             .contains(extension)) {
           await _importPlaylist(externalPath: intent.path);
           importedPlaylist = true;
+          continue;
+        }
+        if (extension == 'cue') {
+          await _importCueSheet(
+            externalPath: intent.path,
+            externalItems: intents,
+          );
+          importedCue = true;
           continue;
         }
         if (!intent.isRemoteUrl &&
@@ -2814,7 +2823,7 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
       if (imported.isEmpty || !mounted) {
-        if (importedPlaylist) return;
+        if (importedPlaylist || importedCue) return;
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -4629,55 +4638,81 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _importCueSheet() async {
-    final picked = await FilePicker.pickFiles(
-      type: FileType.custom,
-      dialogTitle: 'Select a CUE sheet and its audio file(s)',
-      allowedExtensions: [
-        'cue',
-        'mp3',
-        'flac',
-        'm4a',
-        'mp4',
-        'aac',
-        'ape',
-        'ogg',
-        'opus',
-        'wav',
-        'wma',
-        'aif',
-        'aiff',
-        'aifc',
-        'webm',
-        'mkv',
-        'mka',
-        'mov',
-      ],
-    );
+  Future<void> _importCueSheet({
+    String? externalPath,
+    List<AndroidExternalIntent> externalItems = const [],
+  }) async {
+    final picked = externalPath == null
+        ? await FilePicker.pickFiles(
+            type: FileType.custom,
+            dialogTitle: 'Select a CUE sheet and its audio file(s)',
+            allowedExtensions: [
+              'cue',
+              'mp3',
+              'flac',
+              'm4a',
+              'mp4',
+              'aac',
+              'ape',
+              'ogg',
+              'opus',
+              'wav',
+              'wma',
+              'aif',
+              'aiff',
+              'aifc',
+              'webm',
+              'mkv',
+              'mka',
+              'mov',
+            ],
+          )
+        : null;
     final cueInfo = picked
-        .where((file) => file.extension?.toLowerCase() == 'cue')
+        ?.where((file) => file.extension?.toLowerCase() == 'cue')
         .firstOrNull;
-    if (cueInfo == null) return;
+    final cuePath = externalPath ?? cueInfo?.path;
+    if (cuePath == null) return;
     String? temporaryCuePath;
     try {
-      final cueBytes = await _readPickedBytes(cueInfo);
+      final cueBytes = externalPath == null
+          ? await _readPickedBytes(cueInfo!)
+          : await File(externalPath).readAsBytes();
       if (cueBytes == null) return;
-      final cuePath = cueInfo.path ??
-          '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}'
-          'neonamp-${DateTime.now().microsecondsSinceEpoch}.cue';
-      if (cueInfo.path == null) {
-        temporaryCuePath = cuePath;
-        await File(cuePath).writeAsBytes(cueBytes, flush: true);
+      var resolvedCuePath = cuePath;
+      if (externalPath == null && cueInfo!.path == null) {
+        resolvedCuePath =
+            '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}'
+            'neonamp-${DateTime.now().microsecondsSinceEpoch}.cue';
+        temporaryCuePath = resolvedCuePath;
+        await File(resolvedCuePath).writeAsBytes(cueBytes, flush: true);
       }
-      final cueFile = File(cuePath);
+      final cueFile = File(resolvedCuePath);
       final text = utf8.decode(cueBytes, allowMalformed: true);
       final entries = parseCueSheet(text, cueFile.path);
-      final selectedAudio = picked
-          .where(
-            (file) =>
-                file.path != null && file.extension?.toLowerCase() != 'cue',
-          )
-          .toList();
+      final selectedAudio = externalPath == null
+          ? picked!
+                .where(
+                  (file) =>
+                      file.path != null &&
+                      file.extension?.toLowerCase() != 'cue',
+                )
+                .map((file) => (path: file.path!, name: file.name))
+                .toList()
+          : externalItems
+                .where(
+                  (item) =>
+                      item.path != externalPath &&
+                      !item.isRemoteUrl &&
+                      isSupportedLibraryAudioPath(item.path),
+                )
+                .map(
+                  (item) => (
+                    path: item.path,
+                    name: item.name ?? item.path.split(RegExp(r'[/\\]')).last,
+                  ),
+                )
+                .toList();
       final tracks = <Track>[];
       final sourceTracks = <String, Track>{};
       for (final entry in entries) {
