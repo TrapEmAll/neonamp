@@ -4738,6 +4738,9 @@ class _PlayerPageState extends State<PlayerPage>
             tracks.map((track) => track.toJson()).toList(),
           ),
         ),
+        'queueHistory': _queueHistory
+            .map((tracks) => tracks.map((track) => track.toJson()).toList())
+            .toList(),
         'scrobbleProfile': ScrobbleProfile(
           token: _listenBrainzToken,
           enabled: _scrobblingEnabled,
@@ -10485,9 +10488,6 @@ class _PlayerPageState extends State<PlayerPage>
             ],
           ),
         ),
-        'queueHistory': _queueHistory
-            .map((tracks) => tracks.map((track) => track.toJson()).toList())
-            .toList(),
       );
     } finally {
       name.dispose();
