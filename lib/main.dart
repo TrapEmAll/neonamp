@@ -59,6 +59,7 @@ import 'remote_command_server.dart';
 import 'abx_test.dart';
 import 'track_auditor.dart';
 import 'library_maintenance.dart';
+import 'library_statistics.dart';
 import 'audio_formats.dart';
 import 'audio_format_info.dart';
 import 'android_media_store.dart';
@@ -4929,6 +4930,22 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _showLibraryMaintenance() async {
     final paths = _library.map((track) => track.path).toList(growable: false);
+    final statisticEntries = <LibraryStatisticEntry>[];
+    for (final path in paths) {
+      var bytes = 0;
+      if (!path.startsWith('http://') &&
+          !path.startsWith('https://') &&
+          !path.startsWith('content://') &&
+          !path.startsWith('file://')) {
+        try {
+          bytes = await File(path).length();
+        } on Object {
+          bytes = 0;
+        }
+      }
+      statisticEntries.add(LibraryStatisticEntry(path: path, bytes: bytes));
+    }
+    final statistics = buildLibraryStatistics(statisticEntries);
     final existing = <String>{
       for (final path in paths)
         if (path.startsWith('http://') ||
@@ -4970,10 +4987,61 @@ class _PlayerPageState extends State<PlayerPage>
             onPressed: () => Navigator.pop(context, 'rescan'),
             child: const Text('Rescan library folders'),
           ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'statistics'),
+            child: const Text('View folder statistics'),
+          ),
         ],
       ),
     );
     if (action == null || !mounted) return;
+    if (action == 'statistics') {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Library statistics'),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${statistics.totalTracks} tracks · ${_formatBytes(statistics.totalBytes)} local audio',
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Folders', style: TextStyle(fontWeight: FontWeight.bold)),
+                  for (final entry in (statistics.tracksByFolder.entries.toList()
+                    ..sort((a, b) => b.value.compareTo(a.value))).take(12))
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(entry.key, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      trailing: Text('${entry.value}'),
+                    ),
+                  const SizedBox(height: 8),
+                  const Text('Formats', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    (statistics.tracksByExtension.entries.toList()
+                          ..sort((a, b) => b.value.compareTo(a.value)))
+                        .map((entry) => '${entry.key}: ${entry.value}')
+                        .join(' · '),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     if (action == 'rescan') {
       await _rescanFolders();
       return;
