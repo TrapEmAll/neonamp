@@ -1,5 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.flutter.plugins.libnfs">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Network permission for NFS access -->
     <uses-permission android:name="android.permission.INTERNET" />
 </manifest>
