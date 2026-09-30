@@ -3095,38 +3095,6 @@ class _PlayerPageState extends State<PlayerPage>
     final destination = File(
       '${cache.path}${Platform.pathSeparator}$encoded$extension',
     );
-    Future<String> renderTrimClip() async {
-      final start = double.tryParse(startController.text.trim());
-      final end = double.tryParse(endController.text.trim());
-      final range = start == null || end == null
-          ? null
-          : (
-              start: Duration(microseconds: (start * 1000000).round()),
-              end: Duration(microseconds: (end * 1000000).round()),
-            );
-      if (range == null || !isValidTrimRange(range.start, range.end, duration)) {
-        throw const FormatException('Enter a valid range within the track.');
-      }
-      final outputPath =
-          '${Directory.systemTemp.path}${Platform.pathSeparator}'
-          'neonamp-clip-${DateTime.now().microsecondsSinceEpoch}.wav';
-      final session = await FFmpegKit.executeWithArguments(
-        buildAudioTrimArguments(
-          inputPath: track.path,
-          outputPath: outputPath,
-          start: range.start,
-          end: range.end,
-        ),
-      );
-      final returnCode = await session.getReturnCode();
-      final output = File(outputPath);
-      if (!ReturnCode.isSuccess(returnCode) ||
-          !await output.exists() ||
-          await output.length() <= 44) {
-        throw StateError('Could not export the selected audio range.');
-      }
-      return outputPath;
-    }
     try {
       if (!await destination.exists() || await destination.length() <= 44) {
         await NetworkLibraryClient().downloadToFile(
@@ -9140,6 +9108,38 @@ class _PlayerPageState extends State<PlayerPage>
     final endController = TextEditingController(
       text: (duration.inMilliseconds / 1000).toStringAsFixed(3),
     );
+    Future<String> renderTrimClip() async {
+      final start = double.tryParse(startController.text.trim());
+      final end = double.tryParse(endController.text.trim());
+      final range = start == null || end == null
+          ? null
+          : (
+              start: Duration(microseconds: (start * 1000000).round()),
+              end: Duration(microseconds: (end * 1000000).round()),
+            );
+      if (range == null || !isValidTrimRange(range.start, range.end, duration)) {
+        throw const FormatException('Enter a valid range within the track.');
+      }
+      final outputPath =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'neonamp-clip-${DateTime.now().microsecondsSinceEpoch}.wav';
+      final session = await FFmpegKit.executeWithArguments(
+        buildAudioTrimArguments(
+          inputPath: track.path,
+          outputPath: outputPath,
+          start: range.start,
+          end: range.end,
+        ),
+      );
+      final returnCode = await session.getReturnCode();
+      final output = File(outputPath);
+      if (!ReturnCode.isSuccess(returnCode) ||
+          !await output.exists() ||
+          await output.length() <= 44) {
+        throw StateError('Could not export the selected audio range.');
+      }
+      return outputPath;
+    }
     try {
       await showDialog<void>(
         context: context,
@@ -9229,8 +9229,9 @@ class _PlayerPageState extends State<PlayerPage>
                 onPressed: () async {
                   String? outputPath;
                   try {
-                    outputPath = await renderTrimClip();
-                    final source = File(outputPath);
+                    final renderedPath = await renderTrimClip();
+                    outputPath = renderedPath;
+                    final source = File(renderedPath);
                     final exported = await const MethodChannel('neonamp/library')
                         .invokeMapMethod<String, dynamic>('exportRingtone', {
                           'sourcePath': source.path,
