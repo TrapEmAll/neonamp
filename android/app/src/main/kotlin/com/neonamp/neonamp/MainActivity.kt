@@ -23,6 +23,7 @@ import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.provider.MediaStore
 import android.content.ContentUris
+import android.graphics.Color
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -42,6 +43,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import com.ryanheise.audioservice.AudioServiceActivity
+import androidx.core.view.WindowCompat
 
 class MainActivity : AudioServiceActivity() {
     private val converterChannel = "neonamp/converter"
@@ -94,6 +96,13 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
         enqueueExternalIntent(intent)
         val filter = IntentFilter(usbPermissionAction)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
