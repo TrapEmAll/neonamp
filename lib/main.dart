@@ -58,6 +58,7 @@ import 'custom_metadata.dart';
 import 'remote_command_server.dart';
 import 'abx_test.dart';
 import 'track_auditor.dart';
+import 'library_maintenance.dart';
 import 'audio_formats.dart';
 import 'audio_format_info.dart';
 import 'android_media_store.dart';
@@ -4814,6 +4815,104 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _showLibraryMaintenance() async {
+    final paths = _library.map((track) => track.path).toList(growable: false);
+    final existing = <String>{
+      for (final path in paths)
+        if (path.startsWith('http://') ||
+            path.startsWith('https://') ||
+            path.startsWith('content://') ||
+            path.startsWith('file://') ||
+            File(path).existsSync())
+          path,
+    };
+    final report = buildLibraryMaintenanceReport(
+      libraryPaths: paths,
+      existingPaths: existing,
+    );
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Library maintenance'),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+            child: Text(
+              '${report.missingPaths.length} missing entr${report.missingPaths.length == 1 ? 'y' : 'ies'} · '
+              '${report.duplicatePaths.length} duplicate entr${report.duplicatePaths.length == 1 ? 'y' : 'ies'}',
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: report.missingPaths.isEmpty
+                ? null
+                : () => Navigator.pop(context, 'removeMissing'),
+            child: const Text('Remove missing files from library'),
+          ),
+          SimpleDialogOption(
+            onPressed: report.duplicatePaths.isEmpty
+                ? null
+                : () => Navigator.pop(context, 'removeDuplicates'),
+            child: const Text('Remove duplicate library entries'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'rescan'),
+            child: const Text('Rescan library folders'),
+          ),
+        ],
+      ),
+    );
+    if (action == null || !mounted) return;
+    if (action == 'rescan') {
+      await _rescanFolders();
+      return;
+    }
+    final removeMissing = action == 'removeMissing';
+    final removePaths = removeMissing
+        ? report.missingPaths.toSet()
+        : findDuplicateLibraryPaths(paths).toSet();
+    if (removePaths.isEmpty) return;
+    if (removeMissing && removePaths.contains(_current?.path)) {
+      await _stopCurrent();
+    }
+    setState(() {
+      if (removeMissing) {
+        _library.removeWhere((track) => removePaths.contains(track.path));
+        _queue.removeWhere((track) => removePaths.contains(track.path));
+        _bookmarks.removeWhere((track) => removePaths.contains(track.path));
+        _playHistory.removeWhere((track) => removePaths.contains(track.path));
+        for (final playlist in _playlists.values) {
+          playlist.removeWhere(removePaths.contains);
+        }
+      } else {
+        final seenLibrary = <String>{};
+        _library.removeWhere(
+          (track) => removePaths.contains(track.path) && !seenLibrary.add(track.path),
+        );
+        final seenQueue = <String>{};
+        _queue.removeWhere(
+          (track) => removePaths.contains(track.path) && !seenQueue.add(track.path),
+        );
+        for (final playlist in _playlists.values) {
+          final seenPlaylist = <String>{};
+          playlist.removeWhere(
+            (path) => removePaths.contains(path) && !seenPlaylist.add(path),
+          );
+        }
+      }
+      if (_queue.isEmpty) {
+        _selected = 0;
+      } else if (_selected >= _queue.length) {
+        _selected = _queue.length - 1;
+      }
+    });
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed ${removePaths.length} library entr${removePaths.length == 1 ? 'y' : 'ies'}.')),
+      );
+    }
+  }
+
   String _formatBytes(int bytes) {
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     if (bytes < 1024 * 1024 * 1024) {
@@ -5430,6 +5529,11 @@ class _PlayerPageState extends State<PlayerPage>
           ? readAiffId3Picture(containerId3!)?.$1
           : null;
       final artwork = embeddedArtwork ?? await findFolderArtwork(path);
+      final sidecarLyrics = metadata.lyrics == null &&
+              !isAiffAudioPath(path) &&
+              !isWavAudioPath(path)
+          ? await readSidecarLrc(path)
+          : null;
       return Track(
         path: path,
         name: metadata.title?.trim().isNotEmpty == true
@@ -5455,7 +5559,7 @@ class _PlayerPageState extends State<PlayerPage>
                 ? readAiffId3Lyrics(containerId3!)
                 : isWavAudioPath(path)
                 ? readWavId3Lyrics(containerId3!)
-                : null),
+                : sidecarLyrics),
         artwork: artwork,
         replayGainDb: replayGainDb,
       );
@@ -8952,6 +9056,36 @@ class _PlayerPageState extends State<PlayerPage>
               },
               child: const Text('Export WAV'),
             ),
+            if (Platform.isAndroid)
+              OutlinedButton(
+                onPressed: () async {
+                  final source = File(outputPath);
+                  try {
+                    final exported = await const MethodChannel('neonamp/library')
+                        .invokeMapMethod<String, dynamic>('exportRingtone', {
+                          'sourcePath': source.path,
+                          'name': '${track.name}-clip.wav',
+                          'kind': 'ringtone',
+                        });
+                    if (!dialogContext.mounted) return;
+                    Navigator.pop(dialogContext);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Saved ${exported?['name'] ?? 'clip'} to Android Ringtones.',
+                        ),
+                      ),
+                    );
+                  } on Object catch (error) {
+                    if (dialogContext.mounted) {
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(content: Text('Could not save ringtone: $error')),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Save as ringtone'),
+              ),
           ],
         ),
       );
@@ -11278,6 +11412,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'visuals') _showVisualizer();
               if (value == 'settings') _showSettings();
               if (value == 'rescan') _rescanFolders();
+              if (value == 'maintenance') _showLibraryMaintenance();
               if (value == 'import') _importPlaylist();
               if (value == 'importItunes') _importItunesLibrary();
               if (value == 'exportItunes') _exportItunesLibrary();
@@ -11344,6 +11479,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'rescan',
                 child: Text('Rescan library folders'),
+              ),
+              const PopupMenuItem(
+                value: 'maintenance',
+                child: Text('Library maintenance'),
               ),
               PopupMenuItem(
                 value: 'import',

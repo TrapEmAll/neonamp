@@ -19,6 +19,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Folder-art fallback for local tracks without embedded art, using Cover, Folder, Front, AlbumArt, and Album-Art images with bounded file sizes
 - Embedded cover-art replacement for supported local containers
 - Embedded lyrics editing and in-app lyrics viewing
+- Timestamped sidecar `.lrc` lyrics are discovered beside local audio files and rendered with synchronized scrolling
 - AIFF/AIFC metadata and embedded cover-art editing through ID3 chunks, including lyrics
 - Library search across title, artist, album, and genre
 - Smart library filters for favorites, top-rated tracks, and most-played tracks
@@ -44,6 +45,8 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Podcast subscriptions import/export through interoperable OPML files on Windows and Android
 - Podcast subscription management allows unsubscribing without removing existing episodes from the queue/library
 - Recursive folder scanning and M3U/M3U8 playlist import
+- Library maintenance actions for missing local files and duplicate path entries, with playlist, bookmark, history, and queue cleanup
+- Android trim exports can be written directly to the system Ringtones, Notifications, or Alarms media collections
 - Android MediaStore device-music scan with cached paths, relative folder metadata, incremental cache refresh, and shared metadata/DSP playback
 - Android offline-cache controls with unlimited/128 MB/512 MB/1 GB limits, stale-entry repair, usage reporting, and confirmed cache clearing
 - Versioned JSON backup and restore for library, queue, playlists, settings, resume positions, and Android folder-permission metadata

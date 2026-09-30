@@ -3,6 +3,7 @@ package com.neonamp.neonamp
 import android.Manifest
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -25,6 +26,7 @@ import android.content.ContentUris
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import java.io.File
@@ -258,6 +260,29 @@ class MainActivity : AudioServiceActivity() {
                             }.start()
                         }
                     }
+                    "exportRingtone" -> {
+                        val sourcePath = call.argument<String>("sourcePath")
+                        val requestedName = call.argument<String>("name")
+                        val kind = call.argument<String>("kind") ?: "ringtone"
+                        if (sourcePath.isNullOrBlank() || requestedName.isNullOrBlank()) {
+                            result.error("invalid_arguments", "A source file and name are required.", null)
+                        } else {
+                            Thread {
+                                try {
+                                    val exported = exportAudioToMediaStore(
+                                        sourcePath,
+                                        requestedName,
+                                        kind,
+                                    )
+                                    runOnUiThread { result.success(exported) }
+                                } catch (error: Throwable) {
+                                    runOnUiThread {
+                                        result.error("media_store_export_failed", error.message, null)
+                                    }
+                                }
+                            }.start()
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -394,6 +419,64 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun exportAudioToMediaStore(
+        sourcePath: String,
+        requestedName: String,
+        kind: String,
+    ): Map<String, String> {
+        val source = File(sourcePath)
+        require(source.isFile && source.length() > 44) { "The exported audio clip is empty." }
+        val normalizedKind = kind.lowercase(Locale.ROOT).let {
+            if (it == "notification" || it == "alarm") it else "ringtone"
+        }
+        val directory = when (normalizedKind) {
+            "notification" -> Environment.DIRECTORY_NOTIFICATIONS
+            "alarm" -> Environment.DIRECTORY_ALARMS
+            else -> Environment.DIRECTORY_RINGTONES
+        }
+        val baseName = requestedName.substringBeforeLast('.', requestedName)
+            .trim()
+            .ifBlank { "NeonAmp clip" }
+        val displayName = if (baseName.lowercase(Locale.ROOT).endsWith(".wav")) {
+            baseName
+        } else {
+            "$baseName.wav"
+        }
+        val resolver = contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
+            put(MediaStore.Audio.Media.IS_RINGTONE, normalizedKind == "ringtone")
+            put(MediaStore.Audio.Media.IS_NOTIFICATION, normalizedKind == "notification")
+            put(MediaStore.Audio.Media.IS_ALARM, normalizedKind == "alarm")
+            put(MediaStore.Audio.Media.IS_MUSIC, false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Audio.Media.RELATIVE_PATH, "$directory/NeonAmp")
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+        }
+        val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+            ?: error("Android did not provide a media-store destination.")
+        try {
+            resolver.openOutputStream(uri, "w").use { output ->
+                requireNotNull(output) { "Android could not open the media-store destination." }
+                source.inputStream().use { input -> input.copyTo(output) }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                resolver.update(
+                    uri,
+                    ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) },
+                    null,
+                    null,
+                )
+            }
+            return mapOf("uri" to uri.toString(), "name" to displayName)
+        } catch (error: Throwable) {
+            resolver.delete(uri, null, null)
+            throw error
+        }
     }
 
     private fun enqueueExternalIntent(intent: Intent?) {
