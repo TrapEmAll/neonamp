@@ -122,6 +122,18 @@ class MainActivity : AudioServiceActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/theme")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "dynamicColor") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    result.success(null)
+                } else {
+                    result.success(resources.getColor(android.R.color.system_accent1_500, theme))
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/intents")
             .setMethodCallHandler { call, result ->
                 if (call.method != "drain") {
