@@ -66,6 +66,7 @@ import 'android_external_intent.dart';
 import 'ab_loop.dart';
 import 'backup.dart';
 import 'webdav_library.dart';
+import 'network_library.dart';
 import 'folder_artwork.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
@@ -2639,6 +2640,7 @@ class _PlayerPageState extends State<PlayerPage>
   String? _convolutionImpulsePath;
   final List<MediaServerProfile> _mediaServerProfiles = [];
   final List<WebDavProfile> _webDavProfiles = [];
+  final List<NetworkLibraryProfile> _networkProfiles = [];
   String _listenBrainzToken = '';
   String _lastFmApiKey = '';
   String _lastFmSessionKey = '';
@@ -3059,6 +3061,50 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (profile == null) return track.path;
     return webDavAuthenticatedUri(Uri.parse(track.path), profile).toString();
+  }
+
+  Future<Track?> _materializeNetworkTrack(Track track) async {
+    final profileId = track.customMetadata['networkProfileId'];
+    final relativePath = track.customMetadata['networkRelativePath'];
+    if (profileId == null || relativePath == null) return track;
+    NetworkLibraryProfile? profile;
+    for (final candidate in _networkProfiles) {
+      if (candidate.id == profileId) {
+        profile = candidate;
+        break;
+      }
+    }
+    if (profile == null) return null;
+    final cache = Directory(
+      '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}neonamp-network-cache',
+    );
+    await cache.create(recursive: true);
+    final encoded = base64Url
+        .encode(utf8.encode('$profileId:$relativePath'))
+        .replaceAll('=', '_');
+    final extension = relativePath.contains('.')
+        ? '.${relativePath.split('.').last.toLowerCase()}'
+        : '.audio';
+    final destination = File(
+      '${cache.path}${Platform.pathSeparator}$encoded$extension',
+    );
+    try {
+      if (!await destination.exists() || await destination.length() <= 44) {
+        await NetworkLibraryClient().downloadToFile(
+          profile,
+          relativePath,
+          destination.path,
+        );
+      }
+      return track.copyWith(path: destination.path);
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open network track: $error')),
+        );
+      }
+      return null;
+    }
   }
 
   Future<void> _consumeAndroidIntents() async {
@@ -4444,6 +4490,7 @@ class _PlayerPageState extends State<PlayerPage>
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
         'webDavProfiles': _webDavProfiles.map((profile) => profile.toJson()).toList(),
+        'networkLibraries': _networkProfiles.map((profile) => profile.toJson()).toList(),
         'queueSnapshots': _savedQueueSnapshots.map(
           (name, tracks) => MapEntry(
             name,
@@ -4550,6 +4597,7 @@ class _PlayerPageState extends State<PlayerPage>
         _plugins.clear();
       _mediaServerProfiles.clear();
       _webDavProfiles.clear();
+      _networkProfiles.clear();
       _savedQueueSnapshots.clear();
       });
       await _loadQueue();
@@ -4919,6 +4967,16 @@ class _PlayerPageState extends State<PlayerPage>
           final seenPlaylist = <String>{};
           playlist.removeWhere(
             (path) => removePaths.contains(path) && !seenPlaylist.add(path),
+          );
+        }
+        final savedNetworkLibraries = settings['networkLibraries'];
+        if (savedNetworkLibraries is List) {
+          _networkProfiles.addAll(
+            savedNetworkLibraries.whereType<Map>().map(
+              (item) => NetworkLibraryProfile.fromJson(
+                Map<String, dynamic>.from(item),
+              ),
+            ),
           );
         }
       }
@@ -5593,6 +5651,19 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    final queuedTrack = _queue[index];
+    if (queuedTrack.customMetadata['networkProfileId'] != null) {
+      final materialized = await _materializeNetworkTrack(queuedTrack);
+      if (materialized == null || !mounted) return;
+      setState(() {
+        _queue[index] = materialized;
+        final libraryIndex = _library.indexWhere(
+          (track) => track.identityKey == queuedTrack.identityKey,
+        );
+        if (libraryIndex >= 0) _library[libraryIndex] = materialized;
+      });
+      await _saveQueue();
+    }
     final castDevice = _chromecastCast.device;
     final airplayDevice = _airplayCast.device;
     final castRenderer = _dlnaCast.renderer;
@@ -9603,6 +9674,175 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _showNetworkLibraries() async {
+    final saved = _networkProfiles.firstOrNull;
+    final name = TextEditingController(text: saved?.name ?? 'NAS music');
+    final host = TextEditingController(text: saved?.host ?? '');
+    final root = TextEditingController(text: saved?.root ?? '');
+    final username = TextEditingController(text: saved?.username ?? '');
+    final password = TextEditingController(text: saved?.password ?? '');
+    var kind = saved?.kind ?? 'smb';
+    var entries = <NetworkLibraryEntry>[];
+    var loading = false;
+    var error = '';
+
+    Future<void> browse(StateSetter setDialogState) async {
+      final profile = NetworkLibraryProfile(
+        id: saved?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        name: name.text.trim().isEmpty ? 'NAS music' : name.text.trim(),
+        kind: kind,
+        host: host.text.trim(),
+        root: root.text.trim(),
+        username: username.text.trim(),
+        password: password.text,
+      );
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      try {
+        final found = await NetworkLibraryClient().listRecursive(profile);
+        if (!mounted) return;
+        setState(() {
+          _networkProfiles
+            ..removeWhere((item) => item.id == profile.id)
+            ..add(profile);
+        });
+        await _saveQueue();
+        setDialogState(() => entries = found);
+      } on Object catch (caught) {
+        setDialogState(() => error = caught.toString());
+      } finally {
+        setDialogState(() => loading = false);
+      }
+    }
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('SMB / NFS network library'),
+            content: SizedBox(
+              width: 560,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: kind,
+                    decoration: const InputDecoration(labelText: 'Protocol'),
+                    items: const [
+                      DropdownMenuItem(value: 'smb', child: Text('SMB 2/3 share')),
+                      DropdownMenuItem(value: 'nfs', child: Text('NFS export')),
+                    ],
+                    onChanged: (value) => setDialogState(() => kind = value ?? 'smb'),
+                  ),
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(labelText: 'Library name'),
+                  ),
+                  TextField(
+                    controller: host,
+                    decoration: const InputDecoration(labelText: 'Server hostname or IP'),
+                  ),
+                  TextField(
+                    controller: root,
+                    decoration: InputDecoration(
+                      labelText: kind == 'smb'
+                          ? 'Share[/optional/subfolder]'
+                          : 'NFS export path',
+                    ),
+                  ),
+                  if (kind == 'smb')
+                    TextField(
+                      controller: username,
+                      decoration: const InputDecoration(labelText: 'Username (optional)'),
+                    ),
+                  if (kind == 'smb')
+                    TextField(
+                      controller: password,
+                      obscureText: true,
+                      decoration: const InputDecoration(labelText: 'Password (optional)'),
+                    ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Audio is discovered recursively and added to the library only. Files are downloaded to the local cache only when played.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: loading ? null : () => browse(setDialogState),
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('Browse library'),
+                  ),
+                  if (loading) const LinearProgressIndicator(),
+                  if (error.isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(error, style: const TextStyle(color: Colors.redAccent)),
+                    ),
+                  if (entries.isNotEmpty)
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: entries.length,
+                        itemBuilder: (context, index) {
+                          final entry = entries[index];
+                          final track = Track(
+                            path: Uri(
+                              scheme: kind,
+                              host: host.text.trim(),
+                              path: '/${root.text.trim()}/${entry.relativePath}',
+                            ).toString(),
+                            name: entry.name,
+                            artist: kind.toUpperCase(),
+                            customMetadata: {
+                              'networkProfileId': saved?.id ?? _networkProfiles.last.id,
+                              'networkRelativePath': entry.relativePath,
+                            },
+                          );
+                          return ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.cloud_queue),
+                            title: Text(entry.name),
+                            subtitle: Text(_formatBytes(entry.size)),
+                            trailing: IconButton(
+                              tooltip: 'Add to library',
+                              icon: const Icon(Icons.library_add_outlined),
+                              onPressed: () async {
+                                if (_library.any((item) => item.path == track.path)) return;
+                                setState(() => _library.add(track));
+                                await _saveQueue();
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      name.dispose();
+      host.dispose();
+      root.dispose();
+      username.dispose();
+      password.dispose();
+    }
+  }
+
   Future<void> _showMediaServers() async {
     final saved = _mediaServerProfiles.firstOrNull;
     var kind = saved?.kind ?? 'subsonic';
@@ -11493,6 +11733,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'convolution') _chooseConvolutionImpulse();
               if (value == 'servers') _showMediaServers();
               if (value == 'webdav') _showWebDavLibraries();
+              if (value == 'networkLibraries') _showNetworkLibraries();
               if (value == 'savedQueues') _showQueueSnapshots();
               if (value == 'scrobble') _showScrobblingSettings();
               if (value == 'autoEq') _importAutoEqProfile();
@@ -11656,6 +11897,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
               PopupMenuItem(value: 'servers', child: Text('Remote media servers')),
               PopupMenuItem(value: 'webdav', child: Text('WebDAV network library')),
+              const PopupMenuItem(
+                value: 'networkLibraries',
+                child: Text('SMB / NFS network library'),
+              ),
               PopupMenuItem(value: 'savedQueues', child: Text('Saved queues')),
               PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],

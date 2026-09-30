@@ -23,6 +23,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Add HTTP audio streams and online radio URLs.
 - Discover DLNA/UPnP network players and cast local audio or HTTP(S) streams from Windows or Android; local files are served temporarily over the LAN, so both devices must be able to communicate on the same network.
 - Browse a WebDAV music folder recursively and add discovered audio to the library without implicitly queueing it.
+- Browse SMB 2/3 shares and NFS exports recursively; discovered tracks stay library-only and are cached locally only when played.
 - Discover AirPlay receivers and cast compatible local audio or HTTP(S) streams from Windows or Android.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
