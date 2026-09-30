@@ -4401,33 +4401,33 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _importPlaylist({String? externalPath}) async {
-    String? playlistPath = externalPath;
+    late final String playlistPath;
     var temporary = false;
-    if (playlistPath == null) {
+    if (externalPath != null) {
+      playlistPath = externalPath;
+    } else {
       final picked = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'],
       );
-      final file = picked?.firstOrNull;
+      final file = picked.firstOrNull;
       if (file == null) return;
       final materialized = await _materializePickedFile(file);
       if (materialized == null) return;
       playlistPath = materialized.path;
       temporary = materialized.temporary;
     }
-    final resolvedPlaylistPath = playlistPath;
-    if (resolvedPlaylistPath == null) return;
     try {
-      final extension = resolvedPlaylistPath.split('.').last.toLowerCase();
+      final extension = playlistPath.split('.').last.toLowerCase();
       final document = parsePlaylistDocument(
-        await File(resolvedPlaylistPath).readAsString(),
+        await File(playlistPath).readAsString(),
         extension,
       );
       var added = 0;
       var skipped = 0;
       setState(() {
         for (final entry in document.entries) {
-          var path = resolvePlaylistPath(entry.path, resolvedPlaylistPath);
+          var path = resolvePlaylistPath(entry.path, playlistPath);
           if (path.isEmpty || path.startsWith('#')) continue;
           final uri = Uri.tryParse(path);
           final isStream = uri?.scheme == 'http' || uri?.scheme == 'https';
@@ -4488,7 +4488,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
     } finally {
       if (temporary) {
-        final temporaryFile = File(resolvedPlaylistPath);
+        final temporaryFile = File(playlistPath);
         if (await temporaryFile.exists()) await temporaryFile.delete();
       }
     }
