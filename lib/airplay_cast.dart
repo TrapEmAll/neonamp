@@ -1,7 +1,14 @@
 import 'dart:io';
 import 'dart:convert';
 
-import 'package:dart_cast/dart_cast.dart';
+import 'package:dart_cast/src/core/cast_device.dart';
+import 'package:dart_cast/src/core/cast_media.dart';
+import 'package:dart_cast/src/core/cast_service.dart';
+import 'package:dart_cast/src/core/cast_session.dart';
+import 'package:dart_cast/src/protocols/airplay/airplay_discovery_provider.dart';
+import 'package:dart_cast/src/protocols/airplay/airplay_features.dart';
+import 'package:dart_cast/src/protocols/airplay/airplay_session.dart';
+import 'package:dart_cast/src/protocols/airplay/auth/hap_credentials.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -179,4 +186,3 @@ bool airPlayDeviceSupportsAudio(CastDevice device) {
   if (features == null || features.trim().isEmpty) return true;
   return AirPlayFeatures.parse(features).supportsAudio;
 }
-
