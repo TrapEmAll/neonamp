@@ -27,6 +27,8 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.PowerManager
+import android.provider.Settings
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import java.io.File
@@ -360,6 +362,40 @@ class MainActivity : AudioServiceActivity() {
                         "formatKnown" to (sampleRate != null),
                     ),
                 )
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/power")
+            .setMethodCallHandler { call, result ->
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                    result.success(mapOf("supported" to false, "ignoring" to true))
+                    return@setMethodCallHandler
+                }
+                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                when (call.method) {
+                    "status" -> result.success(
+                        mapOf(
+                            "supported" to true,
+                            "ignoring" to powerManager.isIgnoringBatteryOptimizations(packageName),
+                        ),
+                    )
+                    "request" -> {
+                        if (powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                            result.success(true)
+                        } else {
+                            try {
+                                startActivity(
+                                    Intent(
+                                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                        Uri.parse("package:$packageName"),
+                                    ),
+                                )
+                                result.success(true)
+                            } catch (error: Throwable) {
+                                result.error("battery_settings_failed", error.message, null)
+                            }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/system_controls")
             .setMethodCallHandler { call, result ->

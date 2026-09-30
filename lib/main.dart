@@ -4978,6 +4978,45 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _showAndroidBatteryControls() async {
+    if (!Platform.isAndroid) return;
+    const channel = MethodChannel('neonamp/power');
+    try {
+      final status = await channel.invokeMapMethod<String, dynamic>('status');
+      if (!mounted) return;
+      final ignoring = status?['ignoring'] == true;
+      final action = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Battery optimization'),
+          content: Text(
+            ignoring
+                ? 'NeonAmp is allowed to keep playback and controlled library scans running in the background.'
+                : 'Android may pause background playback or scans to save battery. You can allow NeonAmp to continue when the screen is off.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+            if (!ignoring)
+              FilledButton(
+                onPressed: () => Navigator.pop(context, 'request'),
+                child: const Text('Allow background activity'),
+              ),
+          ],
+        ),
+      );
+      if (action == 'request') await channel.invokeMethod<bool>('request');
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open battery settings: $error')),
+        );
+      }
+    }
+  }
+
   Future<void> _showLibraryMaintenance() async {
     final paths = _library.map((track) => track.path).toList(growable: false);
     final statisticEntries = <LibraryStatisticEntry>[];
@@ -10484,6 +10523,14 @@ class _PlayerPageState extends State<PlayerPage>
                     unawaited(_saveQueue());
                     setDialogState(() {});
                   },
+                ),
+              if (Platform.isAndroid)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Battery optimization'),
+                  subtitle: const Text('Allow reliable background playback and scans'),
+                  trailing: const Icon(Icons.battery_saver_outlined),
+                  onTap: _showAndroidBatteryControls,
                 ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
