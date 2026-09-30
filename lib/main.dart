@@ -62,6 +62,7 @@ import 'android_media_store.dart';
 import 'android_external_intent.dart';
 import 'ab_loop.dart';
 import 'backup.dart';
+import 'webdav_library.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -2235,7 +2236,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     unawaited(_updateAndroidWidget(track: track, playing: true));
     await player.play(
       track.path.startsWith('http')
-          ? UrlSource(track.path)
+          ? UrlSource(_webDavPlaybackUrl(track))
           : DeviceFileSource(track.path),
     );
     await player.setPlaybackRate(_playbackSpeed);
@@ -2550,6 +2551,7 @@ class _PlayerPageState extends State<PlayerPage>
   bool _truePeakLimiterEnabled = true;
   String? _convolutionImpulsePath;
   final List<MediaServerProfile> _mediaServerProfiles = [];
+  final List<WebDavProfile> _webDavProfiles = [];
   String _listenBrainzToken = '';
   String _lastFmApiKey = '';
   String _lastFmSessionKey = '';
@@ -2775,6 +2777,20 @@ class _PlayerPageState extends State<PlayerPage>
     } else {
       unawaited(queueLoad);
     }
+  }
+
+  String _webDavPlaybackUrl(Track track) {
+    final profileId = track.customMetadata['webdavProfileId'];
+    if (profileId == null) return track.path;
+    WebDavProfile? profile;
+    for (final candidate in _webDavProfiles) {
+      if (candidate.id == profileId) {
+        profile = candidate;
+        break;
+      }
+    }
+    if (profile == null) return track.path;
+    return webDavAuthenticatedUri(Uri.parse(track.path), profile).toString();
   }
 
   Future<void> _consumeAndroidIntents() async {
@@ -3832,6 +3848,14 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           );
         }
+        final savedWebDav = settings['webDavProfiles'];
+        if (savedWebDav is List) {
+          _webDavProfiles.addAll(
+            savedWebDav.whereType<Map>().map(
+              (item) => WebDavProfile.fromJson(Map<String, dynamic>.from(item)),
+            ),
+          );
+        }
         final savedScrobble = settings['scrobbleProfile'];
         if (savedScrobble is Map) {
           final profile = ScrobbleProfile.fromJson(Map<String, dynamic>.from(savedScrobble));
@@ -3939,6 +3963,7 @@ class _PlayerPageState extends State<PlayerPage>
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
+        'webDavProfiles': _webDavProfiles.map((profile) => profile.toJson()).toList(),
         'scrobbleProfile': ScrobbleProfile(
           token: _listenBrainzToken,
           enabled: _scrobblingEnabled,
@@ -4022,7 +4047,8 @@ class _PlayerPageState extends State<PlayerPage>
         _playlists.clear();
         _smartPlaylists.clear();
         _plugins.clear();
-        _mediaServerProfiles.clear();
+      _mediaServerProfiles.clear();
+      _webDavProfiles.clear();
       });
       await _loadQueue();
       if (mounted) {
@@ -5094,7 +5120,7 @@ class _PlayerPageState extends State<PlayerPage>
           await _player.stop();
           await _player.play(
             track.path.startsWith('http')
-                ? UrlSource(track.path)
+                ? UrlSource(_webDavPlaybackUrl(track))
                 : DeviceFileSource(track.path),
           );
           await _player.setPlaybackRate(_bitPerfectMode ? 1.0 : _playbackSpeed);
@@ -5259,7 +5285,7 @@ class _PlayerPageState extends State<PlayerPage>
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
         track.path.startsWith('http')
-            ? UrlSource(track.path)
+            ? UrlSource(_webDavPlaybackUrl(track))
             : DeviceFileSource(track.path),
       );
       final incomingDuration =
@@ -5366,7 +5392,7 @@ class _PlayerPageState extends State<PlayerPage>
       await incomingPlayer.setPlaybackRate(_playbackSpeed);
       await incomingPlayer.play(
         track.path.startsWith('http')
-            ? UrlSource(track.path)
+            ? UrlSource(_webDavPlaybackUrl(track))
             : DeviceFileSource(track.path),
       );
       final incomingDuration =
@@ -8609,6 +8635,160 @@ class _PlayerPageState extends State<PlayerPage>
     query.dispose();
   }
 
+  Future<void> _showWebDavLibraries() async {
+    final saved = _webDavProfiles.firstOrNull;
+    final name = TextEditingController(text: saved?.name ?? 'NAS music');
+    final baseUrl = TextEditingController(text: saved?.baseUrl ?? '');
+    final username = TextEditingController(text: saved?.username ?? '');
+    final password = TextEditingController(text: saved?.password ?? '');
+    var entries = <WebDavEntry>[];
+    var loading = false;
+    var error = '';
+
+    Future<void> browse(StateSetter setDialogState) async {
+      final url = baseUrl.text.trim();
+      final parsed = Uri.tryParse(url);
+      if (parsed == null || (parsed.scheme != 'http' && parsed.scheme != 'https')) {
+        setDialogState(() => error = 'Enter an HTTP or HTTPS WebDAV folder URL.');
+        return;
+      }
+      final profile = WebDavProfile(
+        id: saved?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        name: name.text.trim().isEmpty ? 'WebDAV library' : name.text.trim(),
+        baseUrl: url,
+        username: username.text.trim(),
+        password: password.text,
+      );
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      final client = WebDavLibraryClient();
+      try {
+        final found = await client.listRecursive(
+          profile.uri,
+          username: profile.username,
+          password: profile.password,
+        );
+        setState(() {
+          _webDavProfiles
+            ..removeWhere((item) => item.id == profile.id)
+            ..add(profile);
+        });
+        await _saveQueue();
+        setDialogState(() {
+          entries = found.where((entry) => isWebDavAudioPath(entry.url)).toList();
+        });
+      } on Object catch (caught) {
+        setDialogState(() => error = caught.toString());
+      } finally {
+        client.close();
+        setDialogState(() => loading = false);
+      }
+    }
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('WebDAV network library'),
+            content: SizedBox(
+              width: 560,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(labelText: 'Library name'),
+                  ),
+                  TextField(
+                    controller: baseUrl,
+                    decoration: const InputDecoration(labelText: 'WebDAV folder URL'),
+                    keyboardType: TextInputType.url,
+                  ),
+                  TextField(
+                    controller: username,
+                    decoration: const InputDecoration(labelText: 'Username (optional)'),
+                  ),
+                  TextField(
+                    controller: password,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: 'Password (optional)'),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Browse audio files recursively. Files are added to the library only; they are not added to the queue automatically.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: loading ? null : () => browse(setDialogState),
+                    icon: const Icon(Icons.cloud_sync_outlined),
+                    label: const Text('Browse library'),
+                  ),
+                  if (loading) const LinearProgressIndicator(),
+                  if (error.isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(error, style: const TextStyle(color: Colors.redAccent)),
+                    ),
+                  if (entries.isNotEmpty)
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: entries.length,
+                        itemBuilder: (context, index) {
+                          final entry = entries[index];
+                          final track = Track(
+                            path: entry.url,
+                            name: entry.name,
+                            artist: 'WebDAV',
+                            customMetadata: {
+                              'webdavProfileId': saved?.id ?? _webDavProfiles.last.id,
+                            },
+                          );
+                          return ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.music_note),
+                            title: Text(entry.name),
+                            subtitle: entry.size == null ? null : Text(_formatBytes(entry.size!)),
+                            trailing: IconButton(
+                              tooltip: 'Add to library',
+                              icon: const Icon(Icons.library_add_outlined),
+                              onPressed: () async {
+                                if (_library.any((item) => item.path == track.path)) return;
+                                setState(() => _library.add(track));
+                                await _saveQueue();
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      name.dispose();
+      baseUrl.dispose();
+      username.dispose();
+      password.dispose();
+    }
+  }
+
   Future<void> _showMediaServers() async {
     final saved = _mediaServerProfiles.firstOrNull;
     var kind = saved?.kind ?? 'subsonic';
@@ -10423,6 +10603,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'eq') _showEqualizer();
               if (value == 'convolution') _chooseConvolutionImpulse();
               if (value == 'servers') _showMediaServers();
+              if (value == 'webdav') _showWebDavLibraries();
               if (value == 'scrobble') _showScrobblingSettings();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
@@ -10575,6 +10756,7 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'chapters', child: Text('Import embedded chapters')),
               PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
               PopupMenuItem(value: 'servers', child: Text('Remote media servers')),
+              PopupMenuItem(value: 'webdav', child: Text('WebDAV network library')),
               PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],
           ),
