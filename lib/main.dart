@@ -45,6 +45,7 @@ import 'visualizer_metrics.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
+import 'artwork_download.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
 import 'convolution.dart';
@@ -8036,17 +8037,77 @@ class _PlayerPageState extends State<PlayerPage>
       );
       return;
     }
-    final result = await FilePicker.pickFiles(type: FileType.image);
-    if (result.isEmpty || result.first.path == null) return;
-    final imageFile = File(result.first.path!);
-    final bytes = await imageFile.readAsBytes();
-    if (bytes.isEmpty) return;
-    final extension = imageFile.path.split('.').last.toLowerCase();
-    final mimeType = switch (extension) {
-      'png' => 'image/png',
-      'webp' => 'image/webp',
-      _ => 'image/jpeg',
-    };
+    final source = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Choose cover art'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'file'),
+            child: const Text('Choose image file'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'url'),
+            child: const Text('Download from URL'),
+          ),
+        ],
+      ),
+    );
+    if (source == null || !mounted) return;
+    Uint8List bytes;
+    String mimeType;
+    try {
+      if (source == 'url') {
+        final controller = TextEditingController();
+        final url = await showDialog<String>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Download cover art'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(hintText: 'https://example.com/cover.jpg'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, controller.text),
+                child: const Text('Download'),
+              ),
+            ],
+          ),
+        );
+        controller.dispose();
+        if (url == null || url.trim().isEmpty) return;
+        final downloaded = await downloadArtworkImage(url);
+        bytes = downloaded.bytes;
+        mimeType = downloaded.mimeType;
+      } else {
+        final result = await FilePicker.pickFiles(type: FileType.image);
+        if (result.isEmpty || result.first.path == null) return;
+        final imageFile = File(result.first.path!);
+        bytes = await imageFile.readAsBytes();
+        if (bytes.isEmpty) return;
+        final extension = imageFile.path.split('.').last.toLowerCase();
+        mimeType = switch (extension) {
+          'png' => 'image/png',
+          'webp' => 'image/webp',
+          'gif' => 'image/gif',
+          _ => 'image/jpeg',
+        };
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load cover art: $error')),
+        );
+      }
+      return;
+    }
     try {
       if (isAiffAudioPath(track.path) || isWavAudioPath(track.path)) {
         final writer = isWavAudioPath(track.path)
