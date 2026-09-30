@@ -63,6 +63,7 @@ import 'android_external_intent.dart';
 import 'ab_loop.dart';
 import 'backup.dart';
 import 'webdav_library.dart';
+import 'folder_artwork.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -5135,6 +5136,12 @@ class _PlayerPageState extends State<PlayerPage>
       final id3Numbers = containerId3 == null
           ? null
           : readContainerId3TrackDiscNumbers(containerId3);
+      final embeddedArtwork = metadata.pictures.isNotEmpty
+          ? metadata.pictures.first.bytes
+          : (isAiffAudioPath(path) || isWavAudioPath(path))
+          ? readAiffId3Picture(containerId3!)?.$1
+          : null;
+      final artwork = embeddedArtwork ?? await findFolderArtwork(path);
       return Track(
         path: path,
         name: metadata.title?.trim().isNotEmpty == true
@@ -5161,11 +5168,7 @@ class _PlayerPageState extends State<PlayerPage>
                 : isWavAudioPath(path)
                 ? readWavId3Lyrics(containerId3!)
                 : null),
-        artwork: metadata.pictures.isNotEmpty
-            ? metadata.pictures.first.bytes
-            : (isAiffAudioPath(path) || isWavAudioPath(path))
-            ? readAiffId3Picture(containerId3!)?.$1
-            : null,
+        artwork: artwork,
         replayGainDb: replayGainDb,
       );
     } catch (_) {

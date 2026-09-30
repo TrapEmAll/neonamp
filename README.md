@@ -60,6 +60,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Persistent smart playlists for favorites, top-rated, most-played, genre, and artist rules, including two-rule all/any matching.
 - Sort the library by recently added, title, artist, album, rating, or play count with a persisted direction.
 - Embedded album-art display when cover art is available in the audio file.
+- Folder cover-art fallback for tracks without embedded artwork.
 - Replace embedded cover art for supported local audio containers.
 - Named playlists with add-to-playlist actions plus M3U/M3U8 and legacy PLS import/export.
 - Import and export iTunes-compatible XML libraries, including local-track metadata and named playlists.

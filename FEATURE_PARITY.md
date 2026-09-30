@@ -16,6 +16,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - OGG Vorbis and Opus tag editing rewrites Vorbis comments, including lyrics, totals, and embedded picture blocks, while retaining encoded audio packets
 - Batch metadata editing for selected library tracks with per-file failure reporting on Windows and Android
 - Embedded album-art reading and display when the source file contains cover art, including Android notification and lock-screen media metadata
+- Folder-art fallback for local tracks without embedded art, using Cover, Folder, Front, AlbumArt, and Album-Art images with bounded file sizes
 - Embedded cover-art replacement for supported local containers
 - Embedded lyrics editing and in-app lyrics viewing
 - AIFF/AIFC metadata and embedded cover-art editing through ID3 chunks, including lyrics
