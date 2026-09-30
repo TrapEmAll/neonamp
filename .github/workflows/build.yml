@@ -91,10 +91,27 @@ jobs:
         run: flutter pub get
       - name: Fetch default MIDI SoundFont
         run: python tool/fetch_default_soundfont.py
+      - name: Configure Android upload signing
+        if: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 != '' }}
+        env:
+          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          ANDROID_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        run: |
+          mkdir -p keys
+          printf '%s' "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 --decode > keys/neonamp-upload.jks
+          {
+            printf 'storeFile=../keys/neonamp-upload.jks\n'
+            printf 'storePassword=%s\n' "$ANDROID_UPLOAD_STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_UPLOAD_KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$ANDROID_UPLOAD_KEY_PASSWORD"
+          } > android/key.properties
       - name: Build Android release
         run: |
           for attempt in 1 2 3; do
-            flutter build apk --release --target-platform android-arm,android-arm64 && exit 0
+            flutter build apk --release --target-platform android-arm,android-arm64 && \
+              flutter build appbundle --release --target-platform android-arm,android-arm64 && exit 0
             if [ "$attempt" -lt 3 ]; then
               echo "Android build attempt $attempt failed; retrying dependency resolution..."
               sleep 15
@@ -105,7 +122,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: NeonAmp-android
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
 
   publish-release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -131,4 +150,5 @@ jobs:
             NeonAmp-windows-x64.zip
             NeonAmp-Setup-*.exe
             android/app-release.apk
+            android/app-release.aab
 

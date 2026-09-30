@@ -77,6 +77,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Local HTTP/WebSocket remote control with phone-friendly queue browsing, remote track selection, clear-queue, transport, seek, and volume commands
 - Android background playback with notification, lock-screen, headset, and Android Auto media controls, including browsable library, queue, favorites, history, podcasts, playlists, and voice-search metadata
 - Android home-screen media widget with compact/large responsive layouts, artwork, queue shortcut, and play/pause/previous/next actions synchronized with native, DSP, MIDI, and cast playback state
+- Android distribution workflow produces both ARM-only APK and App Bundle artifacts; optional GitHub Actions upload-keystore secrets create a Play Console-compatible signed bundle without storing credentials in the repository
 - Windows global media keys for play/pause, stop, previous, and next
 - Android USB/Bluetooth gamepad controls for play/pause, next, previous, 15-second seek, mute, and an in-app controller overlay; bindings can be captured, remapped, reset, and persisted; the same controller key events are handled by the Windows Flutter surface
 - Windows System Media Transport Controls with lock-screen/taskbar metadata and transport buttons

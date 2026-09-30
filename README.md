@@ -80,7 +80,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
   - Animated spectrum-bars, waveform, and oscilloscope visualizers with persisted mode selection.
 - Desktop Visuals and Settings actions are available on Windows and Android.
 
-The Android APK is a debug/distribution artifact signed with Flutter's local release key for direct installation. A Play Store release will need a real upload keystore and store configuration.
+The Android CI artifact includes both the ARM-only APK and an Android App Bundle. Without signing secrets, the builds use Flutter's local release/debug signing for direct installation. For a Play Store-ready signed bundle, configure these GitHub Actions secrets: `ANDROID_UPLOAD_KEYSTORE_BASE64`, `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. The keystore itself is never committed.
 
 ## Development
 
