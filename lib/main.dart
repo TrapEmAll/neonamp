@@ -2182,6 +2182,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<void> Function()? onPauseRequested;
   Future<void> Function()? onStopRequested;
   Future<void> Function(Duration position)? onSeekRequested;
+  Future<List<MediaItem>> Function(String parentMediaId)? childrenProvider;
+  Future<List<MediaItem>> Function(String query)? searchProvider;
+  Future<void> Function(String mediaId)? playMediaIdRequested;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
@@ -2321,6 +2324,26 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   @override
   Future<void> skipToPrevious() async {
     await onPrevious?.call();
+  }
+
+  @override
+  Future<List<MediaItem>> getChildren(
+    String parentMediaId, [
+    Map<String, dynamic>? options,
+  ]) => childrenProvider?.call(parentMediaId) ?? const [];
+
+  @override
+  Future<List<MediaItem>> search(
+    String query, [
+    Map<String, dynamic>? extras,
+  ]) => searchProvider?.call(query) ?? const [];
+
+  @override
+  Future<void> playFromMediaId(
+    String mediaId, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    await playMediaIdRequested?.call(mediaId);
   }
 
   void _broadcast({Duration? position, PlayerState? state}) {
@@ -3077,6 +3100,18 @@ class _PlayerPageState extends State<PlayerPage>
         androidNotificationChannelName: 'NeonAmp playback',
         androidNotificationOngoing: true,
         androidStopForegroundOnPause: false,
+        fastForwardInterval: const Duration(seconds: 15),
+        rewindInterval: const Duration(seconds: 15),
+        preloadArtwork: true,
+        artDownscaleWidth: 512,
+        artDownscaleHeight: 512,
+        androidBrowsableRootExtras: const {
+          AndroidContentStyle.supportedKey: true,
+          AndroidContentStyle.browsableHintKey:
+              AndroidContentStyle.listItemHintValue,
+          AndroidContentStyle.playableHintKey:
+              AndroidContentStyle.listItemHintValue,
+        },
       ),
     );
     _audioHandler!.onNext = _next;
@@ -3085,6 +3120,139 @@ class _PlayerPageState extends State<PlayerPage>
     _audioHandler!.onPauseRequested = _pauseCurrent;
     _audioHandler!.onStopRequested = _stopCurrent;
     _audioHandler!.onSeekRequested = _seekCurrent;
+    _audioHandler!.childrenProvider = _androidAutoChildren;
+    _audioHandler!.searchProvider = _androidAutoSearch;
+    _audioHandler!.playMediaIdRequested = _playAndroidAutoMedia;
+  }
+
+  Future<MediaItem> _androidAutoTrack(Track track) async {
+    return MediaItem(
+      id: track.identityKey,
+      title: track.name,
+      artist: track.artist,
+      album: track.album,
+      genre: track.genre,
+      duration: track.cueEnd == null ? null : track.cueEnd! - track.cueStart,
+      artUri: await _artworkUri(track),
+      playable: true,
+      extras: const {
+        AndroidContentStyle.playableHintKey:
+            AndroidContentStyle.listItemHintValue,
+      },
+    );
+  }
+
+  Future<List<MediaItem>> _androidAutoChildren(String parentMediaId) async {
+    if (parentMediaId == AudioService.browsableRootId) {
+      return [
+        const MediaItem(
+          id: 'auto:library',
+          title: 'Library',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:queue',
+          title: 'Queue',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:favorites',
+          title: 'Favorites',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:history',
+          title: 'Recently played',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:podcasts',
+          title: 'Podcasts',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        for (final name in _playlists.keys)
+          MediaItem(
+            id: 'auto:playlist:$name',
+            title: name,
+            playable: false,
+            extras: const {
+              AndroidContentStyle.browsableHintKey:
+                  AndroidContentStyle.listItemHintValue,
+            },
+          ),
+      ];
+    }
+    Iterable<Track> tracks;
+    if (parentMediaId == 'auto:library') {
+      tracks = _library;
+    } else if (parentMediaId == 'auto:queue') {
+      tracks = _queue;
+    } else if (parentMediaId == 'auto:favorites') {
+      tracks = _library.where((track) => track.favorite);
+    } else if (parentMediaId == 'auto:history') {
+      tracks = _playHistory.map((identity) => _findTrackByIdentity(identity)).whereType<Track>();
+    } else if (parentMediaId == 'auto:podcasts') {
+      tracks = _library.where((track) => track.album == 'Podcast');
+    } else if (parentMediaId.startsWith('auto:playlist:')) {
+      final name = parentMediaId.substring('auto:playlist:'.length);
+      final paths = _playlists[name] ?? const <String>[];
+      tracks = paths.map((path) => _findTrackByIdentity(path)).whereType<Track>();
+    } else {
+      return const [];
+    }
+    return [for (final track in tracks) await _androidAutoTrack(track)];
+  }
+
+  Track? _findTrackByIdentity(String identity) {
+    for (final track in [..._queue, ..._library]) {
+      if (track.identityKey == identity || track.path == identity) return track;
+    }
+    return null;
+  }
+
+  Future<List<MediaItem>> _androidAutoSearch(String query) async {
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) return const [];
+    final matches = _library.where(
+      (track) => track.name.toLowerCase().contains(needle) ||
+          track.artist.toLowerCase().contains(needle) ||
+          track.album.toLowerCase().contains(needle),
+    );
+    return [for (final track in matches.take(50)) await _androidAutoTrack(track)];
+  }
+
+  Future<void> _playAndroidAutoMedia(String mediaId) async {
+    final track = _findTrackByIdentity(mediaId);
+    if (track == null) return;
+    var index = _queue.indexWhere((item) => item.identityKey == track.identityKey);
+    if (index < 0) {
+      setState(() {
+        _queue.add(track);
+        index = _queue.length - 1;
+      });
+      await _saveQueue();
+    }
+    await _select(index);
   }
 
   Future<void> _showCastDevices() async {

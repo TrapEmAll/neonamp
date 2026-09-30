@@ -10,6 +10,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 
 - Native Windows desktop build and Android APK from one Flutter codebase.
 - Android background playback with lock-screen, headset, notification, and Android Auto media controls.
+- Android Auto can browse the library, queue, favorites, history, podcasts, playlists, and search track metadata.
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
