@@ -2605,6 +2605,7 @@ class _PlayerPageState extends State<PlayerPage>
   final Map<String, List<Track>> _savedQueueSnapshots = {};
   final List<List<Track>> _queueHistory = [];
   List<Track>? _lastSavedQueue;
+  bool _temporaryQueue = false;
   final Map<String, NeonAmpPlugin> _plugins = {};
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _controllerFocusNode = FocusNode();
@@ -4662,7 +4663,7 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _saveQueue() async {
     final currentQueue = List<Track>.from(_queue);
     final previousQueue = _lastSavedQueue;
-    if (previousQueue != null &&
+    if (!_temporaryQueue && previousQueue != null &&
         (previousQueue.length != currentQueue.length ||
             previousQueue.asMap().entries.any(
               (entry) =>
@@ -4673,16 +4674,18 @@ class _PlayerPageState extends State<PlayerPage>
         if (_queueHistory.length > 10) _queueHistory.removeLast();
       }
     }
-    _lastSavedQueue = currentQueue;
+    if (!_temporaryQueue) _lastSavedQueue = currentQueue;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'queueTracks',
-      jsonEncode(_queue.map((track) => track.toJson()).toList()),
-    );
-    await prefs.setStringList(
-      'queue',
-      _queue.map((track) => track.path).toList(),
-    );
+    if (!_temporaryQueue) {
+      await prefs.setString(
+        'queueTracks',
+        jsonEncode(_queue.map((track) => track.toJson()).toList()),
+      );
+      await prefs.setStringList(
+        'queue',
+        _queue.map((track) => track.path).toList(),
+      );
+    }
     await prefs.setStringList(
       'library',
       _library.map((track) => jsonEncode(track.toJson())).toList(),
@@ -4770,6 +4773,28 @@ class _PlayerPageState extends State<PlayerPage>
         if (_playerLayoutCustomized) 'playerControls': _playerControls,
       }),
     );
+  }
+
+  Future<void> _toggleTemporaryQueue() async {
+    final next = !_temporaryQueue;
+    setState(() => _temporaryQueue = next);
+    if (next) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('queueTracks');
+      await prefs.remove('queue');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Temporary queue enabled; it will not be restored on restart.')),
+        );
+      }
+    } else {
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Queue will be restored on the next launch.')),
+        );
+      }
+    }
   }
 
   Future<void> _setGaplessPlayback(bool enabled) async {
@@ -12464,6 +12489,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'networkLibraries') _showNetworkLibraries();
               if (value == 'savedQueues') _showQueueSnapshots();
               if (value == 'queueHistory') _showQueueHistory();
+              if (value == 'temporaryQueue') _toggleTemporaryQueue();
               if (value == 'scrobble') _showScrobblingSettings();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
@@ -12632,6 +12658,14 @@ class _PlayerPageState extends State<PlayerPage>
               ),
               PopupMenuItem(value: 'savedQueues', child: Text('Saved queues')),
               PopupMenuItem(value: 'queueHistory', child: Text('Queue history')),
+              PopupMenuItem(
+                value: 'temporaryQueue',
+                child: Text(
+                  _temporaryQueue
+                      ? 'Make queue persistent'
+                      : 'Make queue temporary',
+                ),
+              ),
               PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],
           ),
