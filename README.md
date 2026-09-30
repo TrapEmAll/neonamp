@@ -14,6 +14,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
 - On Android, scan the device's MediaStore music collection in one step; cached results use the same metadata and DSP path as SAF folders.
+- Android offline cache management includes usage reporting, configurable size limits, stale-entry repair, and confirmed cache clearing.
 - Open audio files, supported playlists, and audio URLs from Android Files, Downloads, browsers, and messaging apps; NeonAmp caches temporary content URIs and starts playback from the received item.
 - Decode legacy and container audio formats through the bundled cross-platform fallback decoder when the native playback path cannot read them; conversion is temporary and does not modify the music file.
 - Play local videos in a separate Windows/Android queue with seeking, speed and volume controls; codec support depends on the device's native decoders.

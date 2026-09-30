@@ -43,6 +43,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Podcast subscription management allows unsubscribing without removing existing episodes from the queue/library
 - Recursive folder scanning and M3U/M3U8 playlist import
 - Android MediaStore device-music scan with cached paths, relative folder metadata, incremental cache refresh, and shared metadata/DSP playback
+- Android offline-cache controls with unlimited/128 MB/512 MB/1 GB limits, stale-entry repair, usage reporting, and confirmed cache clearing
 - Versioned JSON backup and restore for library, queue, playlists, settings, resume positions, and Android folder-permission metadata
 - Android share/open-with handling for audio files, audio URLs, and supported playlist files from Files, Downloads, browsers, and messaging apps, including cold-start and warm-start delivery with content-URI caching
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume

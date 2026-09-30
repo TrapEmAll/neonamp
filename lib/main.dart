@@ -4221,6 +4221,97 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _showAndroidStorageControls() async {
+    if (!Platform.isAndroid) return;
+    const channel = MethodChannel('neonamp/library');
+    try {
+      final info = await channel.invokeMapMethod<String, dynamic>('cacheInfo');
+      if (!mounted) return;
+      final action = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Offline cache'),
+          children: [
+            if (info != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+                child: Text(
+                  '${info['files'] ?? 0} files · '
+                  '${_formatBytes((info['bytes'] as num?)?.toInt() ?? 0)} used\n'
+                  '${(info['limitBytes'] as num?)?.toInt() == 0 ? 'No size limit' : 'Limit: ${_formatBytes((info['limitBytes'] as num).toInt())}'}',
+                ),
+              ),
+            for (final option in const <({String label, String action})>[
+              (label: 'Unlimited cache', action: 'limit:0'),
+              (label: 'Limit to 128 MB', action: 'limit:134217728'),
+              (label: 'Limit to 512 MB', action: 'limit:536870912'),
+              (label: 'Limit to 1 GB', action: 'limit:1073741824'),
+            ])
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, option.action),
+                child: Text(option.label),
+              ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'repair'),
+              child: const Text('Repair stale cache entries'),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, 'clear'),
+              child: const Text('Clear cached files'),
+            ),
+          ],
+        ),
+      );
+      if (action == null || !mounted) return;
+      if (action == 'clear') {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Clear offline cache?'),
+            content: const Text(
+              'Cached copies will be removed. Your library entries and folder permissions will remain.',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Clear')),
+            ],
+          ),
+        );
+        if (confirmed != true) return;
+      }
+      Map<String, dynamic>? updated;
+      if (action.startsWith('limit:')) {
+        updated = await channel.invokeMapMethod<String, dynamic>(
+          'setCacheLimit',
+          {'limitBytes': int.parse(action.substring('limit:'.length))},
+        );
+      } else if (action == 'repair') {
+        updated = await channel.invokeMapMethod<String, dynamic>('repairCache');
+      } else if (action == 'clear') {
+        updated = await channel.invokeMapMethod<String, dynamic>('clearCache');
+      }
+      if (!mounted) return;
+      final summary = updated == null
+          ? 'Offline cache updated.'
+          : '${updated['files'] ?? 0} files · ${_formatBytes((updated['bytes'] as num?)?.toInt() ?? 0)} used';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(summary)));
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not manage offline cache: $error')),
+        );
+      }
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
   Future<String?> _pickFolderLocation(String dialogTitle) async {
     if (Platform.isAndroid) {
       final selection = await const MethodChannel('neonamp/library')
@@ -10310,6 +10401,7 @@ class _PlayerPageState extends State<PlayerPage>
             onSelected: (value) {
               if (value == 'folder') _addFolder();
               if (value == 'mediaStore') _scanMediaStore();
+              if (value == 'storage') _showAndroidStorageControls();
               if (value == 'abLoop') _showAbLoop();
               if (value == 'backupExport') _exportBackup();
               if (value == 'backupImport') _importBackup();
@@ -10362,6 +10454,11 @@ class _PlayerPageState extends State<PlayerPage>
                 const PopupMenuItem(
                   value: 'mediaStore',
                   child: Text('Scan all device music'),
+                ),
+              if (Platform.isAndroid)
+                const PopupMenuItem(
+                  value: 'storage',
+                  child: Text('Offline cache and storage'),
                 ),
               const PopupMenuItem(value: 'abLoop', child: Text('A–B loop')),
               const PopupMenuItem(

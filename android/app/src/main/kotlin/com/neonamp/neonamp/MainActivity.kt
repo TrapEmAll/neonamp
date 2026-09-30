@@ -202,6 +202,25 @@ class MainActivity : AudioServiceActivity() {
                             }.start()
                         }
                     }
+                    "cacheInfo" -> result.success(cacheInfo())
+                    "setCacheLimit" -> {
+                        val limitBytes = call.argument<Number>("limitBytes")?.toLong()
+                        if (limitBytes == null || limitBytes < 0L) {
+                            result.error("invalid_arguments", "A non-negative cache limit is required.", null)
+                        } else {
+                            libraryCachePreferences.edit().putLong("limitBytes", limitBytes).apply()
+                            enforceCacheLimit()
+                            result.success(cacheInfo())
+                        }
+                    }
+                    "clearCache" -> {
+                        clearLibraryCache()
+                        result.success(cacheInfo())
+                    }
+                    "repairCache" -> {
+                        repairLibraryCache()
+                        result.success(cacheInfo())
+                    }
                     "writeTextToFolder" -> {
                         val folderUri = call.argument<String>("uri")
                         val fileName = call.argument<String>("fileName")
@@ -416,7 +435,7 @@ class MainActivity : AudioServiceActivity() {
             .takeIf { it.isNotBlank() }
             ?: audioExtensionForMimeType(mimeType.orEmpty())
             ?: "bin"
-        val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        val cacheDirectory = libraryCacheDirectory()
         val cachedFile = File(cacheDirectory, "${sha256(uri.toString())}.$fileExtension")
         if (!cachedFile.isFile) {
             val temporary = File(cacheDirectory, "${cachedFile.name}.tmp")
@@ -428,10 +447,58 @@ class MainActivity : AudioServiceActivity() {
                 temporary.delete()
             }
         }
+        enforceCacheLimit()
         libraryCachePreferences.edit()
             .putString(cachedFile.canonicalPath, uri.toString())
             .apply()
         return mapOf("path" to cachedFile.absolutePath, "name" to name)
+    }
+
+    private fun libraryCacheDirectory(): File =
+        File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+
+    private fun cacheLimitBytes(): Long =
+        libraryCachePreferences.getLong("limitBytes", 0L)
+
+    private fun cacheInfo(): Map<String, Any> {
+        val files = libraryCacheDirectory().listFiles()?.filter { it.isFile } ?: emptyList()
+        return mapOf(
+            "files" to files.size,
+            "bytes" to files.sumOf { it.length() },
+            "limitBytes" to cacheLimitBytes(),
+        )
+    }
+
+    private fun enforceCacheLimit() {
+        val limit = cacheLimitBytes()
+        if (limit <= 0L) return
+        val files = libraryCacheDirectory().listFiles()
+            ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+            ?.sortedBy { it.lastModified() }
+            ?.toMutableList() ?: return
+        var total = files.sumOf { it.length() }
+        for (file in files) {
+            if (total <= limit) break
+            val length = file.length()
+            if (file.delete()) total -= length
+        }
+    }
+
+    private fun clearLibraryCache() {
+        libraryCacheDirectory().listFiles()?.forEach { if (it.isFile) it.delete() }
+        val limit = cacheLimitBytes()
+        libraryCachePreferences.edit().clear().putLong("limitBytes", limit).apply()
+    }
+
+    private fun repairLibraryCache() {
+        val root = libraryCacheDirectory().canonicalFile
+        val validPrefix = root.path + File.separator
+        val editor = libraryCachePreferences.edit()
+        libraryCachePreferences.all.keys
+            .filter { it != "limitBytes" && (!it.startsWith(validPrefix) || !File(it).isFile) }
+            .forEach { editor.remove(it) }
+        editor.apply()
+        enforceCacheLimit()
     }
 
     private fun queryDisplayName(uri: Uri): String? {
@@ -514,7 +581,7 @@ class MainActivity : AudioServiceActivity() {
     }
 
     private fun scanSafFolder(treeUri: Uri): List<Map<String, String>> {
-        val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        val cacheDirectory = libraryCacheDirectory()
         val audioExtensions = setOf(
             "mp3", "flac", "wav", "ogg", "m4a", "mp4", "aac", "wma",
             "opus", "ape", "aif", "aiff", "aifc", "mov", "webm", "mkv",
@@ -616,11 +683,12 @@ class MainActivity : AudioServiceActivity() {
                 }
             } ?: throw IllegalStateException("Android could not read this folder. Re-add it to restore access.")
         }
+        enforceCacheLimit()
         return results
     }
 
     private fun scanMediaStore(): List<Map<String, String>> {
-        val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        val cacheDirectory = libraryCacheDirectory()
         val results = mutableListOf<Map<String, String>>()
         val relativePathColumnName = "relative_path"
         val projection = mutableListOf(
@@ -710,6 +778,7 @@ class MainActivity : AudioServiceActivity() {
                 )
             }
         } ?: throw IllegalStateException("Android MediaStore is unavailable.")
+        enforceCacheLimit()
         return results
     }
 
