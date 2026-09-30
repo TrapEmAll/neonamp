@@ -2199,6 +2199,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   bool Function()? notificationArtworkEnabled;
   bool Function()? notificationSeekControlsEnabled;
   String Function()? notificationCompactActions;
+  bool Function()? podcastNotificationArtworkEnabled;
+  bool Function()? podcastNotificationSeekControlsEnabled;
+  String Function()? podcastNotificationCompactActions;
+  bool _currentTrackIsPodcast = false;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
@@ -2235,6 +2239,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   Future<void> playTrack(Track track) async {
     await player.stop();
+    _currentTrackIsPodcast = track.album.trim().toLowerCase() == 'podcast';
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
     final duration = track.cueEnd == null
@@ -2267,6 +2272,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   Future<void> publishTrack(Track track) async {
+    _currentTrackIsPodcast = track.album.trim().toLowerCase() == 'podcast';
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
     final artworkUri = await _notificationArtworkUri(track);
@@ -2341,7 +2347,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   }
 
   Future<Uri?> _notificationArtworkUri(Track track) async {
-    if (notificationArtworkEnabled?.call() == false) return null;
+    final enabled = _currentTrackIsPodcast
+        ? podcastNotificationArtworkEnabled?.call() ?? notificationArtworkEnabled?.call()
+        : notificationArtworkEnabled?.call();
+    if (enabled == false) return null;
     return _artworkUri(track);
   }
 
@@ -2374,7 +2383,10 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   void _broadcast({Duration? position, PlayerState? state}) {
     if (position != null) _lastPosition = position;
     final currentState = state ?? player.state;
-    final controls = switch (notificationCompactActions?.call()) {
+    final actionPreset = _currentTrackIsPodcast
+        ? podcastNotificationCompactActions?.call() ?? notificationCompactActions?.call()
+        : notificationCompactActions?.call();
+    final controls = switch (actionPreset) {
       'playNext' => <MediaControl>[
         currentState == PlayerState.playing
             ? MediaControl.pause
@@ -2399,7 +2411,11 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     playbackState.add(
       PlaybackState(
         controls: controls,
-        systemActions: notificationSeekControlsEnabled?.call() == false
+        systemActions: (_currentTrackIsPodcast
+                ? podcastNotificationSeekControlsEnabled?.call() ??
+                    notificationSeekControlsEnabled?.call()
+                : notificationSeekControlsEnabled?.call()) ==
+            false
             ? const <MediaAction>{}
             : const {
                 MediaAction.seek,
@@ -2686,6 +2702,9 @@ class _PlayerPageState extends State<PlayerPage>
   bool _notificationArtworkEnabled = true;
   bool _notificationSeekControlsEnabled = true;
   String _notificationCompactActions = 'previousPlayNext';
+  bool _podcastNotificationArtworkEnabled = true;
+  bool _podcastNotificationSeekControlsEnabled = true;
+  String _podcastNotificationCompactActions = 'playNext';
   String? _convolutionImpulsePath;
   final List<MediaServerProfile> _mediaServerProfiles = [];
   final List<WebDavProfile> _webDavProfiles = [];
@@ -3518,6 +3537,12 @@ class _PlayerPageState extends State<PlayerPage>
         () => _notificationSeekControlsEnabled;
     _audioHandler!.notificationCompactActions =
         () => _notificationCompactActions;
+    _audioHandler!.podcastNotificationArtworkEnabled =
+        () => _podcastNotificationArtworkEnabled;
+    _audioHandler!.podcastNotificationSeekControlsEnabled =
+        () => _podcastNotificationSeekControlsEnabled;
+    _audioHandler!.podcastNotificationCompactActions =
+        () => _podcastNotificationCompactActions;
   }
 
   Future<MediaItem> _androidAutoTrack(Track track) async {
@@ -4546,7 +4571,17 @@ class _PlayerPageState extends State<PlayerPage>
             settings['notificationCompactActions'] as String?;
         if (const {'previousPlayNext', 'playNext', 'previousPlay'}
             .contains(savedNotificationActions)) {
-          _notificationCompactActions = savedNotificationActions!;
+        _notificationCompactActions = savedNotificationActions!;
+        }
+        _podcastNotificationArtworkEnabled =
+            settings['podcastNotificationArtworkEnabled'] as bool? ?? true;
+        _podcastNotificationSeekControlsEnabled =
+            settings['podcastNotificationSeekControlsEnabled'] as bool? ?? true;
+        final savedPodcastNotificationActions =
+            settings['podcastNotificationCompactActions'] as String?;
+        if (const {'playNext', 'previousPlay', 'previousPlayNext'}
+            .contains(savedPodcastNotificationActions)) {
+          _podcastNotificationCompactActions = savedPodcastNotificationActions!;
         }
         final savedImpulse = settings['convolutionImpulsePath'] as String?;
         _convolutionImpulsePath = savedImpulse != null &&
@@ -4738,6 +4773,9 @@ class _PlayerPageState extends State<PlayerPage>
         'notificationArtworkEnabled': _notificationArtworkEnabled,
         'notificationSeekControlsEnabled': _notificationSeekControlsEnabled,
         'notificationCompactActions': _notificationCompactActions,
+        'podcastNotificationArtworkEnabled': _podcastNotificationArtworkEnabled,
+        'podcastNotificationSeekControlsEnabled': _podcastNotificationSeekControlsEnabled,
+        'podcastNotificationCompactActions': _podcastNotificationCompactActions,
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
         'webDavProfiles': _webDavProfiles.map((profile) => profile.toJson()).toList(),
@@ -11041,6 +11079,50 @@ class _PlayerPageState extends State<PlayerPage>
                 onChanged: (value) {
                   if (value == null) return;
                   setState(() => _notificationCompactActions = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              const Divider(),
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Podcast notification behavior'),
+                subtitle: Text('Use a separate media-control policy for podcast episodes.'),
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Podcast artwork'),
+                value: _podcastNotificationArtworkEnabled,
+                onChanged: (value) {
+                  setState(() => _podcastNotificationArtworkEnabled = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Podcast seek controls'),
+                subtitle: const Text('Allow seeking and skip actions for podcasts.'),
+                value: _podcastNotificationSeekControlsEnabled,
+                onChanged: (value) {
+                  setState(() => _podcastNotificationSeekControlsEnabled = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              DropdownButtonFormField<String>(
+                value: _podcastNotificationCompactActions,
+                decoration: const InputDecoration(
+                  labelText: 'Podcast compact actions',
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'playNext', child: Text('Play · Next')),
+                  DropdownMenuItem(value: 'previousPlayNext', child: Text('Previous · Play · Next')),
+                  DropdownMenuItem(value: 'previousPlay', child: Text('Previous · Play')),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => _podcastNotificationCompactActions = value);
                   unawaited(_saveQueue());
                   setDialogState(() {});
                 },
