@@ -3515,6 +3515,24 @@ class _PlayerPageState extends State<PlayerPage>
           playable: false,
           extras: {
             AndroidContentStyle.browsableHintKey:
+            AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:artists',
+          title: 'Artists',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
+                AndroidContentStyle.listItemHintValue,
+          },
+        ),
+        const MediaItem(
+          id: 'auto:albums',
+          title: 'Albums',
+          playable: false,
+          extras: {
+            AndroidContentStyle.browsableHintKey:
                 AndroidContentStyle.listItemHintValue,
           },
         ),
@@ -3551,9 +3569,22 @@ class _PlayerPageState extends State<PlayerPage>
           playable: false,
           extras: {
             AndroidContentStyle.browsableHintKey:
-                AndroidContentStyle.listItemHintValue,
+            AndroidContentStyle.listItemHintValue,
           },
         ),
+        if (_current != null)
+          MediaItem(
+            id: 'auto:resume',
+            title: 'Resume ${_current!.name}',
+            artist: _current!.artist,
+            album: _current!.album,
+            playable: true,
+            extras: {
+              'resumePositionMs': _resumePositions[_current!.identityKey] ?? 0,
+              AndroidContentStyle.playableHintKey:
+                  AndroidContentStyle.listItemHintValue,
+            },
+          ),
         for (final name in _playlists.keys)
           MediaItem(
             id: 'auto:playlist:$name',
@@ -3567,7 +3598,55 @@ class _PlayerPageState extends State<PlayerPage>
       ];
     }
     Iterable<Track> tracks;
-    if (parentMediaId == 'auto:library') {
+    if (parentMediaId == 'auto:artists') {
+      final artists = <String>{
+        for (final track in _library)
+          track.artist.trim().isEmpty ? 'Unknown artist' : track.artist.trim(),
+      }.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return [
+        for (final artist in artists)
+          MediaItem(
+            id: 'auto:artist:${Uri.encodeComponent(artist)}',
+            title: artist,
+            playable: false,
+            extras: const {
+              AndroidContentStyle.browsableHintKey:
+                  AndroidContentStyle.listItemHintValue,
+            },
+          ),
+      ];
+    } else if (parentMediaId == 'auto:albums') {
+      final albums = <String>{
+        for (final track in _library)
+          track.album.trim().isEmpty ? 'Unknown album' : track.album.trim(),
+      }.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      return [
+        for (final album in albums)
+          MediaItem(
+            id: 'auto:album:${Uri.encodeComponent(album)}',
+            title: album,
+            playable: false,
+            extras: const {
+              AndroidContentStyle.browsableHintKey:
+                  AndroidContentStyle.listItemHintValue,
+            },
+          ),
+      ];
+    } else if (parentMediaId.startsWith('auto:artist:')) {
+      final artist = Uri.decodeComponent(
+        parentMediaId.substring('auto:artist:'.length),
+      );
+      tracks = _library.where(
+        (track) => (track.artist.trim().isEmpty ? 'Unknown artist' : track.artist.trim()) == artist,
+      );
+    } else if (parentMediaId.startsWith('auto:album:')) {
+      final album = Uri.decodeComponent(
+        parentMediaId.substring('auto:album:'.length),
+      );
+      tracks = _library.where(
+        (track) => (track.album.trim().isEmpty ? 'Unknown album' : track.album.trim()) == album,
+      );
+    } else if (parentMediaId == 'auto:library') {
       tracks = _library;
     } else if (parentMediaId == 'auto:queue') {
       tracks = _queue;
@@ -3606,6 +3685,20 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _playAndroidAutoMedia(String mediaId) async {
+    if (mediaId == 'auto:resume') {
+      final current = _current;
+      if (current == null) return;
+      if (_playerState == PlayerState.paused || _isPlaying) {
+        await _playCurrent();
+        return;
+      }
+      final resumeMs = _resumePositions[current.identityKey] ?? 0;
+      await _select(_selected);
+      if (resumeMs > 0) {
+        await _seekCurrent(Duration(milliseconds: resumeMs));
+      }
+      return;
+    }
     final track = _findTrackByIdentity(mediaId);
     if (track == null) return;
     var index = _queue.indexWhere((item) => item.identityKey == track.identityKey);
