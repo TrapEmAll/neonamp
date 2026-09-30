@@ -543,34 +543,24 @@ class MainActivity : AudioServiceActivity() {
                             .filter { it.isReadPermission || it.isWritePermission }
                             .map { it.uri.toString() },
                     )
-                    "cacheStats" -> {
-                        val directory = File(filesDir, "neonamp-library-cache")
-                        val files = directory.listFiles().orEmpty().filter { it.isFile }
-                        result.success(
-                            mapOf(
-                                "files" to files.size,
-                                "bytes" to files.sumOf { it.length() },
-                                "limitBytes" to cacheLimitBytes(),
-                            ),
-                        )
-                    }
+                    "cacheStats", "cacheInfo" -> result.success(cacheInfo())
                     "setCacheLimit" -> {
-                        val bytes = call.argument<Number>("bytes")?.toLong()
-                        if (bytes == null || bytes < 64L * 1024L * 1024L) {
-                            result.error("invalid_arguments", "Cache limit must be at least 64 MB.", null)
+                        val bytes = call.argument<Number>("limitBytes")?.toLong()
+                            ?: call.argument<Number>("bytes")?.toLong()
+                        if (bytes == null || bytes < 0L ||
+                            (bytes in 1 until 64L * 1024L * 1024L)
+                        ) {
+                            result.error("invalid_arguments", "Cache limit must be 0 or at least 64 MB.", null)
                         } else {
                             getSharedPreferences("neonamp_storage", MODE_PRIVATE)
                                 .edit().putLong("cacheLimitBytes", bytes).apply()
-                            pruneCache(File(filesDir, "neonamp-library-cache"))
-                            result.success(true)
+                            val directory = File(filesDir, "neonamp-library-cache")
+                            pruneCache(directory)
+                            result.success(cacheInfo())
                         }
                     }
-                    "clearCache" -> {
-                        val directory = File(filesDir, "neonamp-library-cache")
-                        val removed = directory.listFiles().orEmpty()
-                            .count { it.delete() }
-                        result.success(removed)
-                    }
+                    "repairCache" -> result.success(repairCache())
+                    "clearCache" -> result.success(clearCache())
                     "publishRingtone" -> {
                         val sourcePath = call.argument<String>("sourcePath")
                         val displayName = call.argument<String>("name")
@@ -1376,8 +1366,36 @@ class MainActivity : AudioServiceActivity() {
     private fun cacheLimitBytes(): Long = getSharedPreferences("neonamp_storage", MODE_PRIVATE)
         .getLong("cacheLimitBytes", 512L * 1024L * 1024L)
 
+    private fun cacheDirectory(): File = File(filesDir, "neonamp-library-cache")
+
+    private fun cacheInfo(): Map<String, Any> {
+        val files = cacheDirectory().listFiles().orEmpty().filter { it.isFile }
+        return mapOf(
+            "files" to files.size,
+            "bytes" to files.sumOf { it.length() },
+            "limitBytes" to cacheLimitBytes(),
+        )
+    }
+
+    @Synchronized
+    private fun repairCache(): Map<String, Any> {
+        val directory = cacheDirectory().apply { mkdirs() }
+        directory.listFiles().orEmpty()
+            .filter { it.isFile && (it.name.endsWith(".tmp") || it.length() <= 44L) }
+            .forEach { it.delete() }
+        pruneCache(directory)
+        return cacheInfo()
+    }
+
+    @Synchronized
+    private fun clearCache(): Map<String, Any> {
+        cacheDirectory().listFiles().orEmpty().filter { it.isFile }.forEach { it.delete() }
+        return cacheInfo()
+    }
+
     @Synchronized
     private fun pruneCache(directory: File) {
+        if (cacheLimitBytes() <= 0L) return
         val files = directory.listFiles().orEmpty()
             .filter { it.isFile && !it.name.endsWith(".tmp") }
             .sortedBy { it.lastModified() }
@@ -1926,4 +1944,5 @@ class MainActivity : AudioServiceActivity() {
         return -1
     }
 }
+
 
