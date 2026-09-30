@@ -6627,6 +6627,24 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveQueue();
   }
 
+  Future<void> _addTrackToQueue(
+    Track track, {
+    required bool playNext,
+  }) async {
+    final insertAt = playNext && _queue.isNotEmpty
+        ? (_selected + 1).clamp(0, _queue.length)
+        : _queue.length;
+    setState(() => _queue.insert(insertAt, track));
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(playNext ? 'Queued next: ${track.name}' : 'Added to queue: ${track.name}'),
+        ),
+      );
+    }
+  }
+
   Future<void> _clearQueue() async {
     await _stopCurrent();
     if (_dspActive) await _dspPlayer.stop();
@@ -12830,6 +12848,24 @@ class _PlayerPageState extends State<PlayerPage>
                   color: Colors.white30,
                 ),
                 onPressed: () => _addTrackToPlaylist(track),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Queue actions',
+                onSelected: (action) {
+                  unawaited(
+                    _addTrackToQueue(track, playNext: action == 'next'),
+                  );
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'next',
+                    child: Text('Play next'),
+                  ),
+                  PopupMenuItem(
+                    value: 'end',
+                    child: Text('Add to end of queue'),
+                  ),
+                ],
               ),
               if (track.album == 'Podcast' && track.path.startsWith('http'))
                 IconButton(
