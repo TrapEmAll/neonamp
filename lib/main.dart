@@ -2769,7 +2769,12 @@ class _PlayerPageState extends State<PlayerPage>
     _bindMidiStreams();
     _initializeWindowsMediaKeys();
     _initializeAudioService();
-    unawaited(_loadQueue().then((_) => _consumeAndroidIntents()));
+    final queueLoad = _loadQueue();
+    if (Platform.isAndroid) {
+      unawaited(queueLoad.then((_) => _consumeAndroidIntents()));
+    } else {
+      unawaited(queueLoad);
+    }
   }
 
   Future<void> _consumeAndroidIntents() async {
