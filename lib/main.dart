@@ -46,6 +46,7 @@ import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
 import 'artwork_download.dart';
+import 'artwork_transform.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
 import 'convolution.dart';
@@ -8028,6 +8029,97 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<ArtworkTransformOptions?> _chooseArtworkTransform(
+    Uint8List bytes,
+  ) async {
+    var cropToSquare = true;
+    var maxDimension = 1024.0;
+    return showDialog<ArtworkTransformOptions>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Prepare cover art'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: 280,
+                    maxHeight: 220,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.memory(
+                      bytes,
+                      fit: cropToSquare ? BoxFit.cover : BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) => const Icon(
+                        Icons.broken_image_outlined,
+                        size: 72,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Crop to square'),
+                  subtitle: const Text('Center the artwork before resizing'),
+                  value: cropToSquare,
+                  onChanged: (value) =>
+                      setDialogState(() => cropToSquare = value),
+                ),
+                Row(
+                  children: [
+                    const Text('Max size'),
+                    const Spacer(),
+                    Text('${maxDimension.round()} px'),
+                  ],
+                ),
+                Slider(
+                  min: 256,
+                  max: 2048,
+                  divisions: 7,
+                  value: maxDimension,
+                  label: '${maxDimension.round()} px',
+                  onChanged: (value) =>
+                      setDialogState(() => maxDimension = value),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(
+                context,
+                const ArtworkTransformOptions(
+                  maxDimension: 1024,
+                  cropToSquare: false,
+                  useOriginal: true,
+                ),
+              ),
+              child: const Text('Use original'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(
+                context,
+                ArtworkTransformOptions(
+                  maxDimension: maxDimension.round(),
+                  cropToSquare: cropToSquare,
+                ),
+              ),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _replaceArtwork(Track track) async {
     if (track.path.startsWith('http')) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -8104,6 +8196,22 @@ class _PlayerPageState extends State<PlayerPage>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not load cover art: $error')),
+        );
+      }
+      return;
+    }
+    try {
+      final options = await _chooseArtworkTransform(bytes);
+      if (options == null) return;
+      if (!options.useOriginal) {
+        final transformed = await transformArtwork(bytes, options: options);
+        bytes = transformed.bytes;
+        mimeType = transformed.mimeType;
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not prepare cover art: $error')),
         );
       }
       return;
