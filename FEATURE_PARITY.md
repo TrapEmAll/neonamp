@@ -42,6 +42,8 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Podcast subscriptions import/export through interoperable OPML files on Windows and Android
 - Podcast subscription management allows unsubscribing without removing existing episodes from the queue/library
 - Recursive folder scanning and M3U/M3U8 playlist import
+- Android MediaStore device-music scan with cached paths, relative folder metadata, incremental cache refresh, and shared metadata/DSP playback
+- Versioned JSON backup and restore for library, queue, playlists, settings, resume positions, and Android folder-permission metadata
 - Play, pause, seek, previous, next, shuffle, repeat-all, repeat-one, and volume
 - Configurable local-file crossfade with optional FFmpeg silence detection that adjusts transition timing from leading/trailing silence; streams retain the fixed-duration fallback
 - One-tap 15-second rewind and forward seek on Windows and Android
@@ -50,6 +52,8 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Persistent sleep timer with 15/30/60/90-minute playback stop options on Windows and Android
 - Persistent recently played history shared by the Windows and Android UIs
 - Per-track playback-position resume shared by the Windows and Android UIs
+- Persisted A–B loop points with wrap-around enforcement across native audio, DSP, and MIDI playback
+- Library imports do not implicitly add tracks to the playback queue; queue changes remain explicit
 - Persistent queue reordering, per-track removal, and clear-queue controls
 - Native 10-band DSP equalizer for local files with built-in, plugin, and user-saved presets plus persisted settings, plus persisted left/center/right stereo balance across standard playback, DSP playback, and crossfades on Windows and Android; imported AutoEQ profiles preserve custom frequency centers and apply them through the shared FFmpeg parametric path; optional WAV/FLAC/AIFF/OGG impulse responses are available through the cross-platform convolution engine and are applied to normal playback and DSP crossfades; the bundled or user-imported SF2 SoundFont enables shared DSP processing for MIDI/KAR on both platforms
 - Cross-platform decoder fallback for local APE, WMA, AIFF/AIFC, Matroska/WebM, AMR/AMR-WB, Speex, M4B, 3GP, Ogg/OGA/OGX, MPEG Layer I/II, AC3, AU, CAF, DTS, SND, TAK, TTA, VOC, and DSD DSF/DFF/DSDIFF audio when native playback cannot open the original; DSD is decoded to PCM through the shared FFmpeg path rather than sent as native DoP/ASIO; decoded audio is temporary and uses the shared playback controls and DSP path

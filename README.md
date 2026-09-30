@@ -13,6 +13,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
+- On Android, scan the device's MediaStore music collection in one step; cached results use the same metadata and DSP path as SAF folders.
 - Decode legacy and container audio formats through the bundled cross-platform fallback decoder when the native playback path cannot read them; conversion is temporary and does not modify the music file.
 - Play local videos in a separate Windows/Android queue with seeking, speed and volume controls; codec support depends on the device's native decoders.
 - Add HTTP audio streams and online radio URLs.
@@ -31,6 +32,9 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Manage podcast subscriptions and unsubscribe without removing episodes already added to the queue or library.
 - Persistent queue between launches.
 - Persistent Bookmarks view for quick access to local tracks, CUE tracks, and radio streams.
+- A–B loop points can be set from the current playback position, persisted, and enforced across native, DSP, and MIDI playback.
+- Adding files or folders updates the library without silently changing the playback queue.
+- Export and import a versioned JSON backup containing library, queue, playlists, settings, resume positions, and folder-permission metadata.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
 - Import and export ASX playlists with titles, stream URLs, and relative media references.
