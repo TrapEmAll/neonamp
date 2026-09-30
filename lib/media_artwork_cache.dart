@@ -1,6 +1,21 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+/// Keeps artwork payloads small enough for Android media-session/widget IPC.
+///
+/// Oversized images are omitted rather than sent through Binder, where they
+/// can make an otherwise valid playback update fail with a transaction-size
+/// error. The original bytes are retained for normal-sized artwork.
+Uint8List? boundedMediaArtwork(
+  Uint8List? source, {
+  int maxBytes = 256 * 1024,
+}) {
+  if (source == null || source.isEmpty || source.length > maxBytes) {
+    return null;
+  }
+  return source;
+}
+
 /// Stores embedded cover art as a local file for notification/media-session
 /// consumers, which cannot consume the in-memory bytes on [Track].
 Future<Uri?> cacheMediaArtwork(

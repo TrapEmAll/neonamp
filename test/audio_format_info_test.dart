@@ -90,10 +90,16 @@ void main() {
         bitDepth: 24,
         channels: 2,
       ),
+      routeName: 'USB DAC',
+      routeType: 'TYPE_USB_DEVICE',
+      outputCodec: 'PCM / AudioTrack',
+      latencyMs: 5.333,
     );
     expect(status.hardwareFormatKnown, isFalse);
     expect(status.summary, contains('bit-perfect best effort requested'));
     expect(status.summary, contains('hardware rate unavailable'));
+    expect(status.summary, contains('USB DAC'));
+    expect(status.summary, contains('5.3 ms buffer estimate'));
   });
 
   test('returns null for unknown formats', () {

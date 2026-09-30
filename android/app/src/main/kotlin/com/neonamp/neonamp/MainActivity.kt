@@ -15,12 +15,14 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Bundle
 import android.os.PowerManager
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.content.ContentValues
+import android.graphics.Color
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -46,6 +48,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.core.view.WindowCompat
 
 class MainActivity : AudioServiceActivity() {
     private val converterChannel = "neonamp/converter"
@@ -127,6 +130,17 @@ class MainActivity : AudioServiceActivity() {
     private external fun nativeReadTrackerInfo(inputPath: String): Array<String>?
     private external fun nativeRenderTrackerToWav(inputPath: String, outputPath: String): Boolean
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+    }
+
     private fun configureGaplessQueue(paths: List<String>, startIndex: Int, shouldPlay: Boolean) {
         if (paths.isEmpty()) return
         gaplessPlayer?.release()
@@ -193,6 +207,18 @@ class MainActivity : AudioServiceActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/theme")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "dynamicColor") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                    result.success(null)
+                } else {
+                    result.success(resources.getColor(android.R.color.system_accent1_500, theme))
+                }
+            }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
                 PackageManager.PERMISSION_GRANTED
@@ -1900,3 +1926,4 @@ class MainActivity : AudioServiceActivity() {
         return -1
     }
 }
+

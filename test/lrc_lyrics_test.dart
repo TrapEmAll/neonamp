@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neonamp/lrc_lyrics.dart';
 
@@ -20,5 +22,16 @@ void main() {
 
   test('ignores ordinary lyrics without timestamps', () {
     expect(hasLrcTimestamps('ordinary lyrics'), isFalse);
+  });
+
+  test('loads a timestamped sidecar next to an audio file', () async {
+    final directory = await Directory.systemTemp.createTemp('neonamp-lrc-');
+    addTearDown(() => directory.delete(recursive: true));
+    final audioPath = '${directory.path}${Platform.pathSeparator}song.mp3';
+    await File('${directory.path}${Platform.pathSeparator}song.lrc').writeAsString(
+      '[00:01.00]Hello',
+    );
+
+    expect(await readSidecarLrc(audioPath), '[00:01.00]Hello');
   });
 }

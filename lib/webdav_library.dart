@@ -3,6 +3,69 @@ import 'dart:io';
 
 import 'package:xml/xml.dart';
 
+const webDavAudioExtensions = <String>{
+  'aac',
+  'aiff',
+  'aif',
+  'ape',
+  'flac',
+  'm4a',
+  'm4b',
+  'mp3',
+  'oga',
+  'ogg',
+  'opus',
+  'wav',
+  'wma',
+};
+
+bool isWebDavAudioPath(String path) {
+  final name = Uri.tryParse(path)?.path ?? path;
+  final dot = name.lastIndexOf('.');
+  return dot >= 0 && webDavAudioExtensions.contains(name.substring(dot + 1).toLowerCase());
+}
+
+class WebDavProfile {
+  const WebDavProfile({
+    required this.id,
+    required this.name,
+    required this.baseUrl,
+    required this.username,
+    required this.password,
+  });
+
+  final String id;
+  final String name;
+  final String baseUrl;
+  final String username;
+  final String password;
+
+  Uri get uri => Uri.parse(baseUrl);
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'baseUrl': baseUrl,
+        'username': username,
+        'password': password,
+      };
+
+  factory WebDavProfile.fromJson(Map<String, dynamic> json) => WebDavProfile(
+        id: json['id']?.toString() ?? '',
+        name: json['name']?.toString() ?? 'WebDAV library',
+        baseUrl: json['baseUrl']?.toString() ?? '',
+        username: json['username']?.toString() ?? '',
+        password: json['password']?.toString() ?? '',
+      );
+}
+
+Uri webDavAuthenticatedUri(Uri uri, WebDavProfile profile) {
+  if (profile.username.isEmpty) return uri;
+  return uri.replace(
+    userInfo: '${Uri.encodeComponent(profile.username)}:${Uri.encodeComponent(profile.password)}',
+  );
+}
+
 class WebDavEntry {
   const WebDavEntry({
     required this.url,

@@ -1740,6 +1740,8 @@ FILE "disc image.flac" WAVE
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    await tester.ensureVisible(find.text('Equalizer'));
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.tap(find.text('Equalizer'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));

@@ -10,18 +10,24 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 
 - Native Windows desktop build and Android APK from one Flutter codebase.
 - Android background playback with lock-screen, headset, notification, and Android Auto media controls.
-- Android file-manager/share-sheet audio opens, including multi-select shares, are routed directly into playback.
-- Per-track A/B looping is available from the compact menu for practice, sampling, and cue work.
+- Android home-screen widget with compact and large layouts, artwork, queue shortcut, and play/pause/previous/next controls.
+- Android Auto can browse the library, queue, favorites, history, podcasts, playlists, and search track metadata.
 - Windows global play/pause, stop, previous, and next media keys, including when the app is unfocused.
 - Windows System Media Transport Controls metadata and transport buttons for the current track.
 - Import one or more local audio files.
+- On Android, scan the device's MediaStore music collection in one step; cached results use the same metadata and DSP path as SAF folders.
+- Android offline cache management includes usage reporting, configurable size limits, stale-entry repair, and confirmed cache clearing.
+- Open audio files, supported playlists, and audio URLs from Android Files, Downloads, browsers, and messaging apps; NeonAmp caches temporary content URIs and starts playback from the received item.
 - Decode legacy and container audio formats through the bundled cross-platform fallback decoder when the native playback path cannot read them; conversion is temporary and does not modify the music file.
 - Play local videos in a separate Windows/Android queue with seeking, speed and volume controls; codec support depends on the device's native decoders.
 - Add HTTP audio streams and online radio URLs.
 - Discover DLNA/UPnP network players and cast local audio or HTTP(S) streams from Windows or Android; local files are served temporarily over the LAN, so both devices must be able to communicate on the same network.
+- Browse a WebDAV music folder recursively and add discovered audio to the library without implicitly queueing it.
+- Browse SMB 2/3 shares and NFS exports recursively; discovered tracks stay library-only and are cached locally only when played.
 - Discover AirPlay receivers and cast compatible local audio or HTTP(S) streams from Windows or Android.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
+- Adjust display scale from 85% to 130%; the size preference persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
 - Import portable JSON plugin packages on Windows or Android; enablement, plugin-provided 10-band equalizer presets, and native bass-boost/echo/reverb effects persist across launches.
 - Sync local library tracks to a user-selected device folder on Windows or Android with collision-safe names and an M3U8 manifest.
@@ -32,8 +38,13 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Import and export podcast subscriptions as OPML files to move feeds between players and devices.
 - Manage podcast subscriptions and unsubscribe without removing episodes already added to the queue or library.
 - Persistent queue between launches.
-- Adding files or folders to the library does not change the playback queue; tracks enter the queue only through an explicit playback or playlist action.
 - Persistent Bookmarks view for quick access to local tracks, CUE tracks, and radio streams.
+- A–B loop points can be set from the current playback position, persisted, and enforced across native, DSP, and MIDI playback.
+- Adding files or folders updates the library without silently changing the playback queue.
+- Library maintenance removes missing files and duplicate path entries across the library, queue, playlists, bookmarks, and history.
+- Trim a local track to a WAV snippet, or save the clip directly to Android Ringtones.
+- Save and restore named queue snapshots without disturbing the library.
+- Export and import a versioned JSON backup containing library, queue, playlists, settings, resume positions, and folder-permission metadata.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
 - Import and export ASX playlists with titles, stream URLs, and relative media references.
@@ -41,6 +52,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - NeonAmp ships with a bundled FluidR3 GM SoundFont, so MIDI/KAR playback uses the shared Windows/Android DSP engine, including equalizer, balance, speed, seek, and volume controls. The MIDI SoundFont menu can still replace it with a user-selected SF2 file.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - View embedded lyrics directly from library tracks.
+- Timestamped `.lrc` files beside local tracks are loaded automatically for synchronized lyrics.
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.
 - Metadata editing also writes common ID3 fields and lyrics into AIFF/AIFC files.
 - WMA/ASF tags support common fields, lyrics, and cover art while retaining unknown metadata and encoded media data.
@@ -54,6 +66,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Persistent smart playlists for favorites, top-rated, most-played, genre, and artist rules, including two-rule all/any matching.
 - Sort the library by recently added, title, artist, album, rating, or play count with a persisted direction.
 - Embedded album-art display when cover art is available in the audio file.
+- Folder cover-art fallback for tracks without embedded artwork.
 - Replace embedded cover art for supported local audio containers.
 - Named playlists with add-to-playlist actions plus M3U/M3U8 and legacy PLS import/export.
 - Import and export iTunes-compatible XML libraries, including local-track metadata and named playlists.
@@ -71,20 +84,8 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Responsive layout for desktop and mobile.
   - Animated spectrum-bars, waveform, and oscilloscope visualizers with persisted mode selection.
 - Desktop Visuals and Settings actions are available on Windows and Android.
-- Android media playback publishes a persistent notification with transport controls, current-track metadata, seek actions, and launcher access.
-- Display size is adjustable from 85% to 125%, and color themes can be changed or imported as portable skin packages.
-- Backup files include Android's persisted folder-URI inventory; Android access grants remain device-scoped and unavailable folders are clearly flagged for re-selection during migration.
-- Monetization boundaries are isolated behind a persisted ad-removal entitlement so a future Play Billing purchase can disable configured ads without coupling ads to playback or library state.
 
-The Android APK is a direct-install artifact. For Play Store distribution, copy
-`android/key.properties.example` to `android/key.properties` and replace the
-placeholders with a real upload keystore. The Gradle release build uses that
-keystore automatically when present and otherwise keeps local development
-builds installable with the debug key. Never commit the real keystore or
-`key.properties`.
-
-The complete tagged-release and Play Console checklist is in
-[`docs/android-play-store.md`](docs/android-play-store.md).
+The Android CI artifact includes both the ARM-only APK and an Android App Bundle. Without signing secrets, the builds use Flutter's local release/debug signing for direct installation. For a Play Store-ready signed bundle, configure these GitHub Actions secrets: `ANDROID_UPLOAD_KEYSTORE_BASE64`, `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. The keystore itself is never committed.
 
 ## Development
 

@@ -5,6 +5,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:neonamp/media_artwork_cache.dart';
 
 void main() {
+  test('bounds artwork payloads for widget and media-session IPC', () {
+    final artwork = Uint8List.fromList([1, 2, 3]);
+
+    expect(boundedMediaArtwork(artwork), same(artwork));
+    expect(boundedMediaArtwork(artwork, maxBytes: 2), isNull);
+    expect(boundedMediaArtwork(null), isNull);
+  });
+
   test('caches cover bytes at a reusable local media URI', () async {
     final directory = await Directory.systemTemp.createTemp('neonamp-art-');
     addTearDown(() => directory.delete(recursive: true));
