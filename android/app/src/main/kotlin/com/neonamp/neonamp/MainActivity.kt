@@ -46,9 +46,11 @@ class MainActivity : AudioServiceActivity() {
     private val libraryChannel = "neonamp/library"
     private val nearbyPermissionRequest = 4021
     private val folderPickerRequest = 4022
+    private val mediaPermissionRequest = 4024
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nearbyPermissionResult: MethodChannel.Result? = null
     private var folderPickerResult: MethodChannel.Result? = null
+    private var mediaPermissionResult: MethodChannel.Result? = null
     private var audioCdResult: MethodChannel.Result? = null
     private var usbTag = 1
     private val pendingExternalValues = mutableListOf<Pair<String, String?>>()
@@ -186,6 +188,7 @@ class MainActivity : AudioServiceActivity() {
                             }
                         }.start()
                     }
+                    "requestMediaPermission" -> requestMediaPermission(result)
                     "copyFileToFolder" -> {
                         val folderUri = call.argument<String>("uri")
                         val sourcePath = call.argument<String>("sourcePath")
@@ -1101,16 +1104,44 @@ class MainActivity : AudioServiceActivity() {
         result.success(true)
     }
 
+    private fun requestMediaPermission(result: MethodChannel.Result) {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            @Suppress("DEPRECATION")
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(true)
+            return
+        }
+        if (mediaPermissionResult != null) {
+            result.error("permission_busy", "An audio permission request is already pending.", null)
+            return
+        }
+        mediaPermissionResult = result
+        requestPermissions(arrayOf(permission), mediaPermissionRequest)
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != nearbyPermissionRequest) return
-        val result = nearbyPermissionResult ?: return
-        nearbyPermissionResult = null
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            acquireMulticastLock()
-            result.success(true)
-        } else {
-            result.success(false)
+        if (requestCode == mediaPermissionRequest) {
+            val result = mediaPermissionResult ?: return
+            mediaPermissionResult = null
+            result.success(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+            return
+        }
+        if (requestCode == nearbyPermissionRequest) {
+            val result = nearbyPermissionResult ?: return
+            nearbyPermissionResult = null
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                acquireMulticastLock()
+                result.success(true)
+            } else {
+                result.success(false)
+            }
         }
     }
 

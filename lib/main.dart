@@ -4796,7 +4796,19 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _scanMediaStore() async {
     if (!Platform.isAndroid) return;
     try {
-      final results = await const MethodChannel('neonamp/library')
+      final channel = const MethodChannel('neonamp/library');
+      final permitted = await channel.invokeMethod<bool>('requestMediaPermission') ?? false;
+      if (!permitted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Allow audio access to scan music on this device.'),
+            ),
+          );
+        }
+        return;
+      }
+      final results = await channel
           .invokeListMethod<Map<Object?, Object?>>('scanMediaStore');
       final tracks = deduplicateAndroidMediaStoreTracks(
         (results ?? []).map(AndroidMediaStoreTrack.fromMap),
