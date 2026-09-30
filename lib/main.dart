@@ -2549,7 +2549,7 @@ class PlayerPage extends StatefulWidget {
 }
 
 class _PlayerPageState extends State<PlayerPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   AudioPlayer _activePlayer = AudioPlayer();
   final DlnaCast _dlnaCast = DlnaCast();
   final ChromecastCast _chromecastCast = ChromecastCast();
@@ -2661,6 +2661,9 @@ class _PlayerPageState extends State<PlayerPage>
   bool _scrobblingEnabled = false;
   String? _scrobbledTrackIdentity;
   bool _remoteEnabled = false;
+  bool _backgroundScanEnabled = true;
+  bool _backgroundScanInProgress = false;
+  DateTime? _lastBackgroundScan;
   bool _controllerOverlayVisible = false;
   int _remotePort = 8765;
   RemoteCommandServer? _remoteServer;
@@ -3044,6 +3047,7 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bindPlayerStreams();
     _bindDspStreams();
     _bindMidiStreams();
@@ -3051,7 +3055,10 @@ class _PlayerPageState extends State<PlayerPage>
     _initializeAudioService();
     final queueLoad = _loadQueue();
     if (Platform.isAndroid) {
-      unawaited(queueLoad.then((_) => _consumeAndroidIntents()));
+      unawaited(queueLoad.then((_) async {
+        await _consumeAndroidIntents();
+        await _runBackgroundLibraryScan();
+      }));
     } else {
       unawaited(queueLoad);
     }
@@ -3069,6 +3076,35 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (profile == null) return track.path;
     return webDavAuthenticatedUri(Uri.parse(track.path), profile).toString();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed ||
+        !Platform.isAndroid ||
+        !_backgroundScanEnabled ||
+        _backgroundScanInProgress) {
+      return;
+    }
+    final lastScan = _lastBackgroundScan;
+    if (lastScan != null &&
+        DateTime.now().difference(lastScan) < const Duration(minutes: 5)) {
+      return;
+    }
+    unawaited(_runBackgroundLibraryScan());
+  }
+
+  Future<void> _runBackgroundLibraryScan() async {
+    if (_backgroundScanInProgress || !_backgroundScanEnabled || !Platform.isAndroid) {
+      return;
+    }
+    _backgroundScanInProgress = true;
+    _lastBackgroundScan = DateTime.now();
+    try {
+      await _rescanFolders(silent: true);
+    } finally {
+      _backgroundScanInProgress = false;
+    }
   }
 
   void _recordHistory(Track track) {
@@ -4426,6 +4462,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
         _controllerBindings = controllerBindingsFromJson(settings['controllerBindings']);
         _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
+        _backgroundScanEnabled = settings['backgroundScanEnabled'] as bool? ?? true;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
             ? null
@@ -4543,6 +4580,7 @@ class _PlayerPageState extends State<PlayerPage>
         ).toJson(),
         'controllerBindings': controllerBindingsToJson(_controllerBindings),
         'remoteEnabled': _remoteEnabled,
+        'backgroundScanEnabled': _backgroundScanEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
@@ -5218,16 +5256,16 @@ class _PlayerPageState extends State<PlayerPage>
     return files.length;
   }
 
-  Future<void> _rescanFolders() async {
+  Future<void> _rescanFolders({bool silent = false}) async {
     if (_libraryFolders.isEmpty) {
-      await _addFolder();
+      if (!silent) await _addFolder();
       return;
     }
     if (Platform.isAndroid) {
       final oldFilesystemFolders = _libraryFolders
           .where((folder) => Uri.tryParse(folder)?.scheme != 'content')
           .toList();
-      if (oldFilesystemFolders.isNotEmpty) {
+      if (oldFilesystemFolders.isNotEmpty && !silent) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -5270,19 +5308,25 @@ class _PlayerPageState extends State<PlayerPage>
     }
     var found = 0;
     for (final folder in List<String>.from(_libraryFolders)) {
+      if (silent &&
+          Platform.isAndroid &&
+          Uri.tryParse(folder)?.scheme.toLowerCase() != 'content') {
+        continue;
+      }
       try {
         if (Platform.isAndroid || Directory(folder).existsSync()) {
           found += await _scanFolder(folder);
         }
       } on Object catch (error) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not rescan a library folder: $error')),
-        );
+        if (!silent && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not rescan a library folder: $error')),
+          );
+        }
       }
     }
     await _saveQueue();
-    if (mounted) {
+    if (!silent && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -10398,6 +10442,20 @@ class _PlayerPageState extends State<PlayerPage>
                   setDialogState(() {});
                 },
               ),
+              if (Platform.isAndroid)
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Background library scan'),
+                  subtitle: const Text(
+                    'Rescan saved folders when NeonAmp returns to the foreground',
+                  ),
+                  value: _backgroundScanEnabled,
+                  onChanged: (value) {
+                    setState(() => _backgroundScanEnabled = value);
+                    unawaited(_saveQueue());
+                    setDialogState(() {});
+                  },
+                ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('True-peak limiter'),
