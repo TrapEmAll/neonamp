@@ -11,7 +11,7 @@ void main() {
       const AndroidExternalIntent(path: 'https://radio.example/live'),
     ]);
 
-    expect(result.map((item) => item.path), [
+    expect(result.map((item) => item.path).toList(), [
       '/music/song.mp3',
       'https://radio.example/live',
     ]);
