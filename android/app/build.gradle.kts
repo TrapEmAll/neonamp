@@ -55,6 +55,12 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            pickFirsts += setOf("**/libc++_shared.so")
+        }
+    }
+
     buildTypes {
         release {
             signingConfig = if (keystorePropertiesFile.exists()) {
