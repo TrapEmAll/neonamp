@@ -62,6 +62,7 @@ import 'library_maintenance.dart';
 import 'library_statistics.dart';
 import 'audio_formats.dart';
 import 'audio_format_info.dart';
+import 'audio_output_profiles.dart';
 import 'android_media_store.dart';
 import 'android_external_intent.dart';
 import 'ab_loop.dart';
@@ -2643,6 +2644,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _replayGainEnabled = false;
   bool _r128NormalizationEnabled = false;
   final Map<String, double?> _measuredLufs = <String, double?>{};
+  final Map<String, String> _deviceEqPresets = <String, String>{};
+  String _eqOutputProfileKey = 'default';
   bool _truePeakLimiterEnabled = true;
   bool _notificationArtworkEnabled = true;
   bool _notificationSeekControlsEnabled = true;
@@ -4381,6 +4384,14 @@ class _PlayerPageState extends State<PlayerPage>
         _eqQ = ((settings['eqQ'] as num?)?.toDouble() ?? 1).clamp(0.1, 10).toDouble();
         _midiSoundFontPath = settings['midiSoundFontPath'] as String?;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+        final savedDeviceEqPresets = settings['deviceEqPresets'];
+        if (savedDeviceEqPresets is Map) {
+          _deviceEqPresets.addAll(
+            savedDeviceEqPresets.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ),
+          );
+        }
         _customEqPresets.addAll(
           decodeCustomEqualizerPresets(settings['customEqPresets']),
         );
@@ -4546,6 +4557,7 @@ class _PlayerPageState extends State<PlayerPage>
         'eqQ': _eqQ,
         'midiSoundFontPath': _midiSoundFontPath,
         'eqPreset': _eqPreset,
+        'deviceEqPresets': _deviceEqPresets,
         'eqBands': _eqBands,
         'eqFrequencies': _eqFrequencies,
         'customEqPresets': _customEqPresets,
@@ -8987,6 +8999,23 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<String> _readEqOutputProfileKey() async {
+    if (!Platform.isAndroid) return 'desktop-default';
+    try {
+      final raw = await const MethodChannel('neonamp/output')
+          .invokeMethod<Object?>('getStatus');
+      if (raw is Map) {
+        return audioOutputProfileKey(
+          routeName: raw['routeName'] as String?,
+          routeType: raw['routeType'] as String?,
+        );
+      }
+    } on Object {
+      // Fall back to the shared profile when the output channel is unavailable.
+    }
+    return 'default';
+  }
+
   Future<void> _showPluginManager() async {
     await showDialog<void>(
       context: context,
@@ -10696,8 +10725,26 @@ class _PlayerPageState extends State<PlayerPage>
     }
     final customPresets = {...pluginPresets, ..._customEqPresets};
     final presets = [...builtInEqualizerPresets.keys, ...customPresets.keys];
-    final selectedPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
+    _eqOutputProfileKey = await _readEqOutputProfileKey();
+    final routePreset = _deviceEqPresets[_eqOutputProfileKey];
+    final selectedPreset = presets.contains(routePreset)
+        ? routePreset!
+        : (presets.contains(_eqPreset) ? _eqPreset : 'Flat');
     if (_eqPreset != selectedPreset) _eqPreset = selectedPreset;
+    if (routePreset != null && routePreset == selectedPreset) {
+      _eqFrequencies
+        ..clear()
+        ..addAll(_customEqFrequencies[selectedPreset] ?? autoEqCenterFrequencies);
+      _eqQ = _customEqQ[selectedPreset] ?? 1.0;
+      _eqBands.setAll(
+        0,
+        equalizerPresetBands(
+          selectedPreset,
+          pluginPresets: customPresets,
+          bandCount: _eqBands.length,
+        ),
+      );
+    }
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -10708,7 +10755,16 @@ class _PlayerPageState extends State<PlayerPage>
               MediaQuery.sizeOf(this.context).width - 24.0,
             ),
           ),
-          title: const Text('10-band equalizer'),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('10-band equalizer'),
+              Text(
+                'Output profile: $_eqOutputProfileKey',
+                style: const TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+            ],
+          ),
           content: SizedBox(
             width: math.min(
               560.0,
@@ -10759,6 +10815,7 @@ class _PlayerPageState extends State<PlayerPage>
                             if (value == null) return;
                             setState(() {
                               _eqPreset = value;
+                              _deviceEqPresets[_eqOutputProfileKey] = value;
                               _eqFrequencies
                                 ..clear()
                                 ..addAll(
