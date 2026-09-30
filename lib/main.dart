@@ -2482,6 +2482,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
   final List<SmartPlaylist> _smartPlaylists = [];
+  final Map<String, List<Track>> _savedQueueSnapshots = {};
   final Map<String, NeonAmpPlugin> _plugins = {};
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _controllerFocusNode = FocusNode();
@@ -3860,6 +3861,21 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           );
         }
+        final savedQueueSnapshots = settings['queueSnapshots'];
+        if (savedQueueSnapshots is Map) {
+          for (final entry in savedQueueSnapshots.entries) {
+            final rawTracks = entry.value;
+            if (rawTracks is! List) continue;
+            try {
+              _savedQueueSnapshots[entry.key.toString()] = rawTracks
+                  .whereType<Map>()
+                  .map((value) => Track.fromJson(Map<String, dynamic>.from(value)))
+                  .toList();
+            } on Object catch (error) {
+              debugPrint('Skipping invalid queue snapshot: $error');
+            }
+          }
+        }
         final savedScrobble = settings['scrobbleProfile'];
         if (savedScrobble is Map) {
           final profile = ScrobbleProfile.fromJson(Map<String, dynamic>.from(savedScrobble));
@@ -3968,6 +3984,12 @@ class _PlayerPageState extends State<PlayerPage>
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
         'webDavProfiles': _webDavProfiles.map((profile) => profile.toJson()).toList(),
+        'queueSnapshots': _savedQueueSnapshots.map(
+          (name, tracks) => MapEntry(
+            name,
+            tracks.map((track) => track.toJson()).toList(),
+          ),
+        ),
         'scrobbleProfile': ScrobbleProfile(
           token: _listenBrainzToken,
           enabled: _scrobblingEnabled,
@@ -4053,6 +4075,7 @@ class _PlayerPageState extends State<PlayerPage>
         _plugins.clear();
       _mediaServerProfiles.clear();
       _webDavProfiles.clear();
+      _savedQueueSnapshots.clear();
       });
       await _loadQueue();
       if (mounted) {
@@ -5628,6 +5651,120 @@ class _PlayerPageState extends State<PlayerPage>
       _playerState = PlayerState.stopped;
     });
     await _saveQueue();
+  }
+
+  Future<void> _saveQueueSnapshot() async {
+    if (_queue.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('The queue is empty.')),
+        );
+      }
+      return;
+    }
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Save queue snapshot'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Snapshot name'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (name == null || name.isEmpty) return;
+    setState(() {
+      _savedQueueSnapshots[name] = List<Track>.from(_queue);
+    });
+    await _saveQueue();
+  }
+
+  Future<void> _showQueueSnapshots() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Saved queues'),
+          content: SizedBox(
+            width: 460,
+            child: _savedQueueSnapshots.isEmpty
+                ? const Text('No saved queues yet.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final entry in _savedQueueSnapshots.entries)
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.queue_music),
+                          title: Text(entry.key),
+                          subtitle: Text('${entry.value.length} tracks'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: 'Restore queue',
+                                icon: const Icon(Icons.restore),
+                                onPressed: () async {
+                                  setState(() {
+                                    _queue
+                                      ..clear()
+                                      ..addAll(entry.value);
+                                    _selected = 0;
+                                    _position = Duration.zero;
+                                    _playerState = PlayerState.stopped;
+                                  });
+                                  await _saveQueue();
+                                  if (dialogContext.mounted) {
+                                    Navigator.pop(dialogContext);
+                                  }
+                                },
+                              ),
+                              IconButton(
+                                tooltip: 'Delete saved queue',
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () async {
+                                  setState(() => _savedQueueSnapshots.remove(entry.key));
+                                  await _saveQueue();
+                                  setDialogState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+            FilledButton.icon(
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                await _saveQueueSnapshot();
+              },
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Save current queue'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _addStream() async {
@@ -10608,6 +10745,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'convolution') _chooseConvolutionImpulse();
               if (value == 'servers') _showMediaServers();
               if (value == 'webdav') _showWebDavLibraries();
+              if (value == 'savedQueues') _showQueueSnapshots();
               if (value == 'scrobble') _showScrobblingSettings();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
@@ -10761,6 +10899,7 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
               PopupMenuItem(value: 'servers', child: Text('Remote media servers')),
               PopupMenuItem(value: 'webdav', child: Text('WebDAV network library')),
+              PopupMenuItem(value: 'savedQueues', child: Text('Saved queues')),
               PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],
           ),

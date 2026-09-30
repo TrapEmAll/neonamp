@@ -62,7 +62,7 @@ class WebDavProfile {
 Uri webDavAuthenticatedUri(Uri uri, WebDavProfile profile) {
   if (profile.username.isEmpty) return uri;
   return uri.replace(
-    userInfo: '${profile.username}:${profile.password}',
+    userInfo: '${Uri.encodeComponent(profile.username)}:${Uri.encodeComponent(profile.password)}',
   );
 }
 

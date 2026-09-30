@@ -37,6 +37,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Persistent Bookmarks view for quick access to local tracks, CUE tracks, and radio streams.
 - A–B loop points can be set from the current playback position, persisted, and enforced across native, DSP, and MIDI playback.
 - Adding files or folders updates the library without silently changing the playback queue.
+- Save and restore named queue snapshots without disturbing the library.
 - Export and import a versioned JSON backup containing library, queue, playlists, settings, resume positions, and folder-permission metadata.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
 - Import and export M3U/M3U8, PLS, Winamp B4S, and WPL playlists, resolving relative local paths from the playlist file.
