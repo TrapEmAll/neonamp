@@ -2744,6 +2744,12 @@ class _PlayerPageState extends State<PlayerPage>
       _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
   bool get _isPlaying => _playerState == PlayerState.playing;
 
+  void _syncAndroidWidgetState() {
+    final track = _current;
+    if (track == null) return;
+    unawaited(_updateAndroidWidget(track: track, playing: _isPlaying));
+  }
+
   double _volumeFor(Track? track) {
     var result = playbackVolume(
       volume: _volume,
@@ -2999,6 +3005,7 @@ class _PlayerPageState extends State<PlayerPage>
     });
     _stateSub = _player.onPlayerStateChanged.listen((value) {
       setState(() => _playerState = value);
+      _syncAndroidWidgetState();
       unawaited(_syncWindowsMediaSession());
     });
     _completeSub = _player.onPlayerComplete.listen((_) => _handleComplete());
@@ -3048,6 +3055,7 @@ class _PlayerPageState extends State<PlayerPage>
     _dspStateSub = _dspPlayer.onPlayerStateChanged.listen((value) {
       if (!mounted || !_dspActive) return;
       setState(() => _playerState = value);
+      _syncAndroidWidgetState();
       _audioHandler?.syncExternalState(position: _position, state: value);
       unawaited(_syncWindowsMediaSession());
     });
@@ -3071,6 +3079,7 @@ class _PlayerPageState extends State<PlayerPage>
     _midiPlayer.onPlayerStateChanged.listen((value) {
       if (!mounted || !_midiActive) return;
       setState(() => _playerState = value);
+      _syncAndroidWidgetState();
       unawaited(_syncWindowsMediaSession());
     });
     _midiPlayer.onPlayerComplete.listen((_) {
