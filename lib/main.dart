@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:just_audio/just_audio.dart' as just_audio;
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
@@ -39,6 +40,7 @@ import 'equalizer_presets.dart';
 import 'auto_eq.dart';
 import 'lrc_lyrics.dart';
 import 'audio_trimmer.dart';
+import 'gapless_playback.dart';
 import 'visualizer_metrics.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
@@ -2557,6 +2559,11 @@ class _PlayerPageState extends State<PlayerPage>
   StreamSubscription<Duration>? _dspDurationSub;
   StreamSubscription<PlayerState>? _dspStateSub;
   StreamSubscription<void>? _dspCompleteSub;
+  just_audio.AudioPlayer? _gaplessPlayer;
+  StreamSubscription<int?>? _gaplessIndexSub;
+  StreamSubscription<Duration>? _gaplessPositionSub;
+  StreamSubscription<Duration?>? _gaplessDurationSub;
+  StreamSubscription<just_audio.PlayerState>? _gaplessStateSub;
   Duration _position = Duration.zero;
   Duration _duration = const Duration(minutes: 4, seconds: 12);
   PlayerState _playerState = PlayerState.stopped;
@@ -2571,6 +2578,8 @@ class _PlayerPageState extends State<PlayerPage>
   Duration? _abLoopEnd;
   bool _abLoopSeekInProgress = false;
   bool _crossfade = false;
+  bool _gaplessPlayback = false;
+  bool _gaplessActive = false;
   bool _silenceAwareCrossfade = false;
   bool _bitPerfectMode = false;
   int _crossfadeSeconds = 3;
@@ -2768,6 +2777,177 @@ class _PlayerPageState extends State<PlayerPage>
 
   AudioPlayer get _player => _activePlayer;
 
+  bool get _gaplessPlatformSupported => Platform.isAndroid || Platform.isWindows;
+
+  bool get _canUseGaplessPlayback {
+    if (!_gaplessPlatformSupported ||
+        _bitPerfectMode ||
+        _equalizerEnabled ||
+        _playbackSpeed != 1.0 ||
+        _crossfade ||
+        _casting ||
+        _dspActive ||
+        _midiActive ||
+        _queue.isEmpty) {
+      return false;
+    }
+    if (_queue.any((track) =>
+        track.cueStartMs != null ||
+        track.cueEndMs != null ||
+        isMidiFilePath(track.path))) {
+      return false;
+    }
+    return canUseGaplessQueue(_queue.map((track) => track.path));
+  }
+
+  just_audio.AudioSource _gaplessSourceFor(String path) {
+    final uri = path.startsWith('file://')
+        ? Uri.parse(path)
+        : Uri.file(path);
+    return just_audio.AudioSource.uri(uri);
+  }
+
+  Future<void> _ensureGaplessPlayer() async {
+    if (_gaplessPlayer != null) return;
+    final player = just_audio.AudioPlayer();
+    _gaplessPlayer = player;
+    _gaplessIndexSub = player.currentIndexStream.listen((index) {
+      if (index != null && _gaplessActive) {
+        unawaited(_onGaplessIndexChanged(index));
+      }
+    });
+    _gaplessPositionSub = player.positionStream.listen((position) {
+      if (!mounted || !_gaplessActive || _selectionInProgress) return;
+      setState(() => _position = position);
+      _rememberResumePosition(position);
+      unawaited(_enforceAbLoop(position));
+      unawaited(_maybeSubmitScrobble(position));
+      _audioHandler?.syncExternalState(
+        position: position,
+        state: player.playing ? PlayerState.playing : PlayerState.paused,
+      );
+    });
+    _gaplessDurationSub = player.durationStream.listen((duration) {
+      if (!mounted || !_gaplessActive || duration == null) return;
+      setState(() => _duration = duration);
+      _audioHandler?.syncExternalState(
+        duration: duration,
+        state: player.playing ? PlayerState.playing : PlayerState.paused,
+      );
+    });
+    _gaplessStateSub = player.playerStateStream.listen((state) {
+      if (!mounted || !_gaplessActive) return;
+      if (state.processingState == just_audio.ProcessingState.completed) {
+        unawaited(_handleGaplessComplete());
+        return;
+      }
+      final mapped = state.playing
+          ? PlayerState.playing
+          : state.processingState == just_audio.ProcessingState.idle
+          ? PlayerState.stopped
+          : PlayerState.paused;
+      setState(() => _playerState = mapped);
+      _syncAndroidWidgetState();
+      _audioHandler?.syncExternalState(state: mapped);
+      unawaited(_syncWindowsMediaSession());
+    });
+  }
+
+  Future<void> _startGaplessPlayback(int index) async {
+    if (!_canUseGaplessPlayback) return;
+    await _stopGaplessPlayback();
+    if (_midiActive) {
+      await _midiPlayer.stop();
+      _midiActive = false;
+    }
+    if (_dspActive) {
+      await _dspPlayer.stop();
+      _dspActive = false;
+    }
+    await _player.stop();
+    await _ensureGaplessPlayer();
+    final player = _gaplessPlayer!;
+    try {
+      await player.setAudioSources(
+        _queue.map((track) => _gaplessSourceFor(track.path)).toList(),
+        initialIndex: index,
+        initialPosition: Duration.zero,
+      );
+      _gaplessActive = true;
+      await player.setVolume(_volumeFor(_queue[index]));
+      await player.setSpeed(1.0);
+      await player.play();
+      if (mounted) setState(() => _playerState = PlayerState.playing);
+      final track = _queue[index];
+      _duration = player.duration ?? Duration.zero;
+      _position = Duration.zero;
+      await _audioHandler?.publishTrack(track);
+      _audioHandler?.syncExternalState(
+        position: Duration.zero,
+        duration: _duration,
+        state: PlayerState.playing,
+      );
+    } on Object {
+      _gaplessActive = false;
+      await player.stop();
+      rethrow;
+    }
+  }
+
+  Future<void> _onGaplessIndexChanged(int index) async {
+    if (!_gaplessActive || index < 0 || index >= _queue.length) return;
+    final track = _queue[index];
+    if (!mounted) return;
+    setState(() {
+      _selected = index;
+      _position = Duration.zero;
+      _duration = _gaplessPlayer?.duration ?? _duration;
+      _playHistory
+        ..clear()
+        ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+      final libraryIndex = _library.indexWhere(
+        (item) => item.identityKey == track.identityKey,
+      );
+      if (libraryIndex >= 0) {
+        _library[libraryIndex] = track.copyWith(
+          playCount: track.playCount + 1,
+        );
+      }
+    });
+    _resumePositions.remove(track.identityKey);
+    await _gaplessPlayer?.setVolume(_volumeFor(track));
+    await _audioHandler?.publishTrack(track);
+    _scrobbledTrackIdentity = null;
+    unawaited(_saveQueue());
+  }
+
+  Future<void> _handleGaplessComplete() async {
+    if (!_gaplessActive) return;
+    _gaplessActive = false;
+    await _gaplessPlayer?.stop();
+    if (_repeat || _shuffle || _selected < _queue.length - 1) {
+      await _next(useCrossfade: false);
+    } else {
+      if (mounted) setState(() => _playerState = PlayerState.stopped);
+      _audioHandler?.syncExternalState(state: PlayerState.stopped);
+    }
+  }
+
+  Future<void> _stopGaplessPlayback() async {
+    if (_gaplessPlayer == null) return;
+    _gaplessActive = false;
+    await _gaplessPlayer!.stop();
+  }
+
+  Future<void> _disposeGaplessPlayback() async {
+    await _gaplessIndexSub?.cancel();
+    await _gaplessPositionSub?.cancel();
+    await _gaplessDurationSub?.cancel();
+    await _gaplessStateSub?.cancel();
+    await _gaplessPlayer?.dispose();
+    _gaplessPlayer = null;
+  }
+
   Track? get _current =>
       _queue.isEmpty ? null : _queue[_selected.clamp(0, _queue.length - 1)];
   bool get _isPlaying => _playerState == PlayerState.playing;
@@ -2819,7 +2999,11 @@ class _PlayerPageState extends State<PlayerPage>
   void _applyBalance(double value) {
     final balance = normalizeStereoBalance(value);
     if (_current == null) return;
-    if (_dspActive) {
+    if (_gaplessActive) {
+      // just_audio's Android/Windows sequence player owns the active output;
+      // balance is not exposed by its portable API, so leave the setting for
+      // the regular DSP path rather than interrupting a gapless sequence.
+    } else if (_dspActive) {
       _dspPlayer.setBalance(balance);
       _crossfadeDspPlayer?.setBalance(balance);
     } else {
@@ -3536,7 +3720,9 @@ class _PlayerPageState extends State<PlayerPage>
       if (mounted) setState(() => _playerState = PlayerState.playing);
       return;
     }
-    if (_midiActive) {
+    if (_gaplessActive) {
+      await _gaplessPlayer?.play();
+    } else if (_midiActive) {
       await _midiPlayer.resume();
     } else if (_dspActive) {
       await _dspPlayer.resume();
@@ -3557,7 +3743,9 @@ class _PlayerPageState extends State<PlayerPage>
       if (mounted) setState(() => _playerState = PlayerState.paused);
       return;
     }
-    if (_midiActive) {
+    if (_gaplessActive) {
+      await _gaplessPlayer?.pause();
+    } else if (_midiActive) {
       await _midiPlayer.pause();
     } else if (_dspActive) {
       await _dspPlayer.pause();
@@ -3572,7 +3760,10 @@ class _PlayerPageState extends State<PlayerPage>
       await _stopCasting();
       if (mounted) setState(() => _playerState = PlayerState.stopped);
     }
-    if (_midiActive) {
+    if (_gaplessActive) {
+      await _stopGaplessPlayback();
+      if (mounted) setState(() => _playerState = PlayerState.stopped);
+    } else if (_midiActive) {
       await _midiPlayer.stop();
     } else if (_dspActive) {
       await _dspPlayer.stop();
@@ -3596,7 +3787,9 @@ class _PlayerPageState extends State<PlayerPage>
     final sourcePosition = _current == null
         ? position
         : position + _current!.cueStart;
-    if (_midiActive) {
+    if (_gaplessActive) {
+      await _gaplessPlayer?.seek(position);
+    } else if (_midiActive) {
       await _midiPlayer.seek(position);
     } else if (_dspActive) {
       await _dspPlayer.seek(sourcePosition);
@@ -3623,14 +3816,19 @@ class _PlayerPageState extends State<PlayerPage>
     final value = speed.clamp(0.5, 2.0).toDouble();
     setState(() => _playbackSpeed = value);
     if (_current != null) {
-      if (_dspActive) {
+      if (_gaplessActive) {
+        // Gapless sequencing is guaranteed only at normal speed. Rebuild the
+        // regular pipeline when the user requests time-stretched playback.
+        await _stopGaplessPlayback();
+        await _select(_selected);
+      } else if (_dspActive) {
         await _dspPlayer.setPlaybackSpeed(value);
       } else if (_midiActive) {
         await _midiPlayer.setPlaybackSpeed(value);
       } else {
         await _player.setPlaybackRate(value);
       }
-      await _audioHandler?.setPlaybackSpeed(value);
+      if (!_gaplessActive) await _audioHandler?.setPlaybackSpeed(value);
     }
     await _saveQueue();
   }
@@ -3640,7 +3838,7 @@ class _PlayerPageState extends State<PlayerPage>
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
     setState(() => _equalizerEnabled = enabled);
-    if (_current != null && (wasPlaying || _dspActive)) {
+    if (_current != null && (wasPlaying || _dspActive || _gaplessActive)) {
       await _select(_selected);
       if (previousPosition > Duration.zero) {
         await _seekCurrent(previousPosition);
@@ -3655,7 +3853,7 @@ class _PlayerPageState extends State<PlayerPage>
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
     setState(() => _replayGainEnabled = enabled);
-    if (_current != null && (wasPlaying || _dspActive)) {
+    if (_current != null && (wasPlaying || _dspActive || _gaplessActive)) {
       await _select(_selected);
       if (previousPosition > Duration.zero) {
         await _seekCurrent(previousPosition);
@@ -3734,7 +3932,9 @@ class _PlayerPageState extends State<PlayerPage>
         }
         final next = volume.clamp(0.0, 1.0).toDouble();
         setState(() => _volume = next);
-        if (_dspActive) {
+        if (_gaplessActive) {
+          await _gaplessPlayer?.setVolume(_volumeFor(_current));
+        } else if (_dspActive) {
           await _dspPlayer.setVolume(_volumeFor(_current));
         } else {
           await _player.setVolume(_volumeFor(_current));
@@ -3789,7 +3989,7 @@ class _PlayerPageState extends State<PlayerPage>
     final wasPlaying = _isPlaying;
     final previousPosition = _position;
     setState(() => _bitPerfectMode = enabled);
-    if (_current != null && (wasPlaying || _dspActive)) {
+    if (_current != null && (wasPlaying || _dspActive || _gaplessActive)) {
       await _select(_selected);
       if (previousPosition > Duration.zero) {
         await _seekCurrent(previousPosition);
@@ -4038,6 +4238,7 @@ class _PlayerPageState extends State<PlayerPage>
           (settings['balance'] as num?)?.toDouble() ?? _balance,
         );
         _crossfade = settings['crossfade'] as bool? ?? false;
+        _gaplessPlayback = settings['gaplessPlayback'] as bool? ?? false;
         _silenceAwareCrossfade = settings['silenceAwareCrossfade'] as bool? ?? false;
         _bitPerfectMode = settings['bitPerfectMode'] as bool? ?? false;
         _crossfadeSeconds =
@@ -4198,6 +4399,7 @@ class _PlayerPageState extends State<PlayerPage>
         'volume': _volume,
         'balance': _balance,
         'crossfade': _crossfade,
+        'gaplessPlayback': _gaplessPlayback,
         'silenceAwareCrossfade': _silenceAwareCrossfade,
         'bitPerfectMode': _bitPerfectMode,
         'crossfadeSeconds': _crossfadeSeconds,
@@ -4250,6 +4452,21 @@ class _PlayerPageState extends State<PlayerPage>
         if (_playerLayoutCustomized) 'playerControls': _playerControls,
       }),
     );
+  }
+
+  Future<void> _setGaplessPlayback(bool enabled) async {
+    final wasPlaying = _isPlaying;
+    final previousPosition = _position;
+    setState(() => _gaplessPlayback = enabled);
+    if (_current != null && (wasPlaying || _gaplessActive)) {
+      await _stopGaplessPlayback();
+      await _select(_selected);
+      if (previousPosition > Duration.zero) {
+        await _seekCurrent(previousPosition);
+      }
+      if (!wasPlaying) await _pauseCurrent();
+    }
+    await _saveQueue();
   }
 
   Future<void> _exportBackup() async {
@@ -5277,6 +5494,22 @@ class _PlayerPageState extends State<PlayerPage>
       // retained only as transient playback state and must not change the
       // semantics of selecting a track.
       _resumePositions.remove(track.identityKey);
+      if (_gaplessActive) await _stopGaplessPlayback();
+      if (_gaplessPlayback && _canUseGaplessPlayback) {
+        try {
+          await _startGaplessPlayback(index);
+          await _saveQueue();
+          _scrobbledTrackIdentity = null;
+          unawaited(_submitNowPlaying(track));
+          return;
+        } on Object catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Gapless playback unavailable: $error')),
+            );
+          }
+        }
+      }
       await _ensureLoudnessMeasured(track);
       final trackVolume = _volumeFor(track);
       String? renderedMidiPath;
@@ -9528,6 +9761,19 @@ class _PlayerPageState extends State<PlayerPage>
                 ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
+                title: const Text('True gapless playback'),
+                subtitle: const Text(
+                  'Use a native preloaded playlist for local tracks; '
+                  'DSP, streams, cues, and variable speed use the regular path.',
+                ),
+                value: _gaplessPlayback,
+                onChanged: (value) {
+                  unawaited(_setGaplessPlayback(value));
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
                 title: const Text('Silence-aware crossfade'),
                 subtitle: const Text('Use FFmpeg silence detection for local tracks'),
                 value: _silenceAwareCrossfade,
@@ -10587,6 +10833,7 @@ class _PlayerPageState extends State<PlayerPage>
     unawaited(_remoteServer?.stop());
     _pulse.dispose();
     _player.dispose();
+    unawaited(_disposeGaplessPlayback());
     unawaited(_midiPlayer.dispose());
     unawaited(_dspPlayer.dispose());
     super.dispose();
@@ -10639,7 +10886,11 @@ class _PlayerPageState extends State<PlayerPage>
       case ControllerAction.mute:
         final nextVolume = _volume > 0 ? 0.0 : 0.82;
         setState(() => _volume = nextVolume);
-        unawaited(_player.setVolume(_volumeFor(_current)));
+        if (_gaplessActive) {
+          unawaited(_gaplessPlayer?.setVolume(_volumeFor(_current)));
+        } else {
+          unawaited(_player.setVolume(_volumeFor(_current)));
+        }
         unawaited(_dspPlayer.setVolume(_volumeFor(_current)));
         unawaited(_saveQueue());
         break;
@@ -10749,6 +11000,8 @@ class _PlayerPageState extends State<PlayerPage>
                     ? _dlnaCast.setVolume(_volumeFor(_current))
                     : _airplayCast.setVolume(_volumeFor(_current)),
               );
+            } else if (_gaplessActive) {
+              unawaited(_gaplessPlayer?.setVolume(_volumeFor(_current)));
             } else if (_dspActive) {
               _dspPlayer.setVolume(_volumeFor(_current));
             } else {
@@ -12197,6 +12450,12 @@ class _PlayerPageState extends State<PlayerPage>
                                     : _airplayCast.setVolume(
                                         _volumeFor(_current),
                                       ),
+                              );
+                            } else if (_gaplessActive) {
+                              unawaited(
+                                _gaplessPlayer?.setVolume(
+                                  _volumeFor(_current),
+                                ),
                               );
                             } else if (_dspActive) {
                               _dspPlayer.setVolume(_volumeFor(_current));
