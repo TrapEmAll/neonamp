@@ -68,6 +68,7 @@ import 'backup.dart';
 import 'webdav_library.dart';
 import 'network_library.dart';
 import 'folder_artwork.dart';
+import 'play_history.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -2559,6 +2560,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<Track> _library = [];
   final List<Track> _bookmarks = [];
   final List<String> _playHistory = [];
+  final Map<String, String> _playHistoryTimes = {};
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
   final Map<String, String> _libraryRelativePaths = {};
@@ -2929,9 +2931,7 @@ class _PlayerPageState extends State<PlayerPage>
       _selected = index;
       _position = Duration.zero;
       _duration = _gaplessPlayer?.duration ?? _duration;
-      _playHistory
-        ..clear()
-        ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+      _recordHistory(track);
       final libraryIndex = _library.indexWhere(
         (item) => item.identityKey == track.identityKey,
       );
@@ -3068,6 +3068,14 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (profile == null) return track.path;
     return webDavAuthenticatedUri(Uri.parse(track.path), profile).toString();
+  }
+
+  void _recordHistory(Track track) {
+    _playHistory
+      ..clear()
+      ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+    _playHistoryTimes[track.identityKey] =
+        DateTime.now().toUtc().toIso8601String();
   }
 
   Future<Track?> _materializeNetworkTrack(Track track) async {
@@ -4296,6 +4304,14 @@ class _PlayerPageState extends State<PlayerPage>
       }
       if (savedSettings != null) {
         final settings = jsonDecode(savedSettings) as Map<String, dynamic>;
+        final savedHistoryTimes = settings['playHistoryTimes'];
+        if (savedHistoryTimes is Map) {
+          _playHistoryTimes.addAll(
+            savedHistoryTimes.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ),
+          );
+        }
         final savedRelativePaths = settings['libraryRelativePaths'];
         if (savedRelativePaths is Map) {
           _libraryRelativePaths.addAll(
@@ -4531,6 +4547,7 @@ class _PlayerPageState extends State<PlayerPage>
         'librarySortDescending': _librarySortDescending,
         'visualizerMode': _visualizerMode,
         'libraryRelativePaths': _libraryRelativePaths,
+        'playHistoryTimes': _playHistoryTimes,
         if (_playerLayoutCustomized) 'playerControls': _playerControls,
       }),
     );
@@ -4605,6 +4622,7 @@ class _PlayerPageState extends State<PlayerPage>
         _library.clear();
         _bookmarks.clear();
         _playHistory.clear();
+        _playHistoryTimes.clear();
         _libraryFolders.clear();
         _libraryRelativePaths.clear();
         _resumePositions.clear();
@@ -4962,6 +4980,7 @@ class _PlayerPageState extends State<PlayerPage>
         _queue.removeWhere((track) => removePaths.contains(track.path));
         _bookmarks.removeWhere((track) => removePaths.contains(track.path));
         _playHistory.removeWhere(removePaths.contains);
+        _playHistoryTimes.removeWhere((key, _) => removePaths.contains(key));
         for (final playlist in _playlists.values) {
           playlist.removeWhere(removePaths.contains);
         }
@@ -5677,9 +5696,7 @@ class _PlayerPageState extends State<PlayerPage>
         _position = Duration.zero;
         _cueTransitioning = false;
         final track = _queue[index];
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        _recordHistory(track);
         final libraryIndex = _library.indexWhere(
           (item) => item.identityKey == track.identityKey,
         );
@@ -6242,9 +6259,7 @@ class _PlayerPageState extends State<PlayerPage>
       _position = Duration.zero;
       _duration = duration;
       _playerState = PlayerState.playing;
-      _playHistory
-        ..clear()
-        ..addAll(addToPlayHistory(_playHistory, track.path));
+      _recordHistory(track);
       final libraryIndex = _library.indexWhere(
         (item) => item.path == track.path,
       );
@@ -12325,19 +12340,85 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Track _historyTrack(String identity) {
+    final queued = _queue.where((item) => item.identityKey == identity).firstOrNull;
+    if (queued != null) return queued;
+    final library = _library.where((item) => item.identityKey == identity).firstOrNull;
+    if (library != null) return library;
+    return Track(
+      path: identity,
+      name: identity.split(RegExp(r'[/\\]')).last,
+    );
+  }
+
+  Future<void> _exportPlayHistory() async {
+    if (_playHistory.isEmpty) return;
+    final format = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Export listening history'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'json'),
+            child: const Text('JSON (portable backup)'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'csv'),
+            child: const Text('CSV (spreadsheet)')
+          ),
+        ],
+      ),
+    );
+    if (format == null || !mounted) return;
+    final entries = <Map<String, Object?>>[];
+    for (final identity in _playHistory) {
+      final track = _historyTrack(identity);
+      entries.add({
+        'playedAt': _playHistoryTimes[identity],
+        'title': track.name,
+        'artist': track.artist,
+        'album': track.album,
+        'path': track.path,
+      });
+    }
+    final isJson = format == 'json';
+    await FilePicker.saveFile(
+      fileName: isJson ? 'neonamp-play-history.json' : 'neonamp-play-history.csv',
+      bytes: Uint8List.fromList(
+        utf8.encode(isJson ? encodePlayHistoryJson(entries) : encodePlayHistoryCsv(entries)),
+      ),
+      mimeType: isJson ? 'application/json' : 'text/csv',
+      type: FileType.custom,
+      allowedExtensions: [isJson ? 'json' : 'csv'],
+    );
+  }
+
   Widget _historyView() {
     if (_playHistory.isEmpty) return _emptyQueue();
     return Column(
       children: [
         Align(
           alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            onPressed: () async {
-              setState(_playHistory.clear);
-              await _saveQueue();
-            },
-            icon: const Icon(Icons.delete_sweep_outlined, size: 16),
-            label: const Text('Clear history'),
+          child: Wrap(
+            spacing: 4,
+            children: [
+              TextButton.icon(
+                onPressed: _exportPlayHistory,
+                icon: const Icon(Icons.file_download_outlined, size: 16),
+                label: const Text('Export'),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  setState(() {
+                    _playHistory.clear();
+                    _playHistoryTimes.clear();
+                  });
+                  await _saveQueue();
+                },
+                icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                label: const Text('Clear history'),
+              ),
+            ],
           ),
         ),
         Expanded(
