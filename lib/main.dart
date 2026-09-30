@@ -2460,6 +2460,13 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     await prefs.setString('themeName', themeName);
   }
 
+  Future<void> _setTextScale(double value) async {
+    final clamped = value.clamp(0.85, 1.3).toDouble();
+    setState(() => _textScale = clamped);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('textScale', clamped);
+  }
+
   Future<void> _addCustomSkin(ThemeSkin skin) async {
     if (builtInSkins().any((builtin) => builtin.name == skin.name)) {
       throw const FormatException('Built-in skin names cannot be replaced.');
@@ -4363,6 +4370,16 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           );
         }
+        final savedNetworkLibraries = settings['networkLibraries'];
+        if (savedNetworkLibraries is List) {
+          _networkProfiles.addAll(
+            savedNetworkLibraries.whereType<Map>().map(
+              (item) => NetworkLibraryProfile.fromJson(
+                Map<String, dynamic>.from(item),
+              ),
+            ),
+          );
+        }
         final savedQueueSnapshots = settings['queueSnapshots'];
         if (savedQueueSnapshots is Map) {
           for (final entry in savedQueueSnapshots.entries) {
@@ -4880,12 +4897,6 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  Future<void> _setTextScale(double value) async {
-    setState(() => _textScale = value.clamp(0.85, 1.3).toDouble());
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('textScale', _textScale);
-  }
-
   Future<void> _showLibraryMaintenance() async {
     final paths = _library.map((track) => track.path).toList(growable: false);
     final existing = <String>{
@@ -4950,7 +4961,7 @@ class _PlayerPageState extends State<PlayerPage>
         _library.removeWhere((track) => removePaths.contains(track.path));
         _queue.removeWhere((track) => removePaths.contains(track.path));
         _bookmarks.removeWhere((track) => removePaths.contains(track.path));
-        _playHistory.removeWhere((track) => removePaths.contains(track.path));
+        _playHistory.removeWhere(removePaths.contains);
         for (final playlist in _playlists.values) {
           playlist.removeWhere(removePaths.contains);
         }
@@ -4967,16 +4978,6 @@ class _PlayerPageState extends State<PlayerPage>
           final seenPlaylist = <String>{};
           playlist.removeWhere(
             (path) => removePaths.contains(path) && !seenPlaylist.add(path),
-          );
-        }
-        final savedNetworkLibraries = settings['networkLibraries'];
-        if (savedNetworkLibraries is List) {
-          _networkProfiles.addAll(
-            savedNetworkLibraries.whereType<Map>().map(
-              (item) => NetworkLibraryProfile.fromJson(
-                Map<String, dynamic>.from(item),
-              ),
-            ),
           );
         }
       }
