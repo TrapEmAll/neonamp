@@ -299,7 +299,7 @@ class MainActivity : AudioServiceActivity() {
                     return@setMethodCallHandler
                 }
                 Thread {
-                    val converted = try {
+                    val converted: Boolean = try {
                         transcodeToM4a(inputPath, outputPath)
                     } catch (_: Throwable) {
                         false
