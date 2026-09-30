@@ -71,6 +71,7 @@ import 'ab_loop.dart';
 import 'backup.dart';
 import 'webdav_library.dart';
 import 'network_library.dart';
+import 'network_cache.dart';
 import 'folder_artwork.dart';
 import 'play_history.dart';
 
@@ -3165,20 +3166,12 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (profile == null) return null;
     final cache = Directory(
-      '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}neonamp-network-cache',
+      '${(await getApplicationSupportDirectory()).path}${Platform.pathSeparator}neonamp-library-cache',
     );
     await cache.create(recursive: true);
-    final encoded = base64Url
-        .encode(utf8.encode('$profileId:$relativePath'))
-        .replaceAll('=', '_');
-    final extension = relativePath.contains('.')
-        ? '.${relativePath.split('.').last.toLowerCase()}'
-        : '.audio';
-    final destination = File(
-      '${cache.path}${Platform.pathSeparator}$encoded$extension',
-    );
+    final destination = File(networkCachePath(cache.path, profileId, relativePath));
     try {
-      if (!await destination.exists() || await destination.length() <= 44) {
+      if (!await isUsableNetworkCacheFile(destination)) {
         await NetworkLibraryClient().downloadToFile(
           profile,
           relativePath,
@@ -3194,6 +3187,20 @@ class _PlayerPageState extends State<PlayerPage>
       }
       return null;
     }
+  }
+
+  Future<bool> _networkTrackIsCached(Track track) async {
+    final profileId = track.customMetadata['networkProfileId'];
+    final relativePath = track.customMetadata['networkRelativePath'];
+    if (profileId == null || relativePath == null) return false;
+    final root = (await getApplicationSupportDirectory()).path;
+    return isUsableNetworkCacheFile(
+      File(networkCachePath(
+        '$root${Platform.pathSeparator}neonamp-library-cache',
+        profileId,
+        relativePath,
+      )),
+    );
   }
 
   Future<void> _consumeAndroidIntents() async {
@@ -10461,7 +10468,23 @@ class _PlayerPageState extends State<PlayerPage>
                           );
                           return ListTile(
                             dense: true,
-                            leading: const Icon(Icons.cloud_queue),
+                            leading: FutureBuilder<bool>(
+                              future: _networkTrackIsCached(track),
+                              builder: (context, snapshot) {
+                                final cached = snapshot.data == true;
+                                return Tooltip(
+                                  message: cached
+                                      ? 'Available offline'
+                                      : 'Downloads when played',
+                                  child: Icon(
+                                    cached
+                                        ? Icons.cloud_done_outlined
+                                        : Icons.cloud_download_outlined,
+                                    color: cached ? Colors.greenAccent : null,
+                                  ),
+                                );
+                              },
+                            ),
                             title: Text(entry.name),
                             subtitle: Text(_formatBytes(entry.size)),
                             trailing: IconButton(
@@ -14052,3 +14075,4 @@ class VisualizerPainter extends CustomPainter {
       oldDelegate.peakHold != peakHold ||
       oldDelegate.active != active;
 }
+
