@@ -2331,13 +2331,19 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<List<MediaItem>> getChildren(
     String parentMediaId, [
     Map<String, dynamic>? options,
-  ]) => childrenProvider?.call(parentMediaId) ?? const [];
+  ]) async {
+    final provider = childrenProvider;
+    return provider == null ? <MediaItem>[] : await provider(parentMediaId);
+  }
 
   @override
   Future<List<MediaItem>> search(
     String query, [
     Map<String, dynamic>? extras,
-  ]) => searchProvider?.call(query) ?? const [];
+  ]) async {
+    final provider = searchProvider;
+    return provider == null ? <MediaItem>[] : await provider(query);
+  }
 
   @override
   Future<void> playFromMediaId(
@@ -3127,6 +3133,15 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<MediaItem> _androidAutoTrack(Track track) async {
+    Uri? artworkUri;
+    try {
+      artworkUri = await cacheMediaArtwork(
+        track.artwork,
+        directory: await getTemporaryDirectory(),
+      );
+    } on Object catch (error) {
+      debugPrint('Could not cache Android Auto artwork: $error');
+    }
     return MediaItem(
       id: track.identityKey,
       title: track.name,
@@ -3134,7 +3149,7 @@ class _PlayerPageState extends State<PlayerPage>
       album: track.album,
       genre: track.genre,
       duration: track.cueEnd == null ? null : track.cueEnd! - track.cueStart,
-      artUri: await _artworkUri(track),
+      artUri: artworkUri,
       playable: true,
       extras: const {
         AndroidContentStyle.playableHintKey:
