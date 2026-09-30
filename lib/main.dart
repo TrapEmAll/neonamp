@@ -10144,6 +10144,10 @@ class _PlayerPageState extends State<PlayerPage>
       sourceFormat: info,
       hardwareSampleRate: (nativeOutput?['sampleRate'] as num?)?.toInt(),
       hardwareBitDepth: (nativeOutput?['bitDepth'] as num?)?.toInt(),
+      routeName: nativeOutput?['routeName'] as String?,
+      routeType: nativeOutput?['routeType'] as String?,
+      outputCodec: nativeOutput?['codec'] as String?,
+      latencyMs: (nativeOutput?['latencyMs'] as num?)?.toDouble(),
     );
     await showDialog<void>(
       context: context,

@@ -15,6 +15,7 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.media.AudioManager
+import android.media.AudioDeviceInfo
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -293,11 +294,27 @@ class MainActivity : AudioServiceActivity() {
                     ?.toIntOrNull()
                 val bufferFrames = audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)
                     ?.toIntOrNull()
+                val outputDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull()
+                } else {
+                    null
+                }
+                val routeType = outputDevice?.let { AudioDeviceInfo.typeToString(it.type) }
+                val routeName = outputDevice?.productName?.toString()?.takeIf { it.isNotBlank() }
+                val latencyMs = if (sampleRate != null && sampleRate > 0 && bufferFrames != null) {
+                    bufferFrames * 1000.0 / sampleRate
+                } else {
+                    null
+                }
                 result.success(
                     mapOf(
                         "backend" to "Android AudioTrack",
                         "sampleRate" to sampleRate,
                         "bufferFrames" to bufferFrames,
+                        "routeName" to routeName,
+                        "routeType" to routeType,
+                        "codec" to "PCM / AudioTrack",
+                        "latencyMs" to latencyMs,
                         "formatKnown" to (sampleRate != null),
                     ),
                 )

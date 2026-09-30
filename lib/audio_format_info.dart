@@ -45,6 +45,10 @@ class AudioOutputStatus {
     this.sourceFormat,
     this.hardwareSampleRate,
     this.hardwareBitDepth,
+    this.routeName,
+    this.routeType,
+    this.outputCodec,
+    this.latencyMs,
   });
 
   final String backend;
@@ -53,6 +57,10 @@ class AudioOutputStatus {
   final AudioFormatInfo? sourceFormat;
   final int? hardwareSampleRate;
   final int? hardwareBitDepth;
+  final String? routeName;
+  final String? routeType;
+  final String? outputCodec;
+  final double? latencyMs;
 
   bool get hardwareFormatKnown =>
       hardwareSampleRate != null || hardwareBitDepth != null;
@@ -66,7 +74,14 @@ class AudioOutputStatus {
         : softwareDspActive
         ? 'software DSP active'
         : 'native playback path';
-    return '$backend · $mode\nHardware output: $hardware';
+    final route = routeName == null && routeType == null
+        ? 'route unavailable'
+        : '${routeName ?? 'unnamed device'} (${routeType ?? 'unknown type'})';
+    final codec = outputCodec ?? 'codec unavailable';
+    final latency = latencyMs == null
+        ? 'latency unavailable'
+        : '${latencyMs!.toStringAsFixed(1)} ms buffer estimate';
+    return '$backend · $mode\nHardware output: $hardware\nRoute: $route\nFormat: $codec · $latency';
   }
 }
 
