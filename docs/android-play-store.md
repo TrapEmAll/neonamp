@@ -8,13 +8,13 @@ direct installation; the App Bundle is the artifact to upload to Google Play.
 Create a dedicated upload keystore and keep it outside the repository. Configure
 these GitHub Actions repository secrets before creating a version tag:
 
-- `ANDROID_KEYSTORE_BASE64`: base64-encoded `.jks` file
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_KEY_PASSWORD`
+- `ANDROID_UPLOAD_KEYSTORE_BASE64`: base64-encoded `.jks` file
+- `ANDROID_UPLOAD_STORE_PASSWORD`
+- `ANDROID_UPLOAD_KEY_ALIAS`
+- `ANDROID_UPLOAD_KEY_PASSWORD`
 
 Tagged Android workflows fail if any of these values is absent. Branch and pull
-request builds remain usable with the local debug fallback.
+request builds remain usable with the local fallback for direct-install testing.
 
 ## Play Console setup
 
