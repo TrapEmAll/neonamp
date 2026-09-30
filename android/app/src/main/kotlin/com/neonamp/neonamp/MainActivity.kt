@@ -411,13 +411,13 @@ class MainActivity : AudioServiceActivity() {
         }
         if (scheme != "content") return null
         val name = queryDisplayName(uri) ?: uri.lastPathSegment ?: "shared-audio"
-        val extension = name.substringAfterLast('.', "")
+        val fileExtension = name.substringAfterLast('.', "")
             .lowercase(Locale.ROOT)
             .takeIf { it.isNotBlank() }
             ?: audioExtensionForMimeType(mimeType.orEmpty())
             ?: "bin"
         val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
-        val cachedFile = File(cacheDirectory, "${sha256(uri.toString())}.$extension")
+        val cachedFile = File(cacheDirectory, "${sha256(uri.toString())}.$fileExtension")
         if (!cachedFile.isFile) {
             val temporary = File(cacheDirectory, "${cachedFile.name}.tmp")
             contentResolver.openInputStream(uri)?.use { input ->
