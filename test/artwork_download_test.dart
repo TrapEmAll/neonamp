@@ -9,10 +9,10 @@ void main() {
 
   setUp(() async {
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    unawaited(server.forEach((request) {
+    unawaited(server.forEach((request) async {
       request.response.headers.contentType = ContentType('image', 'png');
       request.response.add([1, 2, 3]);
-      return request.response.close();
+      await request.response.close();
     }));
   });
 
