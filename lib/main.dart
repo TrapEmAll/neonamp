@@ -2186,6 +2186,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<List<MediaItem>> Function(String parentMediaId)? childrenProvider;
   Future<List<MediaItem>> Function(String query)? searchProvider;
   Future<void> Function(String mediaId)? playMediaIdRequested;
+  bool Function()? notificationArtworkEnabled;
+  bool Function()? notificationSeekControlsEnabled;
+  String Function()? notificationCompactActions;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<PlayerState>? _stateSubscription;
@@ -2227,7 +2230,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     final duration = track.cueEnd == null
         ? null
         : track.cueEnd! - track.cueStart;
-    final artworkUri = await _artworkUri(track);
+    final artworkUri = await _notificationArtworkUri(track);
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
@@ -2256,7 +2259,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<void> publishTrack(Track track) async {
     _trackStart = track.cueStart;
     _trackEnd = track.cueEnd;
-    final artworkUri = await _artworkUri(track);
+    final artworkUri = await _notificationArtworkUri(track);
     mediaItem.add(
       MediaItem(
         id: track.identityKey,
@@ -2327,6 +2330,11 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     await onPrevious?.call();
   }
 
+  Future<Uri?> _notificationArtworkUri(Track track) async {
+    if (notificationArtworkEnabled?.call() == false) return null;
+    return _artworkUri(track);
+  }
+
   @override
   Future<List<MediaItem>> getChildren(
     String parentMediaId, [
@@ -2356,22 +2364,39 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   void _broadcast({Duration? position, PlayerState? state}) {
     if (position != null) _lastPosition = position;
     final currentState = state ?? player.state;
+    final controls = switch (notificationCompactActions?.call()) {
+      'playNext' => <MediaControl>[
+        currentState == PlayerState.playing
+            ? MediaControl.pause
+            : MediaControl.play,
+        MediaControl.skipToNext,
+      ],
+      'previousPlay' => <MediaControl>[
+        MediaControl.skipToPrevious,
+        currentState == PlayerState.playing
+            ? MediaControl.pause
+            : MediaControl.play,
+      ],
+      _ => <MediaControl>[
+        MediaControl.skipToPrevious,
+        currentState == PlayerState.playing
+            ? MediaControl.pause
+            : MediaControl.play,
+        MediaControl.skipToNext,
+      ],
+    };
+    final compactIndices = List<int>.generate(controls.length, (index) => index);
     playbackState.add(
       PlaybackState(
-        controls: [
-          MediaControl.skipToPrevious,
-          currentState == PlayerState.playing
-              ? MediaControl.pause
-              : MediaControl.play,
-          MediaControl.stop,
-          MediaControl.skipToNext,
-        ],
-        systemActions: const {
-          MediaAction.seek,
-          MediaAction.seekForward,
-          MediaAction.seekBackward,
-        },
-        androidCompactActionIndices: const [0, 1, 3],
+        controls: controls,
+        systemActions: notificationSeekControlsEnabled?.call() == false
+            ? const <MediaAction>{}
+            : const {
+                MediaAction.seek,
+                MediaAction.seekForward,
+                MediaAction.seekBackward,
+              },
+        androidCompactActionIndices: compactIndices,
         processingState: currentState == PlayerState.completed
             ? AudioProcessingState.completed
             : AudioProcessingState.ready,
@@ -2581,6 +2606,9 @@ class _PlayerPageState extends State<PlayerPage>
   bool _r128NormalizationEnabled = false;
   final Map<String, double?> _measuredLufs = <String, double?>{};
   bool _truePeakLimiterEnabled = true;
+  bool _notificationArtworkEnabled = true;
+  bool _notificationSeekControlsEnabled = true;
+  String _notificationCompactActions = 'previousPlayNext';
   String? _convolutionImpulsePath;
   final List<MediaServerProfile> _mediaServerProfiles = [];
   final List<WebDavProfile> _webDavProfiles = [];
@@ -3139,6 +3167,12 @@ class _PlayerPageState extends State<PlayerPage>
     _audioHandler!.childrenProvider = _androidAutoChildren;
     _audioHandler!.searchProvider = _androidAutoSearch;
     _audioHandler!.playMediaIdRequested = _playAndroidAutoMedia;
+    _audioHandler!.notificationArtworkEnabled =
+        () => _notificationArtworkEnabled;
+    _audioHandler!.notificationSeekControlsEnabled =
+        () => _notificationSeekControlsEnabled;
+    _audioHandler!.notificationCompactActions =
+        () => _notificationCompactActions;
   }
 
   Future<MediaItem> _androidAutoTrack(Track track) async {
@@ -4033,6 +4067,16 @@ class _PlayerPageState extends State<PlayerPage>
         _replayGainEnabled = settings['replayGainEnabled'] as bool? ?? false;
         _r128NormalizationEnabled = settings['r128NormalizationEnabled'] as bool? ?? false;
         _truePeakLimiterEnabled = settings['truePeakLimiterEnabled'] as bool? ?? true;
+        _notificationArtworkEnabled =
+            settings['notificationArtworkEnabled'] as bool? ?? true;
+        _notificationSeekControlsEnabled =
+            settings['notificationSeekControlsEnabled'] as bool? ?? true;
+        final savedNotificationActions =
+            settings['notificationCompactActions'] as String?;
+        if (const {'previousPlayNext', 'playNext', 'previousPlay'}
+            .contains(savedNotificationActions)) {
+          _notificationCompactActions = savedNotificationActions!;
+        }
         final savedImpulse = settings['convolutionImpulsePath'] as String?;
         _convolutionImpulsePath = savedImpulse != null &&
                 isSupportedImpulseResponsePath(savedImpulse)
@@ -4174,6 +4218,9 @@ class _PlayerPageState extends State<PlayerPage>
         'replayGainEnabled': _replayGainEnabled,
         'r128NormalizationEnabled': _r128NormalizationEnabled,
         'truePeakLimiterEnabled': _truePeakLimiterEnabled,
+        'notificationArtworkEnabled': _notificationArtworkEnabled,
+        'notificationSeekControlsEnabled': _notificationSeekControlsEnabled,
+        'notificationCompactActions': _notificationCompactActions,
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
         'webDavProfiles': _webDavProfiles.map((profile) => profile.toJson()).toList(),
@@ -9444,9 +9491,10 @@ class _PlayerPageState extends State<PlayerPage>
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Settings'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Crossfade tracks'),
@@ -9540,6 +9588,54 @@ class _PlayerPageState extends State<PlayerPage>
                   setDialogState(() {});
                 },
               ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Notification artwork'),
+                subtitle: const Text('Show album art in Android media controls'),
+                value: _notificationArtworkEnabled,
+                onChanged: (value) {
+                  setState(() => _notificationArtworkEnabled = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Notification seek controls'),
+                subtitle: const Text('Show seek and 15-second skip actions'),
+                value: _notificationSeekControlsEnabled,
+                onChanged: (value) {
+                  setState(() => _notificationSeekControlsEnabled = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
+              DropdownButtonFormField<String>(
+                value: _notificationCompactActions,
+                decoration: const InputDecoration(
+                  labelText: 'Compact notification actions',
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'previousPlayNext',
+                    child: Text('Previous · Play · Next'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'playNext',
+                    child: Text('Play · Next'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'previousPlay',
+                    child: Text('Previous · Play'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => _notificationCompactActions = value);
+                  unawaited(_saveQueue());
+                  setDialogState(() {});
+                },
+              ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Convolution impulse response'),
@@ -9580,7 +9676,8 @@ class _PlayerPageState extends State<PlayerPage>
                   'Space: play/pause · M: mute · Ctrl+arrows: seek',
                 ),
               ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(
