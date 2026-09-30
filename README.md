@@ -26,6 +26,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Discover AirPlay receivers and cast compatible local audio or HTTP(S) streams from Windows or Android.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
+- Adjust display scale from 85% to 130%; the size preference persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
 - Import portable JSON plugin packages on Windows or Android; enablement, plugin-provided 10-band equalizer presets, and native bass-boost/echo/reverb effects persist across launches.
 - Sync local library tracks to a user-selected device folder on Windows or Android with collision-safe names and an M3U8 manifest.

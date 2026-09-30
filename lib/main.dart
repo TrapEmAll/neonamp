@@ -2420,6 +2420,7 @@ class NeonAmpApp extends StatefulWidget {
 
 class _NeonAmpAppState extends State<NeonAmpApp> {
   String _themeName = 'Neon';
+  double _textScale = 1.0;
   final Map<String, ThemeSkin> _customSkins = {};
 
   @override
@@ -2445,7 +2446,11 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
       }
     }
     if (!mounted) return;
-    setState(() => _themeName = prefs.getString('themeName') ?? 'Neon');
+    final savedScale = prefs.getDouble('textScale') ?? 1.0;
+    setState(() {
+      _themeName = prefs.getString('themeName') ?? 'Neon';
+      _textScale = savedScale.clamp(0.85, 1.3).toDouble();
+    });
   }
 
   Future<void> _setTheme(String themeName) async {
@@ -2494,11 +2499,19 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     title: 'NeonAmp',
     debugShowCheckedModeBanner: false,
     theme: _themeData(),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(
+        textScaler: TextScaler.linear(_textScale),
+      ),
+      child: child ?? const SizedBox.shrink(),
+    ),
     home: PlayerPage(
       themeName: _themeName,
       skins: _skins,
       onThemeChanged: _setTheme,
       onSkinImported: _addCustomSkin,
+      textScale: _textScale,
+      onTextScaleChanged: _setTextScale,
     ),
   );
 }
@@ -2510,12 +2523,16 @@ class PlayerPage extends StatefulWidget {
     this.skins = const [],
     this.onThemeChanged,
     this.onSkinImported,
+    this.textScale = 1.0,
+    this.onTextScaleChanged,
   });
 
   final String themeName;
   final List<ThemeSkin> skins;
   final ValueChanged<String>? onThemeChanged;
   final Future<void> Function(ThemeSkin skin)? onSkinImported;
+  final double textScale;
+  final ValueChanged<double>? onTextScaleChanged;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -4813,6 +4830,12 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
     }
+  }
+
+  Future<void> _setTextScale(double value) async {
+    setState(() => _textScale = value.clamp(0.85, 1.3).toDouble());
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('textScale', _textScale);
   }
 
   Future<void> _showLibraryMaintenance() async {
@@ -8855,6 +8878,47 @@ class _PlayerPageState extends State<PlayerPage>
     if (selected != null) widget.onThemeChanged?.call(selected);
   }
 
+  Future<void> _showDisplayScale() async {
+    var scale = widget.textScale;
+    final selected = await showDialog<double>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Display size'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('${(scale * 100).round()}%'),
+              Slider(
+                value: scale,
+                min: 0.85,
+                max: 1.3,
+                divisions: 9,
+                label: '${(scale * 100).round()}%',
+                onChanged: (value) => setDialogState(() => scale = value),
+              ),
+              const Text(
+                'Adjust text and control sizing without changing audio behavior.',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, scale),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null) widget.onTextScaleChanged?.call(selected);
+  }
+
   Future<void> _showLyrics(Track track) async {
     final lyrics = track.lyrics?.trim();
     if (lyrics == null || lyrics.isEmpty) {
@@ -11439,6 +11503,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'controller') _showControllerSettings();
               if (value == 'formatInfo') _showAudioFormatInfo();
               if (value == 'theme') _showThemePicker();
+              if (value == 'displayScale') _showDisplayScale();
               if (value == 'importSkin') _importSkin();
               if (value == 'midiSoundFont') _importMidiSoundFont();
               if (value == 'plugins') _showPluginManager();
@@ -11543,6 +11608,10 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Audio format diagnostics'),
               ),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
+              const PopupMenuItem(
+                value: 'displayScale',
+                child: Text('Adjust display size'),
+              ),
               PopupMenuItem(
                 value: 'importSkin',
                 child: Text('Import skin package'),

@@ -77,6 +77,7 @@ NeonAmp targets the cross-platform feature set documented for Winamp Desktop and
 - Native M4A conversion using Media Foundation on Windows and MediaCodec/MediaMuxer on Android, with metadata restoration
 - Audio CD track discovery and WAV ripping through the native Windows CD-ROM API and Android USB-host MMC/CDDA transport, with SAF-compatible Android rip destinations
 - Responsive Windows and Android layouts
+- User-adjustable display text/control scale from 85% to 130%, with persisted skin color selection and custom skin imports
 - Local HTTP/WebSocket remote control with phone-friendly queue browsing, remote track selection, clear-queue, transport, seek, and volume commands
 - Android background playback with notification, lock-screen, headset, and Android Auto media controls, including browsable library, queue, favorites, history, podcasts, playlists, and voice-search metadata
 - Android home-screen media widget with compact/large responsive layouts, artwork, queue shortcut, and play/pause/previous/next actions synchronized with native, DSP, MIDI, and cast playback state
