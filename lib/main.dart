@@ -45,6 +45,8 @@ import 'visualizer_metrics.dart';
 import 'playlist_library_resolution.dart';
 import 'midi_dsp_renderer.dart';
 import 'media_artwork_cache.dart';
+import 'artwork_download.dart';
+import 'artwork_transform.dart';
 import 'audio_effects.dart';
 import 'audio_loudness.dart';
 import 'convolution.dart';
@@ -58,14 +60,19 @@ import 'custom_metadata.dart';
 import 'remote_command_server.dart';
 import 'abx_test.dart';
 import 'track_auditor.dart';
+import 'library_maintenance.dart';
+import 'library_statistics.dart';
 import 'audio_formats.dart';
 import 'audio_format_info.dart';
+import 'audio_output_profiles.dart';
 import 'android_media_store.dart';
 import 'android_external_intent.dart';
 import 'ab_loop.dart';
 import 'backup.dart';
 import 'webdav_library.dart';
+import 'network_library.dart';
 import 'folder_artwork.dart';
+import 'play_history.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -2419,6 +2426,7 @@ class NeonAmpApp extends StatefulWidget {
 
 class _NeonAmpAppState extends State<NeonAmpApp> {
   String _themeName = 'Neon';
+  double _textScale = 1.0;
   final Map<String, ThemeSkin> _customSkins = {};
 
   @override
@@ -2444,13 +2452,24 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
       }
     }
     if (!mounted) return;
-    setState(() => _themeName = prefs.getString('themeName') ?? 'Neon');
+    final savedScale = prefs.getDouble('textScale') ?? 1.0;
+    setState(() {
+      _themeName = prefs.getString('themeName') ?? 'Neon';
+      _textScale = savedScale.clamp(0.85, 1.3).toDouble();
+    });
   }
 
   Future<void> _setTheme(String themeName) async {
     setState(() => _themeName = themeName);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('themeName', themeName);
+  }
+
+  Future<void> _setTextScale(double value) async {
+    final clamped = value.clamp(0.85, 1.3).toDouble();
+    setState(() => _textScale = clamped);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('textScale', clamped);
   }
 
   Future<void> _addCustomSkin(ThemeSkin skin) async {
@@ -2493,11 +2512,19 @@ class _NeonAmpAppState extends State<NeonAmpApp> {
     title: 'NeonAmp',
     debugShowCheckedModeBanner: false,
     theme: _themeData(),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(
+        textScaler: TextScaler.linear(_textScale),
+      ),
+      child: child ?? const SizedBox.shrink(),
+    ),
     home: PlayerPage(
       themeName: _themeName,
       skins: _skins,
       onThemeChanged: _setTheme,
       onSkinImported: _addCustomSkin,
+      textScale: _textScale,
+      onTextScaleChanged: _setTextScale,
     ),
   );
 }
@@ -2509,19 +2536,23 @@ class PlayerPage extends StatefulWidget {
     this.skins = const [],
     this.onThemeChanged,
     this.onSkinImported,
+    this.textScale = 1.0,
+    this.onTextScaleChanged,
   });
 
   final String themeName;
   final List<ThemeSkin> skins;
   final ValueChanged<String>? onThemeChanged;
   final Future<void> Function(ThemeSkin skin)? onSkinImported;
+  final double textScale;
+  final ValueChanged<double>? onTextScaleChanged;
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
 }
 
 class _PlayerPageState extends State<PlayerPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   AudioPlayer _activePlayer = AudioPlayer();
   final DlnaCast _dlnaCast = DlnaCast();
   final ChromecastCast _chromecastCast = ChromecastCast();
@@ -2533,6 +2564,7 @@ class _PlayerPageState extends State<PlayerPage>
   final List<Track> _library = [];
   final List<Track> _bookmarks = [];
   final List<String> _playHistory = [];
+  final Map<String, String> _playHistoryTimes = {};
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
   final Map<String, String> _libraryRelativePaths = {};
@@ -2614,6 +2646,8 @@ class _PlayerPageState extends State<PlayerPage>
   bool _replayGainEnabled = false;
   bool _r128NormalizationEnabled = false;
   final Map<String, double?> _measuredLufs = <String, double?>{};
+  final Map<String, String> _deviceEqPresets = <String, String>{};
+  String _eqOutputProfileKey = 'default';
   bool _truePeakLimiterEnabled = true;
   bool _notificationArtworkEnabled = true;
   bool _notificationSeekControlsEnabled = true;
@@ -2621,6 +2655,7 @@ class _PlayerPageState extends State<PlayerPage>
   String? _convolutionImpulsePath;
   final List<MediaServerProfile> _mediaServerProfiles = [];
   final List<WebDavProfile> _webDavProfiles = [];
+  final List<NetworkLibraryProfile> _networkProfiles = [];
   String _listenBrainzToken = '';
   String _lastFmApiKey = '';
   String _lastFmSessionKey = '';
@@ -2631,6 +2666,9 @@ class _PlayerPageState extends State<PlayerPage>
   bool _scrobblingEnabled = false;
   String? _scrobbledTrackIdentity;
   bool _remoteEnabled = false;
+  bool _backgroundScanEnabled = true;
+  bool _backgroundScanInProgress = false;
+  DateTime? _lastBackgroundScan;
   bool _controllerOverlayVisible = false;
   int _remotePort = 8765;
   RemoteCommandServer? _remoteServer;
@@ -2902,9 +2940,7 @@ class _PlayerPageState extends State<PlayerPage>
       _selected = index;
       _position = Duration.zero;
       _duration = _gaplessPlayer?.duration ?? _duration;
-      _playHistory
-        ..clear()
-        ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+      _recordHistory(track);
       final libraryIndex = _library.indexWhere(
         (item) => item.identityKey == track.identityKey,
       );
@@ -3016,6 +3052,7 @@ class _PlayerPageState extends State<PlayerPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bindPlayerStreams();
     _bindDspStreams();
     _bindMidiStreams();
@@ -3023,7 +3060,10 @@ class _PlayerPageState extends State<PlayerPage>
     _initializeAudioService();
     final queueLoad = _loadQueue();
     if (Platform.isAndroid) {
-      unawaited(queueLoad.then((_) => _consumeAndroidIntents()));
+      unawaited(queueLoad.then((_) async {
+        await _consumeAndroidIntents();
+        await _runBackgroundLibraryScan();
+      }));
     } else {
       unawaited(queueLoad);
     }
@@ -3041,6 +3081,87 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (profile == null) return track.path;
     return webDavAuthenticatedUri(Uri.parse(track.path), profile).toString();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed ||
+        !Platform.isAndroid ||
+        !_backgroundScanEnabled ||
+        _backgroundScanInProgress) {
+      return;
+    }
+    final lastScan = _lastBackgroundScan;
+    if (lastScan != null &&
+        DateTime.now().difference(lastScan) < const Duration(minutes: 5)) {
+      return;
+    }
+    unawaited(_runBackgroundLibraryScan());
+  }
+
+  Future<void> _runBackgroundLibraryScan() async {
+    if (_backgroundScanInProgress || !_backgroundScanEnabled || !Platform.isAndroid) {
+      return;
+    }
+    _backgroundScanInProgress = true;
+    _lastBackgroundScan = DateTime.now();
+    try {
+      await _rescanFolders(silent: true);
+    } finally {
+      _backgroundScanInProgress = false;
+    }
+  }
+
+  void _recordHistory(Track track) {
+    _playHistory
+      ..clear()
+      ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+    _playHistoryTimes[track.identityKey] =
+        DateTime.now().toUtc().toIso8601String();
+  }
+
+  Future<Track?> _materializeNetworkTrack(Track track) async {
+    final profileId = track.customMetadata['networkProfileId'];
+    final relativePath = track.customMetadata['networkRelativePath'];
+    if (profileId == null || relativePath == null) return track;
+    NetworkLibraryProfile? profile;
+    for (final candidate in _networkProfiles) {
+      if (candidate.id == profileId) {
+        profile = candidate;
+        break;
+      }
+    }
+    if (profile == null) return null;
+    final cache = Directory(
+      '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}neonamp-network-cache',
+    );
+    await cache.create(recursive: true);
+    final encoded = base64Url
+        .encode(utf8.encode('$profileId:$relativePath'))
+        .replaceAll('=', '_');
+    final extension = relativePath.contains('.')
+        ? '.${relativePath.split('.').last.toLowerCase()}'
+        : '.audio';
+    final destination = File(
+      '${cache.path}${Platform.pathSeparator}$encoded$extension',
+    );
+    try {
+      if (!await destination.exists() || await destination.length() <= 44) {
+        await NetworkLibraryClient().downloadToFile(
+          profile,
+          relativePath,
+          destination.path,
+        );
+      }
+      return track.copyWith(path: destination.path);
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open network track: $error')),
+        );
+      }
+      return null;
+    }
   }
 
   Future<void> _consumeAndroidIntents() async {
@@ -4225,6 +4346,14 @@ class _PlayerPageState extends State<PlayerPage>
       }
       if (savedSettings != null) {
         final settings = jsonDecode(savedSettings) as Map<String, dynamic>;
+        final savedHistoryTimes = settings['playHistoryTimes'];
+        if (savedHistoryTimes is Map) {
+          _playHistoryTimes.addAll(
+            savedHistoryTimes.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ),
+          );
+        }
         final savedRelativePaths = settings['libraryRelativePaths'];
         if (savedRelativePaths is Map) {
           _libraryRelativePaths.addAll(
@@ -4257,6 +4386,14 @@ class _PlayerPageState extends State<PlayerPage>
         _eqQ = ((settings['eqQ'] as num?)?.toDouble() ?? 1).clamp(0.1, 10).toDouble();
         _midiSoundFontPath = settings['midiSoundFontPath'] as String?;
         _eqPreset = settings['eqPreset'] as String? ?? 'Flat';
+        final savedDeviceEqPresets = settings['deviceEqPresets'];
+        if (savedDeviceEqPresets is Map) {
+          _deviceEqPresets.addAll(
+            savedDeviceEqPresets.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ),
+          );
+        }
         _customEqPresets.addAll(
           decodeCustomEqualizerPresets(settings['customEqPresets']),
         );
@@ -4299,6 +4436,16 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           );
         }
+        final savedNetworkLibraries = settings['networkLibraries'];
+        if (savedNetworkLibraries is List) {
+          _networkProfiles.addAll(
+            savedNetworkLibraries.whereType<Map>().map(
+              (item) => NetworkLibraryProfile.fromJson(
+                Map<String, dynamic>.from(item),
+              ),
+            ),
+          );
+        }
         final savedQueueSnapshots = settings['queueSnapshots'];
         if (savedQueueSnapshots is Map) {
           for (final entry in savedQueueSnapshots.entries) {
@@ -4328,6 +4475,7 @@ class _PlayerPageState extends State<PlayerPage>
         }
         _controllerBindings = controllerBindingsFromJson(settings['controllerBindings']);
         _remoteEnabled = settings['remoteEnabled'] as bool? ?? false;
+        _backgroundScanEnabled = settings['backgroundScanEnabled'] as bool? ?? true;
         final sleepTimerEnd = (settings['sleepTimerEndMs'] as num?)?.toInt();
         _sleepDeadline = sleepTimerEnd == null
             ? null
@@ -4411,6 +4559,7 @@ class _PlayerPageState extends State<PlayerPage>
         'eqQ': _eqQ,
         'midiSoundFontPath': _midiSoundFontPath,
         'eqPreset': _eqPreset,
+        'deviceEqPresets': _deviceEqPresets,
         'eqBands': _eqBands,
         'eqFrequencies': _eqFrequencies,
         'customEqPresets': _customEqPresets,
@@ -4426,6 +4575,7 @@ class _PlayerPageState extends State<PlayerPage>
         'convolutionImpulsePath': _convolutionImpulsePath,
         'mediaServerProfiles': _mediaServerProfiles.map((profile) => profile.toJson()).toList(),
         'webDavProfiles': _webDavProfiles.map((profile) => profile.toJson()).toList(),
+        'networkLibraries': _networkProfiles.map((profile) => profile.toJson()).toList(),
         'queueSnapshots': _savedQueueSnapshots.map(
           (name, tracks) => MapEntry(
             name,
@@ -4444,11 +4594,13 @@ class _PlayerPageState extends State<PlayerPage>
         ).toJson(),
         'controllerBindings': controllerBindingsToJson(_controllerBindings),
         'remoteEnabled': _remoteEnabled,
+        'backgroundScanEnabled': _backgroundScanEnabled,
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
         'visualizerMode': _visualizerMode,
         'libraryRelativePaths': _libraryRelativePaths,
+        'playHistoryTimes': _playHistoryTimes,
         if (_playerLayoutCustomized) 'playerControls': _playerControls,
       }),
     );
@@ -4523,6 +4675,7 @@ class _PlayerPageState extends State<PlayerPage>
         _library.clear();
         _bookmarks.clear();
         _playHistory.clear();
+        _playHistoryTimes.clear();
         _libraryFolders.clear();
         _libraryRelativePaths.clear();
         _resumePositions.clear();
@@ -4532,6 +4685,7 @@ class _PlayerPageState extends State<PlayerPage>
         _plugins.clear();
       _mediaServerProfiles.clear();
       _webDavProfiles.clear();
+      _networkProfiles.clear();
       _savedQueueSnapshots.clear();
       });
       await _loadQueue();
@@ -4695,7 +4849,19 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _scanMediaStore() async {
     if (!Platform.isAndroid) return;
     try {
-      final results = await const MethodChannel('neonamp/library')
+      final channel = const MethodChannel('neonamp/library');
+      final permitted = await channel.invokeMethod<bool>('requestMediaPermission') ?? false;
+      if (!permitted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Allow audio access to scan music on this device.'),
+            ),
+          );
+        }
+        return;
+      }
+      final results = await channel
           .invokeListMethod<Map<Object?, Object?>>('scanMediaStore');
       final tracks = deduplicateAndroidMediaStoreTracks(
         (results ?? []).map(AndroidMediaStoreTrack.fromMap),
@@ -4811,6 +4977,211 @@ class _PlayerPageState extends State<PlayerPage>
           SnackBar(content: Text('Could not manage offline cache: $error')),
         );
       }
+    }
+  }
+
+  Future<void> _showAndroidBatteryControls() async {
+    if (!Platform.isAndroid) return;
+    const channel = MethodChannel('neonamp/power');
+    try {
+      final status = await channel.invokeMapMethod<String, dynamic>('status');
+      if (!mounted) return;
+      final ignoring = status?['ignoring'] == true;
+      final action = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Battery optimization'),
+          content: Text(
+            ignoring
+                ? 'NeonAmp is allowed to keep playback and controlled library scans running in the background.'
+                : 'Android may pause background playback or scans to save battery. You can allow NeonAmp to continue when the screen is off.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+            if (!ignoring)
+              FilledButton(
+                onPressed: () => Navigator.pop(context, 'request'),
+                child: const Text('Allow background activity'),
+              ),
+          ],
+        ),
+      );
+      if (action == 'request') await channel.invokeMethod<bool>('request');
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open battery settings: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showLibraryMaintenance() async {
+    final paths = _library.map((track) => track.path).toList(growable: false);
+    final statisticEntries = <LibraryStatisticEntry>[];
+    for (final path in paths) {
+      var bytes = 0;
+      if (!path.startsWith('http://') &&
+          !path.startsWith('https://') &&
+          !path.startsWith('content://') &&
+          !path.startsWith('file://')) {
+        try {
+          bytes = await File(path).length();
+        } on Object {
+          bytes = 0;
+        }
+      }
+      statisticEntries.add(LibraryStatisticEntry(path: path, bytes: bytes));
+    }
+    final statistics = buildLibraryStatistics(statisticEntries);
+    final existing = <String>{
+      for (final path in paths)
+        if (path.startsWith('http://') ||
+            path.startsWith('https://') ||
+            path.startsWith('content://') ||
+            path.startsWith('file://') ||
+            File(path).existsSync())
+          path,
+    };
+    final report = buildLibraryMaintenanceReport(
+      libraryPaths: paths,
+      existingPaths: existing,
+    );
+    final action = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Library maintenance'),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+            child: Text(
+              '${report.missingPaths.length} missing entr${report.missingPaths.length == 1 ? 'y' : 'ies'} · '
+              '${report.duplicatePaths.length} duplicate entr${report.duplicatePaths.length == 1 ? 'y' : 'ies'}',
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: report.missingPaths.isEmpty
+                ? null
+                : () => Navigator.pop(context, 'removeMissing'),
+            child: const Text('Remove missing files from library'),
+          ),
+          SimpleDialogOption(
+            onPressed: report.duplicatePaths.isEmpty
+                ? null
+                : () => Navigator.pop(context, 'removeDuplicates'),
+            child: const Text('Remove duplicate library entries'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'rescan'),
+            child: const Text('Rescan library folders'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'statistics'),
+            child: const Text('View folder statistics'),
+          ),
+        ],
+      ),
+    );
+    if (action == null || !mounted) return;
+    if (action == 'statistics') {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Library statistics'),
+          content: SizedBox(
+            width: 440,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${statistics.totalTracks} tracks · ${_formatBytes(statistics.totalBytes)} local audio',
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Folders', style: TextStyle(fontWeight: FontWeight.bold)),
+                  for (final entry in (statistics.tracksByFolder.entries.toList()
+                    ..sort((a, b) => b.value.compareTo(a.value))).take(12))
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(entry.key, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      trailing: Text('${entry.value}'),
+                    ),
+                  const SizedBox(height: 8),
+                  const Text('Formats', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    (statistics.tracksByExtension.entries.toList()
+                          ..sort((a, b) => b.value.compareTo(a.value)))
+                        .map((entry) => '${entry.key}: ${entry.value}')
+                        .join(' · '),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    if (action == 'rescan') {
+      await _rescanFolders();
+      return;
+    }
+    final removeMissing = action == 'removeMissing';
+    final removePaths = removeMissing
+        ? report.missingPaths.toSet()
+        : findDuplicateLibraryPaths(paths).toSet();
+    if (removePaths.isEmpty) return;
+    if (removeMissing && removePaths.contains(_current?.path)) {
+      await _stopCurrent();
+    }
+    setState(() {
+      if (removeMissing) {
+        _library.removeWhere((track) => removePaths.contains(track.path));
+        _queue.removeWhere((track) => removePaths.contains(track.path));
+        _bookmarks.removeWhere((track) => removePaths.contains(track.path));
+        _playHistory.removeWhere(removePaths.contains);
+        _playHistoryTimes.removeWhere((key, _) => removePaths.contains(key));
+        for (final playlist in _playlists.values) {
+          playlist.removeWhere(removePaths.contains);
+        }
+      } else {
+        final seenLibrary = <String>{};
+        _library.removeWhere(
+          (track) => removePaths.contains(track.path) && !seenLibrary.add(track.path),
+        );
+        final seenQueue = <String>{};
+        _queue.removeWhere(
+          (track) => removePaths.contains(track.path) && !seenQueue.add(track.path),
+        );
+        for (final playlist in _playlists.values) {
+          final seenPlaylist = <String>{};
+          playlist.removeWhere(
+            (path) => removePaths.contains(path) && !seenPlaylist.add(path),
+          );
+        }
+      }
+      if (_queue.isEmpty) {
+        _selected = 0;
+      } else if (_selected >= _queue.length) {
+        _selected = _queue.length - 1;
+      }
+    });
+    await _saveQueue();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed ${removePaths.length} library entr${removePaths.length == 1 ? 'y' : 'ies'}.')),
+      );
     }
   }
 
@@ -4938,16 +5309,16 @@ class _PlayerPageState extends State<PlayerPage>
     return files.length;
   }
 
-  Future<void> _rescanFolders() async {
+  Future<void> _rescanFolders({bool silent = false}) async {
     if (_libraryFolders.isEmpty) {
-      await _addFolder();
+      if (!silent) await _addFolder();
       return;
     }
     if (Platform.isAndroid) {
       final oldFilesystemFolders = _libraryFolders
           .where((folder) => Uri.tryParse(folder)?.scheme != 'content')
           .toList();
-      if (oldFilesystemFolders.isNotEmpty) {
+      if (oldFilesystemFolders.isNotEmpty && !silent) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -4990,19 +5361,25 @@ class _PlayerPageState extends State<PlayerPage>
     }
     var found = 0;
     for (final folder in List<String>.from(_libraryFolders)) {
+      if (silent &&
+          Platform.isAndroid &&
+          Uri.tryParse(folder)?.scheme.toLowerCase() != 'content') {
+        continue;
+      }
       try {
         if (Platform.isAndroid || Directory(folder).existsSync()) {
           found += await _scanFolder(folder);
         }
       } on Object catch (error) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not rescan a library folder: $error')),
-        );
+        if (!silent && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not rescan a library folder: $error')),
+          );
+        }
       }
     }
     await _saveQueue();
-    if (mounted) {
+    if (!silent && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -5430,6 +5807,11 @@ class _PlayerPageState extends State<PlayerPage>
           ? readAiffId3Picture(containerId3!)?.$1
           : null;
       final artwork = embeddedArtwork ?? await findFolderArtwork(path);
+      final sidecarLyrics = metadata.lyrics == null &&
+              !isAiffAudioPath(path) &&
+              !isWavAudioPath(path)
+          ? await readSidecarLrc(path)
+          : null;
       return Track(
         path: path,
         name: metadata.title?.trim().isNotEmpty == true
@@ -5455,7 +5837,7 @@ class _PlayerPageState extends State<PlayerPage>
                 ? readAiffId3Lyrics(containerId3!)
                 : isWavAudioPath(path)
                 ? readWavId3Lyrics(containerId3!)
-                : null),
+                : sidecarLyrics),
         artwork: artwork,
         replayGainDb: replayGainDb,
       );
@@ -5466,6 +5848,19 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _select(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    final queuedTrack = _queue[index];
+    if (queuedTrack.customMetadata['networkProfileId'] != null) {
+      final materialized = await _materializeNetworkTrack(queuedTrack);
+      if (materialized == null || !mounted) return;
+      setState(() {
+        _queue[index] = materialized;
+        final libraryIndex = _library.indexWhere(
+          (track) => track.identityKey == queuedTrack.identityKey,
+        );
+        if (libraryIndex >= 0) _library[libraryIndex] = materialized;
+      });
+      await _saveQueue();
+    }
     final castDevice = _chromecastCast.device;
     final airplayDevice = _airplayCast.device;
     final castRenderer = _dlnaCast.renderer;
@@ -5478,9 +5873,7 @@ class _PlayerPageState extends State<PlayerPage>
         _position = Duration.zero;
         _cueTransitioning = false;
         final track = _queue[index];
-        _playHistory
-          ..clear()
-          ..addAll(addToPlayHistory(_playHistory, track.identityKey));
+        _recordHistory(track);
         final libraryIndex = _library.indexWhere(
           (item) => item.identityKey == track.identityKey,
         );
@@ -6043,9 +6436,7 @@ class _PlayerPageState extends State<PlayerPage>
       _position = Duration.zero;
       _duration = duration;
       _playerState = PlayerState.playing;
-      _playHistory
-        ..clear()
-        ..addAll(addToPlayHistory(_playHistory, track.path));
+      _recordHistory(track);
       final libraryIndex = _library.indexWhere(
         (item) => item.path == track.path,
       );
@@ -7638,6 +8029,97 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<ArtworkTransformOptions?> _chooseArtworkTransform(
+    Uint8List bytes,
+  ) async {
+    var cropToSquare = true;
+    var maxDimension = 1024.0;
+    return showDialog<ArtworkTransformOptions>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Prepare cover art'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: 280,
+                    maxHeight: 220,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.memory(
+                      bytes,
+                      fit: cropToSquare ? BoxFit.cover : BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) => const Icon(
+                        Icons.broken_image_outlined,
+                        size: 72,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Crop to square'),
+                  subtitle: const Text('Center the artwork before resizing'),
+                  value: cropToSquare,
+                  onChanged: (value) =>
+                      setDialogState(() => cropToSquare = value),
+                ),
+                Row(
+                  children: [
+                    const Text('Max size'),
+                    const Spacer(),
+                    Text('${maxDimension.round()} px'),
+                  ],
+                ),
+                Slider(
+                  min: 256,
+                  max: 2048,
+                  divisions: 7,
+                  value: maxDimension,
+                  label: '${maxDimension.round()} px',
+                  onChanged: (value) =>
+                      setDialogState(() => maxDimension = value),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(
+                context,
+                const ArtworkTransformOptions(
+                  maxDimension: 1024,
+                  cropToSquare: false,
+                  useOriginal: true,
+                ),
+              ),
+              child: const Text('Use original'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(
+                context,
+                ArtworkTransformOptions(
+                  maxDimension: maxDimension.round(),
+                  cropToSquare: cropToSquare,
+                ),
+              ),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _replaceArtwork(Track track) async {
     if (track.path.startsWith('http')) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -7647,17 +8129,93 @@ class _PlayerPageState extends State<PlayerPage>
       );
       return;
     }
-    final result = await FilePicker.pickFiles(type: FileType.image);
-    if (result.isEmpty || result.first.path == null) return;
-    final imageFile = File(result.first.path!);
-    final bytes = await imageFile.readAsBytes();
-    if (bytes.isEmpty) return;
-    final extension = imageFile.path.split('.').last.toLowerCase();
-    final mimeType = switch (extension) {
-      'png' => 'image/png',
-      'webp' => 'image/webp',
-      _ => 'image/jpeg',
-    };
+    final source = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Choose cover art'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'file'),
+            child: const Text('Choose image file'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'url'),
+            child: const Text('Download from URL'),
+          ),
+        ],
+      ),
+    );
+    if (source == null || !mounted) return;
+    Uint8List bytes;
+    String mimeType;
+    try {
+      if (source == 'url') {
+        final controller = TextEditingController();
+        final url = await showDialog<String>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Download cover art'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(hintText: 'https://example.com/cover.jpg'),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, controller.text),
+                child: const Text('Download'),
+              ),
+            ],
+          ),
+        );
+        controller.dispose();
+        if (url == null || url.trim().isEmpty) return;
+        final downloaded = await downloadArtworkImage(url);
+        bytes = downloaded.bytes;
+        mimeType = downloaded.mimeType;
+      } else {
+        final result = await FilePicker.pickFiles(type: FileType.image);
+        if (result.isEmpty || result.first.path == null) return;
+        final imageFile = File(result.first.path!);
+        bytes = await imageFile.readAsBytes();
+        if (bytes.isEmpty) return;
+        final extension = imageFile.path.split('.').last.toLowerCase();
+        mimeType = switch (extension) {
+          'png' => 'image/png',
+          'webp' => 'image/webp',
+          'gif' => 'image/gif',
+          _ => 'image/jpeg',
+        };
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load cover art: $error')),
+        );
+      }
+      return;
+    }
+    try {
+      final options = await _chooseArtworkTransform(bytes);
+      if (options == null) return;
+      if (!options.useOriginal) {
+        final transformed = await transformArtwork(bytes, options: options);
+        bytes = transformed.bytes;
+        mimeType = transformed.mimeType;
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not prepare cover art: $error')),
+        );
+      }
+      return;
+    }
     try {
       if (isAiffAudioPath(track.path) || isWavAudioPath(track.path)) {
         final writer = isWavAudioPath(track.path)
@@ -8649,6 +9207,23 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<String> _readEqOutputProfileKey() async {
+    if (!Platform.isAndroid) return 'desktop-default';
+    try {
+      final raw = await const MethodChannel('neonamp/output')
+          .invokeMethod<Object?>('getStatus');
+      if (raw is Map) {
+        return audioOutputProfileKey(
+          routeName: raw['routeName'] as String?,
+          routeType: raw['routeType'] as String?,
+        );
+      }
+    } on Object {
+      // Fall back to the shared profile when the output channel is unavailable.
+    }
+    return 'default';
+  }
+
   Future<void> _showPluginManager() async {
     await showDialog<void>(
       context: context,
@@ -8749,6 +9324,47 @@ class _PlayerPageState extends State<PlayerPage>
       ),
     );
     if (selected != null) widget.onThemeChanged?.call(selected);
+  }
+
+  Future<void> _showDisplayScale() async {
+    var scale = widget.textScale;
+    final selected = await showDialog<double>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Display size'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('${(scale * 100).round()}%'),
+              Slider(
+                value: scale,
+                min: 0.85,
+                max: 1.3,
+                divisions: 9,
+                label: '${(scale * 100).round()}%',
+                onChanged: (value) => setDialogState(() => scale = value),
+              ),
+              const Text(
+                'Adjust text and control sizing without changing audio behavior.',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, scale),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null) widget.onTextScaleChanged?.call(selected);
   }
 
   Future<void> _showLyrics(Track track) async {
@@ -8868,6 +9484,38 @@ class _PlayerPageState extends State<PlayerPage>
     final endController = TextEditingController(
       text: (duration.inMilliseconds / 1000).toStringAsFixed(3),
     );
+    Future<String> renderTrimClip() async {
+      final start = double.tryParse(startController.text.trim());
+      final end = double.tryParse(endController.text.trim());
+      final range = start == null || end == null
+          ? null
+          : (
+              start: Duration(microseconds: (start * 1000000).round()),
+              end: Duration(microseconds: (end * 1000000).round()),
+            );
+      if (range == null || !isValidTrimRange(range.start, range.end, duration)) {
+        throw const FormatException('Enter a valid range within the track.');
+      }
+      final outputPath =
+          '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'neonamp-clip-${DateTime.now().microsecondsSinceEpoch}.wav';
+      final session = await FFmpegKit.executeWithArguments(
+        buildAudioTrimArguments(
+          inputPath: track.path,
+          outputPath: outputPath,
+          start: range.start,
+          end: range.end,
+        ),
+      );
+      final returnCode = await session.getReturnCode();
+      final output = File(outputPath);
+      if (!ReturnCode.isSuccess(returnCode) ||
+          !await output.exists() ||
+          await output.length() <= 44) {
+        throw StateError('Could not export the selected audio range.');
+      }
+      return outputPath;
+    }
     try {
       await showDialog<void>(
         context: context,
@@ -8952,6 +9600,44 @@ class _PlayerPageState extends State<PlayerPage>
               },
               child: const Text('Export WAV'),
             ),
+            if (Platform.isAndroid)
+              OutlinedButton(
+                onPressed: () async {
+                  String? outputPath;
+                  try {
+                    final renderedPath = await renderTrimClip();
+                    outputPath = renderedPath;
+                    final source = File(renderedPath);
+                    final exported = await const MethodChannel('neonamp/library')
+                        .invokeMapMethod<String, dynamic>('exportRingtone', {
+                          'sourcePath': source.path,
+                          'name': '${track.name}-clip.wav',
+                          'kind': 'ringtone',
+                        });
+                    if (!dialogContext.mounted) return;
+                    Navigator.pop(dialogContext);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Saved ${exported?['name'] ?? 'clip'} to Android Ringtones.',
+                        ),
+                      ),
+                    );
+                  } on Object catch (error) {
+                    if (dialogContext.mounted) {
+                      ScaffoldMessenger.of(dialogContext).showSnackBar(
+                        SnackBar(content: Text('Could not save ringtone: $error')),
+                      );
+                    }
+                  } finally {
+                    if (outputPath != null) {
+                      final output = File(outputPath!);
+                      if (await output.exists()) await output.delete();
+                    }
+                  }
+                },
+                child: const Text('Save as ringtone'),
+              ),
           ],
         ),
       );
@@ -9405,6 +10091,175 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  Future<void> _showNetworkLibraries() async {
+    final saved = _networkProfiles.firstOrNull;
+    final name = TextEditingController(text: saved?.name ?? 'NAS music');
+    final host = TextEditingController(text: saved?.host ?? '');
+    final root = TextEditingController(text: saved?.root ?? '');
+    final username = TextEditingController(text: saved?.username ?? '');
+    final password = TextEditingController(text: saved?.password ?? '');
+    var kind = saved?.kind ?? 'smb';
+    var entries = <NetworkLibraryEntry>[];
+    var loading = false;
+    var error = '';
+
+    Future<void> browse(StateSetter setDialogState) async {
+      final profile = NetworkLibraryProfile(
+        id: saved?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        name: name.text.trim().isEmpty ? 'NAS music' : name.text.trim(),
+        kind: kind,
+        host: host.text.trim(),
+        root: root.text.trim(),
+        username: username.text.trim(),
+        password: password.text,
+      );
+      setDialogState(() {
+        loading = true;
+        error = '';
+      });
+      try {
+        final found = await NetworkLibraryClient().listRecursive(profile);
+        if (!mounted) return;
+        setState(() {
+          _networkProfiles
+            ..removeWhere((item) => item.id == profile.id)
+            ..add(profile);
+        });
+        await _saveQueue();
+        setDialogState(() => entries = found);
+      } on Object catch (caught) {
+        setDialogState(() => error = caught.toString());
+      } finally {
+        setDialogState(() => loading = false);
+      }
+    }
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('SMB / NFS network library'),
+            content: SizedBox(
+              width: 560,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: kind,
+                    decoration: const InputDecoration(labelText: 'Protocol'),
+                    items: const [
+                      DropdownMenuItem(value: 'smb', child: Text('SMB 2/3 share')),
+                      DropdownMenuItem(value: 'nfs', child: Text('NFS export')),
+                    ],
+                    onChanged: (value) => setDialogState(() => kind = value ?? 'smb'),
+                  ),
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(labelText: 'Library name'),
+                  ),
+                  TextField(
+                    controller: host,
+                    decoration: const InputDecoration(labelText: 'Server hostname or IP'),
+                  ),
+                  TextField(
+                    controller: root,
+                    decoration: InputDecoration(
+                      labelText: kind == 'smb'
+                          ? 'Share[/optional/subfolder]'
+                          : 'NFS export path',
+                    ),
+                  ),
+                  if (kind == 'smb')
+                    TextField(
+                      controller: username,
+                      decoration: const InputDecoration(labelText: 'Username (optional)'),
+                    ),
+                  if (kind == 'smb')
+                    TextField(
+                      controller: password,
+                      obscureText: true,
+                      decoration: const InputDecoration(labelText: 'Password (optional)'),
+                    ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Audio is discovered recursively and added to the library only. Files are downloaded to the local cache only when played.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    onPressed: loading ? null : () => browse(setDialogState),
+                    icon: const Icon(Icons.folder_open),
+                    label: const Text('Browse library'),
+                  ),
+                  if (loading) const LinearProgressIndicator(),
+                  if (error.isNotEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(error, style: const TextStyle(color: Colors.redAccent)),
+                    ),
+                  if (entries.isNotEmpty)
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: entries.length,
+                        itemBuilder: (context, index) {
+                          final entry = entries[index];
+                          final track = Track(
+                            path: Uri(
+                              scheme: kind,
+                              host: host.text.trim(),
+                              path: '/${root.text.trim()}/${entry.relativePath}',
+                            ).toString(),
+                            name: entry.name,
+                            artist: kind.toUpperCase(),
+                            customMetadata: {
+                              'networkProfileId': saved?.id ?? _networkProfiles.last.id,
+                              'networkRelativePath': entry.relativePath,
+                            },
+                          );
+                          return ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.cloud_queue),
+                            title: Text(entry.name),
+                            subtitle: Text(_formatBytes(entry.size)),
+                            trailing: IconButton(
+                              tooltip: 'Add to library',
+                              icon: const Icon(Icons.library_add_outlined),
+                              onPressed: () async {
+                                if (_library.any((item) => item.path == track.path)) return;
+                                setState(() => _library.add(track));
+                                await _saveQueue();
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Done'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      name.dispose();
+      host.dispose();
+      root.dispose();
+      username.dispose();
+      password.dispose();
+    }
+  }
+
   Future<void> _showMediaServers() async {
     final saved = _mediaServerProfiles.firstOrNull;
     var kind = saved?.kind ?? 'subsonic';
@@ -9824,6 +10679,28 @@ class _PlayerPageState extends State<PlayerPage>
                   setDialogState(() {});
                 },
               ),
+              if (Platform.isAndroid)
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Background library scan'),
+                  subtitle: const Text(
+                    'Rescan saved folders when NeonAmp returns to the foreground',
+                  ),
+                  value: _backgroundScanEnabled,
+                  onChanged: (value) {
+                    setState(() => _backgroundScanEnabled = value);
+                    unawaited(_saveQueue());
+                    setDialogState(() {});
+                  },
+                ),
+              if (Platform.isAndroid)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Battery optimization'),
+                  subtitle: const Text('Allow reliable background playback and scans'),
+                  trailing: const Icon(Icons.battery_saver_outlined),
+                  onTap: _showAndroidBatteryControls,
+                ),
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('True-peak limiter'),
@@ -10064,8 +10941,26 @@ class _PlayerPageState extends State<PlayerPage>
     }
     final customPresets = {...pluginPresets, ..._customEqPresets};
     final presets = [...builtInEqualizerPresets.keys, ...customPresets.keys];
-    final selectedPreset = presets.contains(_eqPreset) ? _eqPreset : 'Flat';
+    _eqOutputProfileKey = await _readEqOutputProfileKey();
+    final routePreset = _deviceEqPresets[_eqOutputProfileKey];
+    final selectedPreset = presets.contains(routePreset)
+        ? routePreset!
+        : (presets.contains(_eqPreset) ? _eqPreset : 'Flat');
     if (_eqPreset != selectedPreset) _eqPreset = selectedPreset;
+    if (routePreset != null && routePreset == selectedPreset) {
+      _eqFrequencies
+        ..clear()
+        ..addAll(_customEqFrequencies[selectedPreset] ?? autoEqCenterFrequencies);
+      _eqQ = _customEqQ[selectedPreset] ?? 1.0;
+      _eqBands.setAll(
+        0,
+        equalizerPresetBands(
+          selectedPreset,
+          pluginPresets: customPresets,
+          bandCount: _eqBands.length,
+        ),
+      );
+    }
     await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -10076,7 +10971,16 @@ class _PlayerPageState extends State<PlayerPage>
               MediaQuery.sizeOf(this.context).width - 24.0,
             ),
           ),
-          title: const Text('10-band equalizer'),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('10-band equalizer'),
+              Text(
+                'Output profile: $_eqOutputProfileKey',
+                style: const TextStyle(fontSize: 11, color: Colors.white54),
+              ),
+            ],
+          ),
           content: SizedBox(
             width: math.min(
               560.0,
@@ -10127,6 +11031,7 @@ class _PlayerPageState extends State<PlayerPage>
                             if (value == null) return;
                             setState(() {
                               _eqPreset = value;
+                              _deviceEqPresets[_eqOutputProfileKey] = value;
                               _eqFrequencies
                                 ..clear()
                                 ..addAll(
@@ -11278,6 +12183,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'visuals') _showVisualizer();
               if (value == 'settings') _showSettings();
               if (value == 'rescan') _rescanFolders();
+              if (value == 'maintenance') _showLibraryMaintenance();
               if (value == 'import') _importPlaylist();
               if (value == 'importItunes') _importItunesLibrary();
               if (value == 'exportItunes') _exportItunesLibrary();
@@ -11294,6 +12200,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'convolution') _chooseConvolutionImpulse();
               if (value == 'servers') _showMediaServers();
               if (value == 'webdav') _showWebDavLibraries();
+              if (value == 'networkLibraries') _showNetworkLibraries();
               if (value == 'savedQueues') _showQueueSnapshots();
               if (value == 'scrobble') _showScrobblingSettings();
               if (value == 'autoEq') _importAutoEqProfile();
@@ -11304,6 +12211,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'controller') _showControllerSettings();
               if (value == 'formatInfo') _showAudioFormatInfo();
               if (value == 'theme') _showThemePicker();
+              if (value == 'displayScale') _showDisplayScale();
               if (value == 'importSkin') _importSkin();
               if (value == 'midiSoundFont') _importMidiSoundFont();
               if (value == 'plugins') _showPluginManager();
@@ -11344,6 +12252,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(
                 value: 'rescan',
                 child: Text('Rescan library folders'),
+              ),
+              const PopupMenuItem(
+                value: 'maintenance',
+                child: Text('Library maintenance'),
               ),
               PopupMenuItem(
                 value: 'import',
@@ -11404,6 +12316,10 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('Audio format diagnostics'),
               ),
               PopupMenuItem(value: 'theme', child: Text('Choose skin')),
+              const PopupMenuItem(
+                value: 'displayScale',
+                child: Text('Adjust display size'),
+              ),
               PopupMenuItem(
                 value: 'importSkin',
                 child: Text('Import skin package'),
@@ -11448,6 +12364,10 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'convolution', child: Text('Convolution impulse response')),
               PopupMenuItem(value: 'servers', child: Text('Remote media servers')),
               PopupMenuItem(value: 'webdav', child: Text('WebDAV network library')),
+              const PopupMenuItem(
+                value: 'networkLibraries',
+                child: Text('SMB / NFS network library'),
+              ),
               PopupMenuItem(value: 'savedQueues', child: Text('Saved queues')),
               PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],
@@ -11831,19 +12751,85 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Track _historyTrack(String identity) {
+    final queued = _queue.where((item) => item.identityKey == identity).firstOrNull;
+    if (queued != null) return queued;
+    final library = _library.where((item) => item.identityKey == identity).firstOrNull;
+    if (library != null) return library;
+    return Track(
+      path: identity,
+      name: identity.split(RegExp(r'[/\\]')).last,
+    );
+  }
+
+  Future<void> _exportPlayHistory() async {
+    if (_playHistory.isEmpty) return;
+    final format = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Export listening history'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'json'),
+            child: const Text('JSON (portable backup)'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'csv'),
+            child: const Text('CSV (spreadsheet)')
+          ),
+        ],
+      ),
+    );
+    if (format == null || !mounted) return;
+    final entries = <Map<String, Object?>>[];
+    for (final identity in _playHistory) {
+      final track = _historyTrack(identity);
+      entries.add({
+        'playedAt': _playHistoryTimes[identity],
+        'title': track.name,
+        'artist': track.artist,
+        'album': track.album,
+        'path': track.path,
+      });
+    }
+    final isJson = format == 'json';
+    await FilePicker.saveFile(
+      fileName: isJson ? 'neonamp-play-history.json' : 'neonamp-play-history.csv',
+      bytes: Uint8List.fromList(
+        utf8.encode(isJson ? encodePlayHistoryJson(entries) : encodePlayHistoryCsv(entries)),
+      ),
+      mimeType: isJson ? 'application/json' : 'text/csv',
+      type: FileType.custom,
+      allowedExtensions: [isJson ? 'json' : 'csv'],
+    );
+  }
+
   Widget _historyView() {
     if (_playHistory.isEmpty) return _emptyQueue();
     return Column(
       children: [
         Align(
           alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            onPressed: () async {
-              setState(_playHistory.clear);
-              await _saveQueue();
-            },
-            icon: const Icon(Icons.delete_sweep_outlined, size: 16),
-            label: const Text('Clear history'),
+          child: Wrap(
+            spacing: 4,
+            children: [
+              TextButton.icon(
+                onPressed: _exportPlayHistory,
+                icon: const Icon(Icons.file_download_outlined, size: 16),
+                label: const Text('Export'),
+              ),
+              TextButton.icon(
+                onPressed: () async {
+                  setState(() {
+                    _playHistory.clear();
+                    _playHistoryTimes.clear();
+                  });
+                  await _saveQueue();
+                },
+                icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                label: const Text('Clear history'),
+              ),
+            ],
           ),
         ),
         Expanded(

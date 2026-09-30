@@ -3,6 +3,7 @@ package com.neonamp.neonamp
 import android.Manifest
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -25,6 +26,9 @@ import android.content.ContentUris
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.PowerManager
+import android.provider.Settings
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import java.io.File
@@ -44,9 +48,11 @@ class MainActivity : AudioServiceActivity() {
     private val libraryChannel = "neonamp/library"
     private val nearbyPermissionRequest = 4021
     private val folderPickerRequest = 4022
+    private val mediaPermissionRequest = 4024
     private var multicastLock: WifiManager.MulticastLock? = null
     private var nearbyPermissionResult: MethodChannel.Result? = null
     private var folderPickerResult: MethodChannel.Result? = null
+    private var mediaPermissionResult: MethodChannel.Result? = null
     private var audioCdResult: MethodChannel.Result? = null
     private var usbTag = 1
     private val pendingExternalValues = mutableListOf<Pair<String, String?>>()
@@ -184,6 +190,7 @@ class MainActivity : AudioServiceActivity() {
                             }
                         }.start()
                     }
+                    "requestMediaPermission" -> requestMediaPermission(result)
                     "copyFileToFolder" -> {
                         val folderUri = call.argument<String>("uri")
                         val sourcePath = call.argument<String>("sourcePath")
@@ -258,6 +265,29 @@ class MainActivity : AudioServiceActivity() {
                             }.start()
                         }
                     }
+                    "exportRingtone" -> {
+                        val sourcePath = call.argument<String>("sourcePath")
+                        val requestedName = call.argument<String>("name")
+                        val kind = call.argument<String>("kind") ?: "ringtone"
+                        if (sourcePath.isNullOrBlank() || requestedName.isNullOrBlank()) {
+                            result.error("invalid_arguments", "A source file and name are required.", null)
+                        } else {
+                            Thread {
+                                try {
+                                    val exported = exportAudioToMediaStore(
+                                        sourcePath,
+                                        requestedName,
+                                        kind,
+                                    )
+                                    runOnUiThread { result.success(exported) }
+                                } catch (error: Throwable) {
+                                    runOnUiThread {
+                                        result.error("media_store_export_failed", error.message, null)
+                                    }
+                                }
+                            }.start()
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -274,7 +304,7 @@ class MainActivity : AudioServiceActivity() {
                     return@setMethodCallHandler
                 }
                 Thread {
-                    val converted = try {
+                    val converted: Boolean = try {
                         transcodeToM4a(inputPath, outputPath)
                     } catch (_: Throwable) {
                         false
@@ -332,6 +362,40 @@ class MainActivity : AudioServiceActivity() {
                         "formatKnown" to (sampleRate != null),
                     ),
                 )
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/power")
+            .setMethodCallHandler { call, result ->
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                    result.success(mapOf("supported" to false, "ignoring" to true))
+                    return@setMethodCallHandler
+                }
+                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                when (call.method) {
+                    "status" -> result.success(
+                        mapOf(
+                            "supported" to true,
+                            "ignoring" to powerManager.isIgnoringBatteryOptimizations(packageName),
+                        ),
+                    )
+                    "request" -> {
+                        if (powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                            result.success(true)
+                        } else {
+                            try {
+                                startActivity(
+                                    Intent(
+                                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                        Uri.parse("package:$packageName"),
+                                    ),
+                                )
+                                result.success(true)
+                            } catch (error: Throwable) {
+                                result.error("battery_settings_failed", error.message, null)
+                            }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neonamp/system_controls")
             .setMethodCallHandler { call, result ->
@@ -394,6 +458,64 @@ class MainActivity : AudioServiceActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun exportAudioToMediaStore(
+        sourcePath: String,
+        requestedName: String,
+        kind: String,
+    ): Map<String, String> {
+        val source = File(sourcePath)
+        require(source.isFile && source.length() > 44) { "The exported audio clip is empty." }
+        val normalizedKind = kind.lowercase(Locale.ROOT).let {
+            if (it == "notification" || it == "alarm") it else "ringtone"
+        }
+        val directory = when (normalizedKind) {
+            "notification" -> Environment.DIRECTORY_NOTIFICATIONS
+            "alarm" -> Environment.DIRECTORY_ALARMS
+            else -> Environment.DIRECTORY_RINGTONES
+        }
+        val baseName = requestedName.substringBeforeLast('.', requestedName)
+            .trim()
+            .ifBlank { "NeonAmp clip" }
+        val displayName = if (baseName.lowercase(Locale.ROOT).endsWith(".wav")) {
+            baseName
+        } else {
+            "$baseName.wav"
+        }
+        val resolver = contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
+            put(MediaStore.Audio.Media.IS_RINGTONE, normalizedKind == "ringtone")
+            put(MediaStore.Audio.Media.IS_NOTIFICATION, normalizedKind == "notification")
+            put(MediaStore.Audio.Media.IS_ALARM, normalizedKind == "alarm")
+            put(MediaStore.Audio.Media.IS_MUSIC, false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Audio.Media.RELATIVE_PATH, "$directory/NeonAmp")
+                put(MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+        }
+        val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+            ?: error("Android did not provide a media-store destination.")
+        try {
+            resolver.openOutputStream(uri, "w").use { output ->
+                requireNotNull(output) { "Android could not open the media-store destination." }
+                source.inputStream().use { input -> input.copyTo(output) }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                resolver.update(
+                    uri,
+                    ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) },
+                    null,
+                    null,
+                )
+            }
+            return mapOf("uri" to uri.toString(), "name" to displayName)
+        } catch (error: Throwable) {
+            resolver.delete(uri, null, null)
+            throw error
+        }
     }
 
     private fun enqueueExternalIntent(intent: Intent?) {
@@ -1018,16 +1140,44 @@ class MainActivity : AudioServiceActivity() {
         result.success(true)
     }
 
+    private fun requestMediaPermission(result: MethodChannel.Result) {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            @Suppress("DEPRECATION")
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(true)
+            return
+        }
+        if (mediaPermissionResult != null) {
+            result.error("permission_busy", "An audio permission request is already pending.", null)
+            return
+        }
+        mediaPermissionResult = result
+        requestPermissions(arrayOf(permission), mediaPermissionRequest)
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != nearbyPermissionRequest) return
-        val result = nearbyPermissionResult ?: return
-        nearbyPermissionResult = null
-        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            acquireMulticastLock()
-            result.success(true)
-        } else {
-            result.success(false)
+        if (requestCode == mediaPermissionRequest) {
+            val result = mediaPermissionResult ?: return
+            mediaPermissionResult = null
+            result.success(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+            return
+        }
+        if (requestCode == nearbyPermissionRequest) {
+            val result = nearbyPermissionResult ?: return
+            nearbyPermissionResult = null
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                acquireMulticastLock()
+                result.success(true)
+            } else {
+                result.success(false)
+            }
         }
     }
 

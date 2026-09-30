@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math' as math;
 
 class LrcLine {
@@ -54,6 +55,19 @@ int activeLrcLine(List<LrcLine> lines, Duration position) {
 }
 
 bool hasLrcTimestamps(String text) => parseLrcLyrics(text).isNotEmpty;
+
+Future<String?> readSidecarLrc(String audioPath) async {
+  final dot = audioPath.lastIndexOf('.');
+  if (dot <= 0) return null;
+  final file = File('${audioPath.substring(0, dot)}.lrc');
+  if (!await file.exists()) return null;
+  try {
+    final text = await file.readAsString();
+    return hasLrcTimestamps(text) ? text : null;
+  } on Object {
+    return null;
+  }
+}
 
 double lrcScrollOffset(int index, double rowExtent, double viewportExtent) =>
     math.max(0, index * rowExtent - viewportExtent / 2 + rowExtent / 2);

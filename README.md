@@ -23,9 +23,11 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Add HTTP audio streams and online radio URLs.
 - Discover DLNA/UPnP network players and cast local audio or HTTP(S) streams from Windows or Android; local files are served temporarily over the LAN, so both devices must be able to communicate on the same network.
 - Browse a WebDAV music folder recursively and add discovered audio to the library without implicitly queueing it.
+- Browse SMB 2/3 shares and NFS exports recursively; discovered tracks stay library-only and are cached locally only when played.
 - Discover AirPlay receivers and cast compatible local audio or HTTP(S) streams from Windows or Android.
 - Search the Radio Browser and SHOUTcast internet-radio directories, merge duplicate streams, compare station metadata, save favorites, and play stations directly.
 - Choose from built-in Neon, Aurora, Amber, and Classic skins; the selection persists across launches.
+- Adjust display scale from 85% to 130%; the size preference persists across launches.
 - Import JSON skin packages on Windows or Android; imported skins persist across launches.
 - Import portable JSON plugin packages on Windows or Android; enablement, plugin-provided 10-band equalizer presets, and native bass-boost/echo/reverb effects persist across launches.
 - Sync local library tracks to a user-selected device folder on Windows or Android with collision-safe names and an M3U8 manifest.
@@ -39,6 +41,8 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - Persistent Bookmarks view for quick access to local tracks, CUE tracks, and radio streams.
 - A–B loop points can be set from the current playback position, persisted, and enforced across native, DSP, and MIDI playback.
 - Adding files or folders updates the library without silently changing the playback queue.
+- Library maintenance removes missing files and duplicate path entries across the library, queue, playlists, bookmarks, and history.
+- Trim a local track to a WAV snippet, or save the clip directly to Android Ringtones.
 - Save and restore named queue snapshots without disturbing the library.
 - Export and import a versioned JSON backup containing library, queue, playlists, settings, resume positions, and folder-permission metadata.
 - Reorder queued tracks, remove individual tracks, or clear the queue.
@@ -48,6 +52,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
 - NeonAmp ships with a bundled FluidR3 GM SoundFont, so MIDI/KAR playback uses the shared Windows/Android DSP engine, including equalizer, balance, speed, seek, and volume controls. The MIDI SoundFont menu can still replace it with a user-selected SF2 file.
 - Media library with search, favorites, five-star ratings, play counts, album/artist/genre fields, and editable year, track/disc numbers, and lyrics.
 - View embedded lyrics directly from library tracks.
+- Timestamped `.lrc` files beside local tracks are loaded automatically for synchronized lyrics.
 - Metadata editing now verifies that supported embedded tags were written successfully, including core Vorbis tags in OGG and Opus files; APE, AIFF, and common container extensions are included in folder scans.
 - Metadata editing also writes common ID3 fields and lyrics into AIFF/AIFC files.
 - WMA/ASF tags support common fields, lyrics, and cover art while retaining unknown metadata and encoded media data.
