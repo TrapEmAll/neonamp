@@ -299,7 +299,21 @@ class MainActivity : AudioServiceActivity() {
                 } else {
                     null
                 }
-                val routeType = outputDevice?.let { AudioDeviceInfo.typeToString(it.type) }
+                val routeType = outputDevice?.type?.let { type ->
+                    when (type) {
+                        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth A2DP"
+                        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth SCO"
+                        AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE headset"
+                        AudioDeviceInfo.TYPE_USB_DEVICE -> "USB device"
+                        AudioDeviceInfo.TYPE_USB_HEADSET -> "USB headset"
+                        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Built-in speaker"
+                        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "Built-in earpiece"
+                        AudioDeviceInfo.TYPE_HDMI,
+                        AudioDeviceInfo.TYPE_HDMI_EARC,
+                        -> "HDMI"
+                        else -> "Audio device $type"
+                    }
+                }
                 val routeName = outputDevice?.productName?.toString()?.takeIf { it.isNotBlank() }
                 val latencyMs = if (sampleRate != null && sampleRate > 0 && bufferFrames != null) {
                     bufferFrames * 1000.0 / sampleRate
