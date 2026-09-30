@@ -2170,11 +2170,12 @@ class _MuteIntent extends Intent {
 }
 
 class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
-  NeonAudioHandler(this.player) {
+  NeonAudioHandler(this.player, {this.remoteUrlResolver}) {
     _bindPlayerStreams();
   }
 
   AudioPlayer player;
+  final String Function(Track track)? remoteUrlResolver;
   Future<void> Function()? onNext;
   Future<void> Function()? onPrevious;
   Future<void> Function()? onPlayRequested;
@@ -2236,7 +2237,7 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     unawaited(_updateAndroidWidget(track: track, playing: true));
     await player.play(
       track.path.startsWith('http')
-          ? UrlSource(_webDavPlaybackUrl(track))
+          ? UrlSource(remoteUrlResolver?.call(track) ?? track.path)
           : DeviceFileSource(track.path),
     );
     await player.setPlaybackRate(_playbackSpeed);
@@ -3066,7 +3067,10 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _initializeAudioService() async {
     if (!Platform.isAndroid) return;
     _audioHandler = await AudioService.init(
-      builder: () => NeonAudioHandler(_player),
+      builder: () => NeonAudioHandler(
+        _player,
+        remoteUrlResolver: _webDavPlaybackUrl,
+      ),
       config: AudioServiceConfig(
         androidNotificationChannelId: 'com.neonamp.audio',
         androidNotificationChannelName: 'NeonAmp playback',
