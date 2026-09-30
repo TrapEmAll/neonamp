@@ -2602,6 +2602,8 @@ class _PlayerPageState extends State<PlayerPage>
   final Map<String, List<String>> _playlists = {};
   final List<SmartPlaylist> _smartPlaylists = [];
   final Map<String, List<Track>> _savedQueueSnapshots = {};
+  final List<List<Track>> _queueHistory = [];
+  List<Track>? _lastSavedQueue;
   final Map<String, NeonAmpPlugin> _plugins = {};
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _controllerFocusNode = FocusNode();
@@ -4584,6 +4586,22 @@ class _PlayerPageState extends State<PlayerPage>
             }
           }
         }
+        final savedQueueHistory = settings['queueHistory'];
+        if (savedQueueHistory is List) {
+          for (final rawQueue in savedQueueHistory) {
+            if (rawQueue is! List) continue;
+            try {
+              _queueHistory.add(
+                rawQueue
+                    .whereType<Map>()
+                    .map((value) => Track.fromJson(Map<String, dynamic>.from(value)))
+                    .toList(),
+              );
+            } on Object catch (error) {
+              debugPrint('Skipping invalid queue history entry: $error');
+            }
+          }
+        }
         final savedScrobble = settings['scrobbleProfile'];
         if (savedScrobble is Map) {
           final profile = ScrobbleProfile.fromJson(Map<String, dynamic>.from(savedScrobble));
@@ -4629,11 +4647,26 @@ class _PlayerPageState extends State<PlayerPage>
         }
       }
     });
+    _lastSavedQueue = List<Track>.from(_queue);
     _armSleepTimer();
     if (_remoteEnabled) unawaited(_setRemoteEnabled(true));
   }
 
   Future<void> _saveQueue() async {
+    final currentQueue = List<Track>.from(_queue);
+    final previousQueue = _lastSavedQueue;
+    if (previousQueue != null &&
+        (previousQueue.length != currentQueue.length ||
+            previousQueue.asMap().entries.any(
+              (entry) =>
+                  entry.value.identityKey != currentQueue[entry.key].identityKey,
+            ))) {
+      if (previousQueue.isNotEmpty) {
+        _queueHistory.insert(0, List<Track>.from(previousQueue));
+        if (_queueHistory.length > 10) _queueHistory.removeLast();
+      }
+    }
+    _lastSavedQueue = currentQueue;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       'queueTracks',
@@ -4705,6 +4738,9 @@ class _PlayerPageState extends State<PlayerPage>
             tracks.map((track) => track.toJson()).toList(),
           ),
         ),
+        'queueHistory': _queueHistory
+            .map((tracks) => tracks.map((track) => track.toJson()).toList())
+            .toList(),
         'scrobbleProfile': ScrobbleProfile(
           token: _listenBrainzToken,
           enabled: _scrobblingEnabled,
@@ -8257,6 +8293,57 @@ class _PlayerPageState extends State<PlayerPage>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _showQueueHistory() async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Queue history'),
+        content: SizedBox(
+          width: 460,
+          child: _queueHistory.isEmpty
+              ? const Text('Queue history will appear after the queue changes.')
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _queueHistory.length,
+                  itemBuilder: (context, index) {
+                    final tracks = _queueHistory[index];
+                    return ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.history),
+                      title: Text('Previous queue ${index + 1}'),
+                      subtitle: Text('${tracks.length} tracks'),
+                      trailing: IconButton(
+                        tooltip: 'Restore queue',
+                        icon: const Icon(Icons.restore),
+                        onPressed: () async {
+                          setState(() {
+                            _queue
+                              ..clear()
+                              ..addAll(tracks);
+                            _selected = 0;
+                            _position = Duration.zero;
+                            _playerState = PlayerState.stopped;
+                          });
+                          await _saveQueue();
+                          if (dialogContext.mounted) {
+                            Navigator.pop(dialogContext);
+                          }
+                        },
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }
@@ -12353,6 +12440,7 @@ class _PlayerPageState extends State<PlayerPage>
               if (value == 'webdav') _showWebDavLibraries();
               if (value == 'networkLibraries') _showNetworkLibraries();
               if (value == 'savedQueues') _showQueueSnapshots();
+              if (value == 'queueHistory') _showQueueHistory();
               if (value == 'scrobble') _showScrobblingSettings();
               if (value == 'autoEq') _importAutoEqProfile();
               if (value == 'abx') _showAbxTest();
@@ -12520,6 +12608,7 @@ class _PlayerPageState extends State<PlayerPage>
                 child: Text('SMB / NFS network library'),
               ),
               PopupMenuItem(value: 'savedQueues', child: Text('Saved queues')),
+              PopupMenuItem(value: 'queueHistory', child: Text('Queue history')),
               PopupMenuItem(value: 'scrobble', child: Text('ListenBrainz scrobbling')),
             ],
           ),
