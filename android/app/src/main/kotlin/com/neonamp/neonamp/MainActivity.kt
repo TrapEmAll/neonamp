@@ -19,6 +19,8 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.provider.MediaStore
+import android.content.ContentUris
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
@@ -138,6 +140,18 @@ class MainActivity : AudioServiceActivity() {
                                 }
                             }.start()
                         }
+                    }
+                    "scanMediaStore" -> {
+                        Thread {
+                            try {
+                                val files = scanMediaStore()
+                                runOnUiThread { result.success(files) }
+                            } catch (error: Throwable) {
+                                runOnUiThread {
+                                    result.error("media_store_scan_failed", error.message, null)
+                                }
+                            }
+                        }.start()
                     }
                     "copyFileToFolder" -> {
                         val folderUri = call.argument<String>("uri")
@@ -468,6 +482,100 @@ class MainActivity : AudioServiceActivity() {
                 }
             } ?: throw IllegalStateException("Android could not read this folder. Re-add it to restore access.")
         }
+        return results
+    }
+
+    private fun scanMediaStore(): List<Map<String, String>> {
+        val cacheDirectory = File(filesDir, "neonamp-library-cache").apply { mkdirs() }
+        val results = mutableListOf<Map<String, String>>()
+        val relativePathColumnName = "relative_path"
+        val projection = mutableListOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.MIME_TYPE,
+            MediaStore.Audio.Media.SIZE,
+            MediaStore.Audio.Media.DATE_MODIFIED,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            projection.add(relativePathColumnName)
+        }
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        }
+        contentResolver.query(
+            collection,
+            projection.toTypedArray(),
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0",
+            null,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                "$relativePathColumnName ASC, ${MediaStore.Audio.Media.DISPLAY_NAME} ASC"
+            } else {
+                "${MediaStore.Audio.Media.DISPLAY_NAME} ASC"
+            },
+        )?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+            val mimeColumn = cursor.getColumnIndex(MediaStore.Audio.Media.MIME_TYPE)
+            val relativeColumn = cursor.getColumnIndex(relativePathColumnName)
+            val sizeColumn = cursor.getColumnIndex(MediaStore.Audio.Media.SIZE)
+            val modifiedColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATE_MODIFIED)
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idColumn)
+                val name = cursor.getString(nameColumn) ?: continue
+                val mime = if (mimeColumn >= 0 && !cursor.isNull(mimeColumn)) {
+                    cursor.getString(mimeColumn).orEmpty()
+                } else {
+                    ""
+                }
+                var extension = name.substringAfterLast('.', "")
+                    .lowercase(Locale.ROOT)
+                if (extension.isBlank()) {
+                    extension = audioExtensionForMimeType(mime) ?: continue
+                }
+                val sourceSize = if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) {
+                    cursor.getLong(sizeColumn)
+                } else {
+                    -1L
+                }
+                val sourceModified = if (modifiedColumn >= 0 && !cursor.isNull(modifiedColumn)) {
+                    cursor.getLong(modifiedColumn) * 1000L
+                } else {
+                    -1L
+                }
+                val sourceUri = ContentUris.withAppendedId(collection, id)
+                val cacheFile = File(cacheDirectory, "${sha256(sourceUri.toString())}.$extension")
+                if (!cacheFile.isFile ||
+                    (sourceSize >= 0 && cacheFile.length() != sourceSize) ||
+                    (sourceModified > 0 && cacheFile.lastModified() != sourceModified)
+                ) {
+                    val temporary = File(cacheDirectory, "${cacheFile.name}.tmp")
+                    contentResolver.openInputStream(sourceUri)?.use { input ->
+                        FileOutputStream(temporary).use { output -> input.copyTo(output) }
+                    } ?: continue
+                    if (!temporary.renameTo(cacheFile)) {
+                        temporary.copyTo(cacheFile, overwrite = true)
+                        temporary.delete()
+                    }
+                    if (sourceModified > 0) cacheFile.setLastModified(sourceModified)
+                }
+                libraryCachePreferences.edit()
+                    .putString(cacheFile.canonicalPath, sourceUri.toString())
+                    .apply()
+                val relative = (if (relativeColumn >= 0 && !cursor.isNull(relativeColumn)) {
+                    cursor.getString(relativeColumn)
+                } else null).orEmpty() + name
+                results.add(
+                    mapOf(
+                        "path" to cacheFile.absolutePath,
+                        "name" to name,
+                        "relativePath" to relative,
+                    ),
+                )
+            }
+        } ?: throw IllegalStateException("Android MediaStore is unavailable.")
         return results
     }
 

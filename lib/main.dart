@@ -58,6 +58,9 @@ import 'abx_test.dart';
 import 'track_auditor.dart';
 import 'audio_formats.dart';
 import 'audio_format_info.dart';
+import 'android_media_store.dart';
+import 'ab_loop.dart';
+import 'backup.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -2504,6 +2507,10 @@ class _PlayerPageState extends State<PlayerPage>
   bool _shuffle = false;
   bool _repeat = false;
   bool _repeatOne = false;
+  bool _abLoopEnabled = false;
+  Duration? _abLoopStart;
+  Duration? _abLoopEnd;
+  bool _abLoopSeekInProgress = false;
   bool _crossfade = false;
   bool _silenceAwareCrossfade = false;
   bool _bitPerfectMode = false;
@@ -2828,6 +2835,7 @@ class _PlayerPageState extends State<PlayerPage>
       final relative = _cueRelativePosition(track, value);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
+      unawaited(_enforceAbLoop(relative));
       unawaited(_maybeSubmitScrobble(relative));
       if (track?.cueStartMs == null &&
           !_casting &&
@@ -2871,6 +2879,7 @@ class _PlayerPageState extends State<PlayerPage>
       final relative = _cueRelativePosition(track, value);
       setState(() => _position = relative);
       _rememberResumePosition(relative);
+      unawaited(_enforceAbLoop(relative));
       unawaited(_maybeSubmitScrobble(relative));
       if (track?.cueStartMs == null &&
           !_casting &&
@@ -2910,6 +2919,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted || !_midiActive || _selectionInProgress) return;
       setState(() => _position = value);
       _rememberResumePosition(value);
+      unawaited(_enforceAbLoop(value));
     });
     _midiPlayer.onDurationChanged.listen((value) {
       if (!mounted || !_midiActive) return;
@@ -2924,6 +2934,23 @@ class _PlayerPageState extends State<PlayerPage>
     _midiPlayer.onPlayerComplete.listen((_) {
       if (_midiActive) unawaited(_handleComplete());
     });
+  }
+
+  Future<void> _enforceAbLoop(Duration position) async {
+    if (_abLoopSeekInProgress) return;
+    final target = abLoopSeekTarget(
+      enabled: _abLoopEnabled,
+      start: _abLoopStart,
+      end: _abLoopEnd,
+      position: position,
+    );
+    if (target == null) return;
+    _abLoopSeekInProgress = true;
+    try {
+      await _seekCurrent(target);
+    } finally {
+      _abLoopSeekInProgress = false;
+    }
   }
 
   Future<void> _initializeAudioService() async {
@@ -3673,6 +3700,15 @@ class _PlayerPageState extends State<PlayerPage>
         _bitPerfectMode = settings['bitPerfectMode'] as bool? ?? false;
         _crossfadeSeconds =
             (settings['crossfadeSeconds'] as num?)?.toInt() ?? 3;
+        _abLoopEnabled = settings['abLoopEnabled'] as bool? ?? false;
+        final savedAbStart = (settings['abLoopStartMs'] as num?)?.toInt();
+        final savedAbEnd = (settings['abLoopEndMs'] as num?)?.toInt();
+        _abLoopStart = savedAbStart == null
+            ? null
+            : Duration(milliseconds: savedAbStart);
+        _abLoopEnd = savedAbEnd == null
+            ? null
+            : Duration(milliseconds: savedAbEnd);
         _equalizerEnabled = settings['equalizerEnabled'] as bool? ?? false;
         _eqPreamp = ((settings['eqPreamp'] as num?)?.toDouble() ?? 0).clamp(-12, 12).toDouble();
         _eqQ = ((settings['eqQ'] as num?)?.toDouble() ?? 1).clamp(0.1, 10).toDouble();
@@ -3790,6 +3826,9 @@ class _PlayerPageState extends State<PlayerPage>
         'silenceAwareCrossfade': _silenceAwareCrossfade,
         'bitPerfectMode': _bitPerfectMode,
         'crossfadeSeconds': _crossfadeSeconds,
+        'abLoopEnabled': _abLoopEnabled,
+        'abLoopStartMs': _abLoopStart?.inMilliseconds,
+        'abLoopEndMs': _abLoopEnd?.inMilliseconds,
         'equalizerEnabled': _equalizerEnabled,
         'eqPreamp': _eqPreamp,
         'eqQ': _eqQ,
@@ -3828,6 +3867,160 @@ class _PlayerPageState extends State<PlayerPage>
     );
   }
 
+  Future<void> _exportBackup() async {
+    final prefs = await SharedPreferences.getInstance();
+    final state = <String, Object?>{};
+    for (final key in prefs.getKeys()) {
+      final value = prefs.get(key);
+      if (value is String || value is bool || value is int || value is double) {
+        state[key] = value;
+      } else if (value is List<String>) {
+        state[key] = value;
+      }
+    }
+    await FilePicker.saveFile(
+      fileName: 'neonamp-backup.json',
+      bytes: Uint8List.fromList(utf8.encode(encodeNeonAmpBackup(state))),
+      mimeType: 'application/json',
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+  }
+
+  Future<void> _importBackup() async {
+    final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (picked.isEmpty) return;
+    try {
+      final backup = decodeNeonAmpBackup(
+        utf8.decode(await picked.first.readAsBytes(), allowMalformed: true),
+      );
+      final prefs = await SharedPreferences.getInstance();
+      for (final entry in backup.entries) {
+        final value = entry.value;
+        if (value is String) {
+          await prefs.setString(entry.key, value);
+        } else if (value is bool) {
+          await prefs.setBool(entry.key, value);
+        } else if (value is double) {
+          await prefs.setDouble(entry.key, value);
+        } else if (value is num) {
+          await prefs.setInt(entry.key, value.toInt());
+        } else if (value is List) {
+          await prefs.setStringList(
+            entry.key,
+            value.map((item) => item.toString()).toList(),
+          );
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _queue.clear();
+        _library.clear();
+        _bookmarks.clear();
+        _playHistory.clear();
+        _libraryFolders.clear();
+        _libraryRelativePaths.clear();
+        _resumePositions.clear();
+        _podcastFeeds.clear();
+        _playlists.clear();
+        _smartPlaylists.clear();
+        _plugins.clear();
+        _mediaServerProfiles.clear();
+      });
+      await _loadQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Backup restored. Android folder permissions may need to be reselected.',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not restore backup: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showAbLoop() async {
+    var enabled = _abLoopEnabled;
+    var start = _abLoopStart;
+    var end = _abLoopEnd;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('A–B loop'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'A: ${start == null ? 'not set' : formatAbLoopDuration(start!)}\n'
+                'B: ${end == null ? 'not set' : formatAbLoopDuration(end!)}\n\n'
+                'Set A and B while the track is at the desired positions.',
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Loop continuously'),
+                value: enabled,
+                onChanged: (value) => setDialogState(() => enabled = value),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: _current == null
+                  ? null
+                  : () {
+                      start = _position;
+                      setDialogState(() {});
+                    },
+              child: const Text('Set A'),
+            ),
+            TextButton(
+              onPressed: _current == null
+                  ? null
+                  : () {
+                      end = _position;
+                      setDialogState(() {});
+                    },
+              child: const Text('Set B'),
+            ),
+            TextButton(
+              onPressed: () {
+                start = null;
+                end = null;
+                enabled = false;
+                setDialogState(() {});
+              },
+              child: const Text('Clear'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final normalized = normalizedAbLoop(start, end);
+                setState(() {
+                  _abLoopStart = normalized?.start;
+                  _abLoopEnd = normalized?.end;
+                  _abLoopEnabled = enabled && normalized != null;
+                });
+                unawaited(_saveQueue());
+                Navigator.pop(dialogContext);
+              },
+              child: Text(enabled ? 'Enable' : 'Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _addFiles() async {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -3844,11 +4037,13 @@ class _PlayerPageState extends State<PlayerPage>
       if (materialized == null) continue;
       final path = materialized.path;
       try {
-        if (_queue.any((track) => track.path == path)) continue;
+        if (_queue.any((track) => track.path == path) ||
+            _library.any((track) => track.path == path)) {
+          continue;
+        }
         final track = await _readTrack(path, file.name);
         if (!mounted) return;
         setState(() {
-          _queue.add(track);
           if (!_library.any((item) => item.path == path)) _library.add(track);
         });
         added++;
@@ -3860,7 +4055,11 @@ class _PlayerPageState extends State<PlayerPage>
       }
     }
     await _saveQueue();
-    if (added > 0 && _queue.isNotEmpty) await _select(0);
+    if (added > 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added $added track(s) to the library.')),
+      );
+    }
   }
 
   Future<void> _addFolder() async {
@@ -3885,6 +4084,45 @@ class _PlayerPageState extends State<PlayerPage>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not add music folder: $error')),
+      );
+    }
+  }
+
+  Future<void> _scanMediaStore() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final results = await const MethodChannel('neonamp/library')
+          .invokeListMethod<Map<Object?, Object?>>('scanMediaStore');
+      final tracks = deduplicateAndroidMediaStoreTracks(
+        (results ?? []).map(AndroidMediaStoreTrack.fromMap),
+      );
+      var added = 0;
+      for (final file in tracks) {
+        if (_library.any((track) => track.path == file.path)) continue;
+        final track = await _readTrack(file.path, file.name);
+        if (!mounted) return;
+        setState(() {
+          _library.add(track);
+          _libraryRelativePaths[file.path] = file.relativePath;
+        });
+        added++;
+      }
+      await _saveQueue();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              added == 0
+                  ? 'MediaStore is up to date.'
+                  : 'Added $added device track(s) to the library.',
+            ),
+          ),
+        );
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not scan device music: $error')),
       );
     }
   }
@@ -3993,14 +4231,12 @@ class _PlayerPageState extends State<PlayerPage>
           .toList();
     }
     for (final file in files) {
-      final alreadyQueued = _queue.any((track) => track.path == file.path);
       final alreadyInLibrary = _library.any((track) => track.path == file.path);
-      if (alreadyQueued && alreadyInLibrary) continue;
+      if (alreadyInLibrary) continue;
       final track = await _readTrack(file.path, file.name);
       if (!mounted) return 0;
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
-        if (!alreadyQueued) _queue.add(track);
         if (!alreadyInLibrary) _library.add(track);
       });
     }
@@ -9946,6 +10182,10 @@ class _PlayerPageState extends State<PlayerPage>
             icon: const Icon(Icons.more_vert, color: Colors.white60),
             onSelected: (value) {
               if (value == 'folder') _addFolder();
+              if (value == 'mediaStore') _scanMediaStore();
+              if (value == 'abLoop') _showAbLoop();
+              if (value == 'backupExport') _exportBackup();
+              if (value == 'backupImport') _importBackup();
               if (value == 'visuals') _showVisualizer();
               if (value == 'settings') _showSettings();
               if (value == 'rescan') _rescanFolders();
@@ -9991,6 +10231,20 @@ class _PlayerPageState extends State<PlayerPage>
               PopupMenuItem(value: 'visuals', child: Text('Visuals')),
               PopupMenuItem(value: 'settings', child: Text('Settings')),
               PopupMenuItem(value: 'folder', child: Text('Add folder')),
+              if (Platform.isAndroid)
+                const PopupMenuItem(
+                  value: 'mediaStore',
+                  child: Text('Scan all device music'),
+                ),
+              const PopupMenuItem(value: 'abLoop', child: Text('A–B loop')),
+              const PopupMenuItem(
+                value: 'backupExport',
+                child: Text('Export backup'),
+              ),
+              const PopupMenuItem(
+                value: 'backupImport',
+                child: Text('Import backup'),
+              ),
               PopupMenuItem(
                 value: 'rescan',
                 child: Text('Rescan library folders'),
