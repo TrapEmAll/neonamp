@@ -132,6 +132,11 @@ jobs:
           test -s "$apk"
           test -s "$aab"
 
+          echo 'Packaged APK native libraries:'
+          unzip -Z1 "$apk" | grep '^lib/' | sort || true
+          echo 'Packaged App Bundle native libraries:'
+          unzip -Z1 "$aab" | grep -E '(^|/)lib/' | sort || true
+
           # The Play Store bundle may contain only the ARM ABIs we explicitly
           # support. Catch x86 leakage from transitive native dependencies
           # before an artifact is uploaded or attached to a release.
