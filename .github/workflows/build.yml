@@ -124,6 +124,30 @@ jobs:
             fi
           done
           exit 1
+      - name: Verify Android release artifacts
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          aab=build/app/outputs/bundle/release/app-release.aab
+          test -s "$apk"
+          test -s "$aab"
+
+          # The Play Store bundle may contain only the ARM ABIs we explicitly
+          # support. Catch x86 leakage from transitive native dependencies
+          # before an artifact is uploaded or attached to a release.
+          if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64)/'; then
+            echo 'APK contains unsupported x86 native libraries.' >&2
+            exit 1
+          fi
+          if unzip -Z1 "$aab" | grep -Eq '(^|/)lib/(x86|x86_64)/'; then
+            echo 'App Bundle contains unsupported x86 native libraries.' >&2
+            exit 1
+          fi
+          unzip -Z1 "$apk" | grep -Eq '^lib/armeabi-v7a/'
+          unzip -Z1 "$apk" | grep -Eq '^lib/arm64-v8a/'
+          unzip -Z1 "$aab" | grep -Eq '(^|/)lib/armeabi-v7a/'
+          unzip -Z1 "$aab" | grep -Eq '(^|/)lib/arm64-v8a/'
+          sha256sum "$apk" "$aab"
       - name: Upload Android release package
         uses: actions/upload-artifact@v7
         with:
@@ -157,4 +181,5 @@ jobs:
             NeonAmp-Setup-*.exe
             android/app-release.apk
             android/app-release.aab
+
 
