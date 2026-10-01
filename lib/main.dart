@@ -1565,10 +1565,12 @@ Future<void> writeTrackMetadata(File file, List<String> values) async {
 
 Future<void> _syncAndroidLibraryCache(File file) async {
   if (!Platform.isAndroid) return;
-  await const MethodChannel('neonamp/library').invokeMethod<bool>(
-    'replaceCachedFile',
-    {'sourcePath': file.path},
-  );
+  // Android library-cache entries are ordinary files and metadata/artwork
+  // writers update them in place. Do not call a nonexistent native RPC after
+  // a successful write; that used to turn completed edits into false errors.
+  if (!await file.exists()) {
+    throw FileSystemException('The edited Android cache file is missing.', file.path);
+  }
 }
 
 Future<void> main() async {
