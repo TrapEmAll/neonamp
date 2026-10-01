@@ -53,12 +53,16 @@ class NeonAmpWidgetProvider : AppWidgetProvider() {
     }
 
     private fun sendMediaKey(context: Context, keyCode: Int) {
-        val mediaIntent = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
+        fun mediaIntent(action: Int) = Intent(Intent.ACTION_MEDIA_BUTTON).apply {
             component = ComponentName(context, MediaButtonReceiver::class.java)
-            putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+            putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(action, keyCode))
         }
         try {
-            context.sendBroadcast(mediaIntent)
+            // MediaButtonReceiver dispatches transport actions on key-up. Sending
+            // both events keeps widget controls reliable when the app process is
+            // backgrounded or the device is running a newer media-session stack.
+            context.sendBroadcast(mediaIntent(KeyEvent.ACTION_DOWN))
+            context.sendBroadcast(mediaIntent(KeyEvent.ACTION_UP))
         } catch (_: Throwable) {
             context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
