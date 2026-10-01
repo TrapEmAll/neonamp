@@ -9975,7 +9975,7 @@ class _PlayerPageState extends State<PlayerPage>
                     final renderedPath = await renderTrimClip();
                     outputPath = renderedPath;
                     final source = File(renderedPath);
-                    final exported = await const MethodChannel('neonamp/library')
+                    await const MethodChannel('neonamp/library')
                         .invokeMethod<String>('publishRingtone', {
                           'sourcePath': source.path,
                           'name': '${track.name}-clip.wav',
