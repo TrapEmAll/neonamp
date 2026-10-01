@@ -2289,7 +2289,9 @@ class NeonAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
         artUri: artworkUri,
       ),
     );
-    unawaited(_updateAndroidWidget(track: track, playing: false));
+    // publishTrack is used after an active MIDI, DSP, or gapless handoff.
+    // Reporting false here made the widget show Play while audio continued.
+    unawaited(_updateAndroidWidget(track: track, playing: true));
   }
 
   Future<Uri?> _artworkUri(Track track) async {
