@@ -3262,7 +3262,26 @@ class _PlayerPageState extends State<PlayerPage>
       var importedPlaylist = false;
       var importedCue = false;
       for (final intent in intents) {
-        final extension = intent.path
+        var sourcePath = intent.path;
+        if (sourcePath.startsWith('content://')) {
+          final displayName =
+              intent.name ?? sourcePath.split(RegExp(r'[/\\]')).last;
+          try {
+            sourcePath = await const MethodChannel('neonamp/library')
+                    .invokeMethod<String>('materializeUri', {
+                  'uri': sourcePath,
+                  'name': displayName,
+                }) ??
+                '';
+          } on Object catch (error) {
+            debugPrint('Could not materialize shared Android media: $error');
+            sourcePath = '';
+          }
+          if (sourcePath.isEmpty) continue;
+        }
+        final displayName =
+            intent.name ?? sourcePath.split(RegExp(r'[/\\]')).last;
+        final extension = displayName
             .split(RegExp(r'[/\\]'))
             .last
             .split('.')
@@ -3270,29 +3289,24 @@ class _PlayerPageState extends State<PlayerPage>
             .toLowerCase();
         if (const {'m3u', 'm3u8', 'pls', 'b4s', 'wpl', 'asx'}
             .contains(extension)) {
-          await _importPlaylist(externalPath: intent.path);
+          await _importPlaylist(externalPath: sourcePath);
           importedPlaylist = true;
           continue;
         }
         if (extension == 'cue') {
           await _importCueSheet(
-            externalPath: intent.path,
+            externalPath: sourcePath,
             externalItems: intents,
           );
           importedCue = true;
           continue;
         }
         if (!intent.isRemoteUrl &&
-            (!isSupportedLibraryAudioPath(intent.path) ||
-                !File(intent.path).existsSync())) {
+            (!isSupportedLibraryAudioPath(sourcePath) ||
+                !File(sourcePath).existsSync())) {
           continue;
         }
-        imported.add(
-          await _readTrack(
-            intent.path,
-            intent.name ?? intent.path.split(RegExp(r'[/\\]')).last,
-          ),
-        );
+        imported.add(await _readTrack(sourcePath, displayName));
       }
       if (imported.isEmpty || !mounted) {
         if (importedPlaylist || importedCue) return;
