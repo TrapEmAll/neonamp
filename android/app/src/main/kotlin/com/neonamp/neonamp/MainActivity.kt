@@ -981,10 +981,22 @@ class MainActivity : AudioServiceActivity() {
                         val uri = Uri.withAppendedPath(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id.toString())
                         val name = if (nameColumn >= 0) cursor.getString(nameColumn).orEmpty() else ""
                         val title = if (titleColumn >= 0) cursor.getString(titleColumn).orEmpty() else ""
+                        val displayName = name.ifBlank { title.ifBlank { "Unknown audio" } }
+                        // MediaStore grants a content URI, while Flutter's metadata,
+                        // artwork, and DSP pipeline require a readable filesystem path.
+                        // Reuse the same cache/materialization path as SAF scans.
+                        val cachedPath = try {
+                            materializeContentUri(uri, displayName)
+                        } catch (_: Throwable) {
+                            // Skip entries whose provider revoked access or cannot
+                            // stream the item instead of failing the entire scan.
+                            continue
+                        }
                         results.add(
                             mapOf(
-                                "path" to uri.toString(),
-                                "name" to name.ifBlank { title.ifBlank { "Unknown audio" } },
+                                "path" to cachedPath,
+                                "sourceUri" to uri.toString(),
+                                "name" to displayName,
                                 "title" to title,
                                 "artist" to (if (artistColumn >= 0) cursor.getString(artistColumn).orEmpty() else ""),
                                 "album" to (if (albumColumn >= 0) cursor.getString(albumColumn).orEmpty() else ""),
