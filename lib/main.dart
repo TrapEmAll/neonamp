@@ -3786,14 +3786,17 @@ class _PlayerPageState extends State<PlayerPage>
     if (mediaId == 'auto:resume') {
       final current = _current;
       if (current == null) return;
-      if (_playerState == PlayerState.paused || _isPlaying) {
-        await _playCurrent();
-        return;
-      }
+      // Resume must honor the saved position even when the current item is
+      // paused. Starting the paused player directly would ignore that marker.
       final resumeMs = _resumePositions[current.identityKey] ?? 0;
-      await _select(_selected);
+      if (_isPlaying) return;
       if (resumeMs > 0) {
+        await _select(_selected);
         await _seekCurrent(Duration(milliseconds: resumeMs));
+      } else if (_playerState == PlayerState.paused) {
+        await _playCurrent();
+      } else {
+        await _select(_selected);
       }
       return;
     }
