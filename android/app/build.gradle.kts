@@ -58,6 +58,10 @@ android {
     packaging {
         jniLibs {
             pickFirsts += setOf("**/libc++_shared.so")
+            // NeonAmp distributes ARM-only Android packages. Some optional
+            // network plugins download emulator x86 binaries during their
+            // build, so exclude those payloads from the final APK/AAB.
+            excludes += setOf("**/x86/**", "**/x86_64/**")
         }
     }
 
@@ -96,3 +100,4 @@ dependencies {
   implementation("com.google.android.play:integrity:1.4.0")
   implementation("androidx.media3:media3-exoplayer:1.5.1")
 }
+
