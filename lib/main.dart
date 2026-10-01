@@ -2615,6 +2615,7 @@ class _PlayerPageState extends State<PlayerPage>
   final Map<String, int> _resumePositions = {};
   final List<String> _libraryFolders = [];
   final Map<String, String> _libraryRelativePaths = {};
+  final Map<String, int> _libraryModifiedMs = {};
   final List<String> _podcastFeeds = [];
   final Map<String, List<String>> _playlists = {};
   final List<SmartPlaylist> _smartPlaylists = [];
@@ -4667,6 +4668,15 @@ class _PlayerPageState extends State<PlayerPage>
         _librarySort = settings['librarySort'] as String? ?? 'Added';
         _librarySortDescending =
             settings['librarySortDescending'] as bool? ?? false;
+        final savedModifiedTimes = settings['libraryModifiedMs'];
+        if (savedModifiedTimes is Map) {
+          for (final entry in savedModifiedTimes.entries) {
+            final modifiedMs = (entry.value as num?)?.toInt();
+            if (modifiedMs != null) {
+              _libraryModifiedMs[entry.key.toString()] = modifiedMs;
+            }
+          }
+        }
         final savedVisualizerMode = settings['visualizerMode'] as String?;
         if (visualizerModes.contains(savedVisualizerMode)) {
           _visualizerMode = savedVisualizerMode!;
@@ -4805,6 +4815,7 @@ class _PlayerPageState extends State<PlayerPage>
         'sleepTimerEndMs': _sleepDeadline?.millisecondsSinceEpoch,
         'librarySort': _librarySort,
         'librarySortDescending': _librarySortDescending,
+        'libraryModifiedMs': _libraryModifiedMs,
         'visualizerMode': _visualizerMode,
         'libraryRelativePaths': _libraryRelativePaths,
         'playHistoryTimes': _playHistoryTimes,
@@ -5308,6 +5319,10 @@ class _PlayerPageState extends State<PlayerPage>
             child: const Text('Rescan library folders'),
           ),
           SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, 'rescanChanged'),
+            child: const Text('Rescan only changed files'),
+          ),
+          SimpleDialogOption(
             onPressed: () => Navigator.pop(context, 'statistics'),
             child: const Text('View folder statistics'),
           ),
@@ -5364,6 +5379,10 @@ class _PlayerPageState extends State<PlayerPage>
     }
     if (action == 'rescan') {
       await _rescanFolders();
+      return;
+    }
+    if (action == 'rescanChanged') {
+      await _rescanFolders(onlyChanged: true);
       return;
     }
     final removeMissing = action == 'removeMissing';
@@ -5489,8 +5508,11 @@ class _PlayerPageState extends State<PlayerPage>
         .writeAsString(contents);
   }
 
-  Future<int> _scanFolder(String directory) async {
-    final List<({String path, String name, String relativePath})> files;
+  Future<int> _scanFolder(
+    String directory, {
+    bool onlyChanged = false,
+  }) async {
+    final List<({String path, String name, String relativePath, int modifiedMs})> files;
     if (Platform.isAndroid) {
       if (Uri.tryParse(directory)?.scheme.toLowerCase() != 'content') {
         throw StateError('Reselect this folder to grant Android media access.');
@@ -5506,6 +5528,7 @@ class _PlayerPageState extends State<PlayerPage>
           path: path,
           name: name,
           relativePath: item['relativePath'] as String? ?? name,
+          modifiedMs: (item['modified'] as num?)?.toInt() ?? -1,
         );
       }).toList();
     } else {
@@ -5513,32 +5536,47 @@ class _PlayerPageState extends State<PlayerPage>
           .listSync(recursive: true)
           .whereType<File>()
           .where((file) => isSupportedLibraryAudioPath(file.path))
-          .map(
-            (file) => (
+          .map((file) {
+            final modifiedMs = file.statSync().modified.millisecondsSinceEpoch;
+            return (
               path: file.path,
               name: file.uri.pathSegments.last,
               relativePath: file.path
                   .substring(directory.length)
                   .replaceFirst(RegExp(r'^[/\\]+'), '')
                   .replaceAll('\\', '/'),
-            ),
-          )
+              modifiedMs: modifiedMs,
+            );
+          })
           .toList();
     }
     for (final file in files) {
-      final alreadyInLibrary = _library.any((track) => track.path == file.path);
-      if (alreadyInLibrary) continue;
+      final existingIndex = _library.indexWhere((track) => track.path == file.path);
+      if (onlyChanged &&
+          existingIndex >= 0 &&
+          file.modifiedMs >= 0 &&
+          _libraryModifiedMs[file.path] == file.modifiedMs) {
+        continue;
+      }
       final track = await _readTrack(file.path, file.name);
       if (!mounted) return 0;
       setState(() {
         _libraryRelativePaths[file.path] = file.relativePath;
-        if (!alreadyInLibrary) _library.add(track);
+        if (file.modifiedMs >= 0) _libraryModifiedMs[file.path] = file.modifiedMs;
+        if (existingIndex >= 0) {
+          _library[existingIndex] = track;
+        } else {
+          _library.add(track);
+        }
       });
     }
     return files.length;
   }
 
-  Future<void> _rescanFolders({bool silent = false}) async {
+  Future<void> _rescanFolders({
+    bool silent = false,
+    bool onlyChanged = false,
+  }) async {
     if (_libraryFolders.isEmpty) {
       if (!silent) await _addFolder();
       return;
@@ -5561,7 +5599,7 @@ class _PlayerPageState extends State<PlayerPage>
               'Choose a saved music folder again',
             );
             if (directory == null) return;
-            final found = await _scanFolder(directory);
+            final found = await _scanFolder(directory, onlyChanged: onlyChanged);
             final index = _libraryFolders.indexOf(oldFolder);
             if (index >= 0) _libraryFolders[index] = directory;
             await _saveQueue();
@@ -5597,7 +5635,7 @@ class _PlayerPageState extends State<PlayerPage>
       }
       try {
         if (Platform.isAndroid || Directory(folder).existsSync()) {
-          found += await _scanFolder(folder);
+          found += await _scanFolder(folder, onlyChanged: onlyChanged);
         }
       } on Object catch (error) {
         if (!silent && mounted) {
