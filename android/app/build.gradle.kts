@@ -61,7 +61,12 @@ android {
             // NeonAmp distributes ARM-only Android packages. Some optional
             // network plugins download emulator x86 binaries during their
             // build, so exclude those payloads from the final APK/AAB.
-            excludes += setOf("**/x86/**", "**/x86_64/**")
+            excludes += setOf(
+                "lib/x86/**",
+                "lib/x86_64/**",
+                "**/lib/x86/**",
+                "**/lib/x86_64/**",
+            )
         }
     }
 
