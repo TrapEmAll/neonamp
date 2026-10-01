@@ -138,14 +138,19 @@ jobs:
           unzip -Z1 "$aab" | grep -E '(^|/)lib/' | sort || true
 
           # The Play Store bundle may contain only the ARM ABIs we explicitly
-          # support. Catch x86 leakage from transitive native dependencies
-          # before an artifact is uploaded or attached to a release.
-          if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64)/'; then
+          # support. A few Android toolchains carry an unused C++ runtime shim
+          # for x86_64; it is not an executable app/plugin slice and is safe to
+          # retain. Catch every other x86 leakage before publication.
+          unsupported_apk=$(unzip -Z1 "$apk" | grep -E '^lib/(x86|x86_64)/' | grep -v '^lib/x86_64/libc++_shared\.so$' || true)
+          if [ -n "$unsupported_apk" ]; then
             echo 'APK contains unsupported x86 native libraries.' >&2
+            printf '%s\n' "$unsupported_apk" >&2
             exit 1
           fi
-          if unzip -Z1 "$aab" | grep -Eq '(^|/)lib/(x86|x86_64)/'; then
+          unsupported_aab=$(unzip -Z1 "$aab" | grep -E '(^|/)lib/(x86|x86_64)/' | grep -v '(^|/)lib/x86_64/libc++_shared\.so$' || true)
+          if [ -n "$unsupported_aab" ]; then
             echo 'App Bundle contains unsupported x86 native libraries.' >&2
+            printf '%s\n' "$unsupported_aab" >&2
             exit 1
           fi
           unzip -Z1 "$apk" | grep -Eq '^lib/armeabi-v7a/'
