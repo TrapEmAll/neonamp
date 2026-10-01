@@ -74,6 +74,8 @@ import 'network_library.dart';
 import 'network_cache.dart';
 import 'folder_artwork.dart';
 import 'play_history.dart';
+import 'play_integrity.dart';
+import 'play_integrity_config.dart';
 
 const _bundledMidiSoundFontAsset = 'assets/soundfonts/FluidR3_GM.sf2';
 const _bundledMidiSoundFontFileName = 'neonamp-default-fluidr3.sf2';
@@ -3112,6 +3114,7 @@ class _PlayerPageState extends State<PlayerPage>
     _bindMidiStreams();
     _initializeWindowsMediaKeys();
     _initializeAudioService();
+    unawaited(_preparePlayIntegrityIfConfigured());
     final queueLoad = _loadQueue();
     if (Platform.isAndroid) {
       unawaited(queueLoad.then((_) async {
@@ -3207,6 +3210,18 @@ class _PlayerPageState extends State<PlayerPage>
         );
       }
       return null;
+    }
+  }
+
+  Future<void> _preparePlayIntegrityIfConfigured() async {
+    if (!Platform.isAndroid) return;
+    final projectNumber = PlayIntegrityConfig.cloudProjectNumber;
+    if (projectNumber == null) return;
+    try {
+      await PlayIntegrityClient().prepare(cloudProjectNumber: projectNumber);
+    } on Object catch (error) {
+      // Provider warm-up is optional and must never prevent playback startup.
+      debugPrint('Could not prepare Play Integrity: $error');
     }
   }
 
