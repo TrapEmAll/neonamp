@@ -880,17 +880,26 @@ class MainActivity : AudioServiceActivity() {
         } ?: devices.firstOrNull()
         val activeBitDepths = (activeDevice?.get("bitDepths") as? List<*>)
             ?.filterIsInstance<Int>()
+        val latencyMs = if (sampleRate != null && sampleRate > 0 && framesPerBuffer != null) {
+            framesPerBuffer * 1000.0 / sampleRate
+        } else {
+            null
+        }
+        val routeName = activeDevice?.get("name") as? String
+        val routeType = (activeDevice?.get("type") as? Int)?.let(::audioDeviceTypeName)
         return mapOf(
             "devices" to devices,
             "activeDevice" to activeDevice,
+            "routeName" to routeName,
+            "routeType" to routeType,
             "sampleRate" to sampleRate,
             "framesPerBuffer" to framesPerBuffer,
-            "bufferLatencyMs" to if (sampleRate != null && sampleRate > 0 && framesPerBuffer != null) {
-                framesPerBuffer * 1000.0 / sampleRate
-            } else {
-                null
-            },
-            "bitDepth" to if (activeBitDepths.isNullOrEmpty()) {
+            "bufferLatencyMs" to latencyMs,
+            "latencyMs" to latencyMs,
+            // Flutter uses the numeric value for diagnostics; the supported
+            // values are also exposed as bitDepths on activeDevice.
+            "bitDepth" to activeBitDepths?.maxOrNull(),
+            "bitDepthDescription" to if (activeBitDepths.isNullOrEmpty()) {
                 "OS-managed"
             } else {
                 activeBitDepths.joinToString("/") { "$it-bit PCM" }
@@ -906,6 +915,16 @@ class MainActivity : AudioServiceActivity() {
             "musicVolume" to manager.getStreamVolume(AudioManager.STREAM_MUSIC),
             "musicMaxVolume" to manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
         )
+    }
+
+    private fun audioDeviceTypeName(type: Int): String = when (type) {
+        AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> "USB"
+        AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+        AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth"
+        AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "Wired"
+        AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Speaker"
+        AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "Earpiece"
+        else -> "Android audio output"
     }
 
     private fun pcmBitDepth(encoding: Int): Int? = when {
