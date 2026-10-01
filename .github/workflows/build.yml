@@ -162,6 +162,17 @@ jobs:
           unzip -Z1 "$aab" | grep -Eq '(^|/)lib/armeabi-v7a/'
           unzip -Z1 "$aab" | grep -Eq '(^|/)lib/arm64-v8a/'
           sha256sum "$apk" "$aab"
+      - name: Verify tagged Android upload signature
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          certs=$(apksigner verify --verbose --print-certs "$apk")
+          printf '%s\n' "$certs"
+          if printf '%s\n' "$certs" | grep -Eqi 'Android Debug|CN=Android'; then
+            echo 'Tagged Android artifact is still debug-signed.' >&2
+            exit 1
+          fi
       - name: Upload Android release package
         uses: actions/upload-artifact@v7
         with:
