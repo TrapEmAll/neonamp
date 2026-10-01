@@ -5133,24 +5133,39 @@ class _PlayerPageState extends State<PlayerPage>
         (results ?? []).map(AndroidMediaStoreTrack.fromMap),
       );
       var added = 0;
+      var repaired = 0;
       for (final file in tracks) {
-        if (_library.any((track) => track.path == file.path)) continue;
+        final existingIndex = _library.indexWhere(
+          (track) => track.path == file.path,
+        );
+        // Cache controls may remove a previously materialized MediaStore file.
+        // Re-read missing entries so the library and queue do not retain a
+        // permanently broken path after a cleanup or cache-limit change.
+        if (existingIndex >= 0 && File(file.path).existsSync()) continue;
         final track = await _readTrack(file.path, file.name);
         if (!mounted) return;
         setState(() {
-          _library.add(track);
+          if (existingIndex >= 0) {
+            _library[existingIndex] = track;
+            repaired++;
+          } else {
+            _library.add(track);
+            added++;
+          }
+          for (var index = 0; index < _queue.length; index++) {
+            if (_queue[index].path == file.path) _queue[index] = track;
+          }
           _libraryRelativePaths[file.path] = file.relativePath;
         });
-        added++;
       }
       await _saveQueue();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              added == 0
+              added == 0 && repaired == 0
                   ? 'MediaStore is up to date.'
-                  : 'Added $added device track(s) to the library.',
+                  : 'Added $added device track(s); repaired $repaired cached track(s).',
             ),
           ),
         );
