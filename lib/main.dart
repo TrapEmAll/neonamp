@@ -3119,6 +3119,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (Platform.isAndroid) {
       unawaited(queueLoad.then((_) async {
         await _consumeAndroidIntents();
+        await _consumeAndroidQueueShortcut();
         await _runBackgroundLibraryScan();
       }));
     } else {
@@ -3243,7 +3244,7 @@ class _PlayerPageState extends State<PlayerPage>
     if (!Platform.isAndroid) return;
     try {
       final values = await const MethodChannel('neonamp/intents')
-          .invokeListMethod<Map<Object?, Object?>>('drain');
+          .invokeListMethod<Map<Object?, Object?>>('consumeIncomingMedia');
       final intents = deduplicateAndroidExternalIntents(
         (values ?? []).map((value) {
           final path = value['path']?.toString() ?? '';
@@ -3324,6 +3325,20 @@ class _PlayerPageState extends State<PlayerPage>
           SnackBar(content: Text('Could not open shared media: $error')),
         );
       }
+    }
+  }
+
+  Future<void> _consumeAndroidQueueShortcut() async {
+    if (!Platform.isAndroid || !mounted) return;
+    try {
+      final openQueue = await const MethodChannel('neonamp/intents')
+          .invokeMethod<bool>('consumeQueueShortcut') ??
+          false;
+      if (openQueue && mounted) {
+        setState(() => _activeView = 'queue');
+      }
+    } on Object catch (error) {
+      debugPrint('Could not open widget queue shortcut: $error');
     }
   }
 
