@@ -85,7 +85,7 @@ Download the ready-to-run Windows x64 package or Android APK from the [latest Gi
   - Animated spectrum-bars, waveform, and oscilloscope visualizers with persisted mode selection.
 - Desktop Visuals and Settings actions are available on Windows and Android.
 
-The Android CI artifact includes both the ARM-only APK and an Android App Bundle. Without signing secrets, the builds use Flutter's local release/debug signing for direct installation. For a Play Store-ready signed bundle, configure these GitHub Actions secrets: `ANDROID_UPLOAD_KEYSTORE_BASE64`, `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. The keystore itself is never committed.
+The Android CI artifact includes both the ARM-only APK and an Android App Bundle. Without signing secrets, the builds use Flutter's local release/debug signing for direct installation. For a Play Store-ready signed bundle, configure these GitHub Actions secrets: `ANDROID_UPLOAD_KEYSTORE_BASE64`, `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. Also configure the non-secret repository variable `NEONAMP_PLAY_INTEGRITY_PROJECT_NUMBER` with the Google Cloud project number linked to the Play Console app. Tagged builds require both the upload key and project number; the project number is passed at build time and is never stored in the repository. The keystore itself is never committed. Play Integrity tokens remain opaque and must be verified by a protected backend.
 
 ## Development
 
@@ -108,4 +108,5 @@ Skin packages are JSON files with this shape:
   "backgroundColor": "#10130b"
 }
 ```
+
 
