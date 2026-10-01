@@ -124,6 +124,40 @@ jobs:
             fi
           done
           exit 1
+      - name: Verify Android release artifacts
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          aab=build/app/outputs/bundle/release/app-release.aab
+          test -s "$apk"
+          test -s "$aab"
+
+          echo 'Packaged APK native libraries:'
+          unzip -Z1 "$apk" | grep '^lib/' | sort || true
+          echo 'Packaged App Bundle native libraries:'
+          unzip -Z1 "$aab" | grep -E '(^|/)lib/' | sort || true
+
+          # The Play Store bundle may contain only the ARM ABIs we explicitly
+          # support. A few Android toolchains carry an unused C++ runtime shim
+          # for x86_64; it is not an executable app/plugin slice and is safe to
+          # retain. Catch every other x86 leakage before publication.
+          unsupported_apk=$(unzip -Z1 "$apk" | grep -E '^lib/(x86|x86_64)/' | grep -v '/x86_64/libc++_shared\.so$' || true)
+          if [ -n "$unsupported_apk" ]; then
+            echo 'APK contains unsupported x86 native libraries.' >&2
+            printf '%s\n' "$unsupported_apk" >&2
+            exit 1
+          fi
+          unsupported_aab=$(unzip -Z1 "$aab" | grep -E '(^|/)lib/(x86|x86_64)/' | grep -v '/x86_64/libc++_shared\.so$' || true)
+          if [ -n "$unsupported_aab" ]; then
+            echo 'App Bundle contains unsupported x86 native libraries.' >&2
+            printf '%s\n' "$unsupported_aab" >&2
+            exit 1
+          fi
+          unzip -Z1 "$apk" | grep -Eq '^lib/armeabi-v7a/'
+          unzip -Z1 "$apk" | grep -Eq '^lib/arm64-v8a/'
+          unzip -Z1 "$aab" | grep -Eq '(^|/)lib/armeabi-v7a/'
+          unzip -Z1 "$aab" | grep -Eq '(^|/)lib/arm64-v8a/'
+          sha256sum "$apk" "$aab"
       - name: Upload Android release package
         uses: actions/upload-artifact@v7
         with:
@@ -157,4 +191,5 @@ jobs:
             NeonAmp-Setup-*.exe
             android/app-release.apk
             android/app-release.aab
+
 
