@@ -5120,17 +5120,8 @@ class _PlayerPageState extends State<PlayerPage>
     if (!Platform.isAndroid) return;
     try {
       final channel = const MethodChannel('neonamp/library');
-      final permitted = await channel.invokeMethod<bool>('requestMediaPermission') ?? false;
-      if (!permitted) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Allow audio access to scan music on this device.'),
-            ),
-          );
-        }
-        return;
-      }
+      // scanMediaStore owns the permission request and returns only after
+      // Android has either granted or rejected READ_MEDIA_AUDIO.
       final results = await channel
           .invokeListMethod<Map<Object?, Object?>>('scanMediaStore');
       final tracks = deduplicateAndroidMediaStoreTracks(
@@ -5252,11 +5243,11 @@ class _PlayerPageState extends State<PlayerPage>
 
   Future<void> _showAndroidBatteryControls() async {
     if (!Platform.isAndroid) return;
-    const channel = MethodChannel('neonamp/power');
+    const channel = MethodChannel('neonamp/audio_output');
     try {
-      final status = await channel.invokeMapMethod<String, dynamic>('status');
+      final status = await channel.invokeMapMethod<String, dynamic>('batteryState');
       if (!mounted) return;
-      final ignoring = status?['ignoring'] == true;
+      final ignoring = status?['ignoringOptimizations'] == true;
       final action = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
@@ -5279,7 +5270,7 @@ class _PlayerPageState extends State<PlayerPage>
           ],
         ),
       );
-      if (action == 'request') await channel.invokeMethod<bool>('request');
+      if (action == 'request') await channel.invokeMethod<bool>('openBatterySettings');
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -9576,8 +9567,8 @@ class _PlayerPageState extends State<PlayerPage>
   Future<String> _readEqOutputProfileKey() async {
     if (!Platform.isAndroid) return 'desktop-default';
     try {
-      final raw = await const MethodChannel('neonamp/output')
-          .invokeMethod<Object?>('getStatus');
+      final raw = await const MethodChannel('neonamp/audio_output')
+          .invokeMethod<Object?>('getState');
       if (raw is Map) {
         return audioOutputProfileKey(
           routeName: raw['routeName'] as String?,
@@ -9984,8 +9975,8 @@ class _PlayerPageState extends State<PlayerPage>
                     final renderedPath = await renderTrimClip();
                     outputPath = renderedPath;
                     final source = File(renderedPath);
-                    final exported = await const MethodChannel('neonamp/library')
-                        .invokeMapMethod<String, dynamic>('exportRingtone', {
+                    await const MethodChannel('neonamp/library')
+                        .invokeMethod<String>('publishRingtone', {
                           'sourcePath': source.path,
                           'name': '${track.name}-clip.wav',
                           'kind': 'ringtone',
@@ -9995,7 +9986,7 @@ class _PlayerPageState extends State<PlayerPage>
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          'Saved ${exported?['name'] ?? 'clip'} to Android Ringtones.',
+                          'Saved ${track.name}-clip.wav to Android Ringtones.',
                         ),
                       ),
                     );
@@ -11803,8 +11794,8 @@ class _PlayerPageState extends State<PlayerPage>
     }
     Map<String, dynamic>? nativeOutput;
     try {
-      final rawOutput = await const MethodChannel('neonamp/output')
-          .invokeMethod<Object?>('getStatus');
+      final rawOutput = await const MethodChannel('neonamp/audio_output')
+          .invokeMethod<Object?>('getState');
       if (rawOutput is Map) {
         nativeOutput = Map<String, dynamic>.from(rawOutput);
       }
