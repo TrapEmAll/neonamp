@@ -141,13 +141,13 @@ jobs:
           # support. A few Android toolchains carry an unused C++ runtime shim
           # for x86_64; it is not an executable app/plugin slice and is safe to
           # retain. Catch every other x86 leakage before publication.
-          unsupported_apk=$(unzip -Z1 "$apk" | grep -E '^lib/(x86|x86_64)/' | grep -v '^lib/x86_64/libc++_shared\.so$' || true)
+          unsupported_apk=$(unzip -Z1 "$apk" | grep -E '^lib/(x86|x86_64)/' | grep -v '/x86_64/libc++_shared\.so$' || true)
           if [ -n "$unsupported_apk" ]; then
             echo 'APK contains unsupported x86 native libraries.' >&2
             printf '%s\n' "$unsupported_apk" >&2
             exit 1
           fi
-          unsupported_aab=$(unzip -Z1 "$aab" | grep -E '(^|/)lib/(x86|x86_64)/' | grep -v '(^|/)lib/x86_64/libc++_shared\.so$' || true)
+          unsupported_aab=$(unzip -Z1 "$aab" | grep -E '(^|/)lib/(x86|x86_64)/' | grep -v '/x86_64/libc++_shared\.so$' || true)
           if [ -n "$unsupported_aab" ]; then
             echo 'App Bundle contains unsupported x86 native libraries.' >&2
             printf '%s\n' "$unsupported_aab" >&2
